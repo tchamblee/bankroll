@@ -305,11 +305,17 @@ class FeatureEngine:
         # Also exclude existing delta columns to avoid delta_delta...
         feature_cols = [c for c in df.columns if c not in exclude and not c.startswith('delta_')]
         
+        # To avoid fragmentation warnings, collect new columns in a list and concat at once
+        new_cols = {}
         for col in feature_cols:
-            df[f'delta_{col}_{lookback}'] = df[col].diff(lookback)
+            new_cols[f'delta_{col}_{lookback}'] = df[col].diff(lookback)
+        
+        # Concat all new columns at once
+        new_df = pd.DataFrame(new_cols, index=df.index)
+        self.bars = pd.concat([df, new_df], axis=1)
         
         # Defragment
-        self.bars = df.copy()
+        self.bars = self.bars.copy()
 
     def filter_survivors(self, config_path="data/survivors.json"):
         """
