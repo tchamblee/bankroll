@@ -15,12 +15,29 @@ class FeatureEngine:
 
     def load_ticker_data(self, pattern):
         """Loads and returns a sorted DataFrame for a specific ticker pattern."""
-        files = glob.glob(os.path.join(self.data_dir, pattern))
-        if not files:
-            print(f"No files found for {pattern}")
-            return None
+        # Point to Clean Data Lake
+        # Pattern usually passed as "RAW_TICKS_..." so we join with clean dir
+        # We need to handle if pattern is absolute or relative
+        # Assuming pattern is just the filename pattern like "RAW_TICKS_SPY*.parquet"
         
-        print(f"Loading {len(files)} files for {pattern}...")
+        # If the user passes a full path, we might break.
+        # But in our scripts we pass "RAW_TICKS_...".
+        # Let's override the data_dir to clean_ticks if not already set
+        clean_dir = os.path.join(os.path.dirname(self.data_dir), "clean_ticks")
+        if os.path.exists(clean_dir):
+            search_dir = clean_dir
+        else:
+            search_dir = self.data_dir # Fallback to raw if clean doesn't exist
+            
+        files = glob.glob(os.path.join(search_dir, pattern))
+        if not files:
+            # Try raw dir if clean failed
+            files = glob.glob(os.path.join(self.data_dir, pattern))
+            if not files:
+                print(f"No files found for {pattern} in {search_dir} or {self.data_dir}")
+                return None
+        
+        print(f"Loading {len(files)} files for {pattern} from {os.path.dirname(files[0])}...")
         dfs = []
         for f in files:
             try:
@@ -47,17 +64,6 @@ class FeatureEngine:
         
         # Ensure we have a valid mid_price
         df = df.dropna(subset=['mid_price'])
-        
-        # Outlier Removal: Filter out bad ticks (e.g. > 2% move in one tick)
-        # This fixes the 'FATAL Outliers' identified in integrity checks
-        if len(df) > 1:
-            pct_change = df['mid_price'].pct_change().abs()
-            # 0.02 (2%) is huge for a single tick in FX
-            outliers = pct_change > 0.02
-            outlier_count = outliers.sum()
-            if outlier_count > 0:
-                print(f"  ⚠️  Removed {outlier_count} price outliers from {pattern}")
-                df = df[~outliers]
         
         return df
 
