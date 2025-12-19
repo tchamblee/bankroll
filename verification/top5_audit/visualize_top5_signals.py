@@ -11,11 +11,11 @@ def plot_top5(df):
     
     # Champions
     features = [
-        "delta_beta_dxy_50",
-        "volatility_200",
-        "delta_autocorr_400_50",
-        "beta_dxy",
-        "delta_volatility_50_10"
+        "frac_diff_02",
+        "beta_tnx",
+        "residual_dxy",
+        "hurst_200",
+        "delta_beta_spy_50"
     ]
     
     # Create Layout: Price + 5 Features
@@ -60,11 +60,19 @@ if __name__ == "__main__":
     engine = FeatureEngine(DATA_PATH)
     
     primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(primary_df, volume_threshold=500)
+    engine.create_volume_bars(primary_df, volume_threshold=250)
     
     dxy_df = engine.load_ticker_data("RAW_TICKS_DXY*.parquet")
     if dxy_df is not None:
         engine.add_correlator_residual(dxy_df, suffix="_dxy")
+        
+    tnx_df = engine.load_ticker_data("RAW_TICKS_TNX*.parquet")
+    if tnx_df is not None:
+        engine.add_correlator_residual(tnx_df, suffix="_tnx")
+
+    spy_df = engine.load_ticker_data("RAW_TICKS_SPY*.parquet")
+    if spy_df is not None:
+        engine.add_correlator_residual(spy_df, suffix="_spy")
         
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
     engine.add_physics_features()

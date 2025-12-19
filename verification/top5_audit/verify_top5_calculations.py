@@ -38,12 +38,20 @@ if __name__ == "__main__":
     
     print("Loading Data for Top 5 Audit...")
     primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(primary_df, volume_threshold=500)
+    engine.create_volume_bars(primary_df, volume_threshold=250)
     
     # Load Correlators required for Top 5
     dxy_df = engine.load_ticker_data("RAW_TICKS_DXY*.parquet")
     if dxy_df is not None:
         engine.add_correlator_residual(dxy_df, suffix="_dxy")
+        
+    tnx_df = engine.load_ticker_data("RAW_TICKS_TNX*.parquet")
+    if tnx_df is not None:
+        engine.add_correlator_residual(tnx_df, suffix="_tnx")
+
+    spy_df = engine.load_ticker_data("RAW_TICKS_SPY*.parquet")
+    if spy_df is not None:
+        engine.add_correlator_residual(spy_df, suffix="_spy")
         
     # Calculate Features
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
@@ -53,13 +61,13 @@ if __name__ == "__main__":
     
     df = engine.bars
     
-    # Top 5 Champions
+    # Top 5 Champions (Horizon 60)
     champions = [
-        ("delta_beta_dxy_50", "Macro Flow: Change in Dollar Sensitivity"),
-        ("volatility_200", "Energy: Long-term Volatility"),
-        ("delta_autocorr_400_50", "Cyclicality: Change in Long-term Memory"),
-        ("beta_dxy", "Macro State: Dollar Sensitivity"),
-        ("delta_volatility_50_10", "Momentum: Short-term Volatility Expansion")
+        ("frac_diff_02", "Memory: Fractional Differentiation (0.2)"),
+        ("beta_tnx", "Macro: Sensitivity to US 10Y Rates"),
+        ("residual_dxy", "Macro: Idiosyncratic moves vs Dollar"),
+        ("hurst_200", "Regime: Long-term Hurst Exponent"),
+        ("delta_beta_spy_50", "Macro Flow: Change in SPY Sensitivity")
     ]
     
     for feat, desc in champions:
