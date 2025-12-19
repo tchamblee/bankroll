@@ -94,7 +94,7 @@ def get_shannon_entropy(series, window=100, bins=20):
     """
     def _calc_entropy(x):
         # Discretize data into bins to estimate probability distribution
-        counts, _ = np.histogram(x, bins=bins, density=True)
+        counts, _ = np.histogram(x, bins=bins, density=False)
         # Probabilities
         p = counts / counts.sum()
         # Remove zeros to avoid log error

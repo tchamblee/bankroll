@@ -310,8 +310,9 @@ class FeatureEngine:
             
             # 7. Spread Intensity (Spread / Volatility)
             if 'avg_spread' in df.columns and f'volatility_{w}' in df.columns:
-                # Normalize spread by the volatility environment
-                df[f'spread_intensity_{w}'] = df['avg_spread'] / df[f'volatility_{w}'].replace(0, 1e-6)
+                # Normalize spread by price to match log-return volatility units
+                spread_pct = df['avg_spread'] / df['close']
+                df[f'spread_intensity_{w}'] = spread_pct / df[f'volatility_{w}'].replace(0, 1e-6)
 
         self.bars = df
         
