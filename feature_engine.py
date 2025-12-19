@@ -215,6 +215,9 @@ class FeatureEngine:
             
             df[f'autocorr_{w}'] = df['log_ret'].rolling(w).corr(df['log_ret'].shift(1))
             
+            # 3. Skewness (Tail Asymmetry) - 3rd Moment
+            df[f'skew_{w}'] = df['log_ret'].rolling(w).skew()
+            
             vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
             df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm
 
@@ -287,6 +290,10 @@ class FeatureEngine:
             # 5. Pressure Trend (Persistent Support/Resistance)
             if 'pres_imbalance' in df.columns:
                 df[f'pres_trend_{w}'] = df['pres_imbalance'].rolling(w).mean()
+
+            # 6. Flow Autocorrelation (Herding)
+            # Persistence of the order flow itself
+            df[f'flow_autocorr_{w}'] = df['ticket_imbalance'].rolling(w).corr(df['ticket_imbalance'].shift(1))
 
         self.bars = df
         
