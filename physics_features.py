@@ -84,3 +84,23 @@ def get_efficiency_ratio(series, window=100):
     path = series.diff().abs().rolling(window).sum()
     
     return change / path
+
+def get_shannon_entropy(series, window=100, bins=20):
+    """
+    Calculates Rolling Shannon Entropy (Information Content).
+    Higher Entropy = More Disorder/Noise. Lower Entropy = More Structure/Trend.
+    
+    H(X) = -sum(p(x) * log2(p(x)))
+    """
+    def _calc_entropy(x):
+        # Discretize data into bins to estimate probability distribution
+        counts, _ = np.histogram(x, bins=bins, density=True)
+        # Probabilities
+        p = counts / counts.sum()
+        # Remove zeros to avoid log error
+        p = p[p > 0]
+        # Entropy
+        return -np.sum(p * np.log2(p))
+
+    # Apply on rolling log-returns (or stationarized series)
+    return series.rolling(window=window).apply(_calc_entropy, raw=True)

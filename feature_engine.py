@@ -198,10 +198,21 @@ class FeatureEngine:
         if not hasattr(self, 'bars'): return
         df = self.bars
         print("Calculating Physics Features...")
+        
+        # Ensure log_ret exists for Entropy calc
+        if 'log_ret' not in df.columns:
+            df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+            
         df['frac_diff_04'] = phys.frac_diff_ffd(df['close'], d=0.4)
         df['frac_diff_02'] = phys.frac_diff_ffd(df['close'], d=0.2)
         df['hurst_100'] = phys.get_hurst_exponent(df['close'], window=100)
         df['hurst_200'] = phys.get_hurst_exponent(df['close'], window=200)
+        
+        # Shannon Entropy (Disorder)
+        # Using log_ret (stationarized) is better for distribution analysis than raw price
+        df['entropy_100'] = phys.get_shannon_entropy(df['log_ret'], window=100)
+        df['entropy_200'] = phys.get_shannon_entropy(df['log_ret'], window=200)
+        
         self.bars = df
 
     def add_microstructure_features(self, windows=[50, 100]):
