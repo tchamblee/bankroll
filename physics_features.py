@@ -13,7 +13,7 @@ def get_weights(d, size):
         w.append(w_k)
     return np.array(w[::-1]) # Reverse for convolution
 
-def frac_diff_ffd(series, d=0.4, thres=1e-5):
+def frac_diff_ffd(series, d=0.4, thres=1e-4):
     """
     Fractional Differentiation with Fixed Window (FFD).
     Preserves memory while making series stationary.

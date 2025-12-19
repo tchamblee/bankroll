@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+import json
 from datetime import timedelta
 import physics_features as phys
 
@@ -199,6 +200,33 @@ class FeatureEngine:
         # Defragment
         self.bars = df.copy()
 
+    def filter_survivors(self, config_path="data/survivors.json"):
+        """
+        Retains only the Elite Survivors identified by the Purge (from JSON).
+        """
+        if not hasattr(self, 'bars'): return
+        
+        # Default: Keep everything
+        cols_to_keep = self.bars.columns.tolist()
+        
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    survivors = json.load(f)
+                
+                # Always keep metadata columns
+                meta = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume']
+                cols_to_keep = meta + [c for c in survivors if c in self.bars.columns]
+                
+                print(f"Loaded {len(survivors)} features from {config_path}.")
+            except Exception as e:
+                print(f"Error loading survivor config: {e}. Keeping all.")
+        else:
+            print(f"Config {config_path} not found. Keeping all features.")
+
+        self.bars = self.bars[cols_to_keep]
+        print(f"Filtered to {len(cols_to_keep)} columns.")
+
 if __name__ == "__main__":
     DATA_PATH = "/home/tony/bankroll/data/raw_ticks"
     engine = FeatureEngine(DATA_PATH)
@@ -214,6 +242,11 @@ if __name__ == "__main__":
         engine.add_physics_features()
         engine.add_delta_features()
         
-        print("\nFeatures Head (Residuals):")
-        cols = [c for c in ['time_end', 'close', 'residual_tnx', 'beta_tnx', 'hurst_100'] if c in engine.bars.columns]
-        print(engine.bars.tail()[cols])
+        # Filter using the JSON config we just generated
+        engine.filter_survivors()
+        
+        print("\nFeatures Head (Filtered):")
+        # Print whatever remains
+        print(engine.bars.tail())
+        
+        
