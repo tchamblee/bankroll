@@ -193,9 +193,21 @@ class FeatureEngine:
         
         df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
 
+        # Pre-calc Garman-Klass Variance components
+        # Var_GK = 0.5 * (ln(H/L))^2 - (2*ln(2)-1) * (ln(C/O))^2
+        log_hl = np.log(df['high'] / df['low'])
+        log_co = np.log(df['close'] / df['open'])
+        gk_var = 0.5 * (log_hl ** 2) - (2 * np.log(2) - 1) * (log_co ** 2)
+        # Ensure non-negative (theoretical issue, practically fine)
+        gk_var = gk_var.clip(lower=0)
+
         for w in windows:
-            df[f'velocity_{w}'] = df['close'].diff(w)
-            df[f'volatility_{w}'] = df['log_ret'].rolling(w).std()
+            # 1. Velocity (Cumulative Log Return) - Scale Invariant
+            df[f'velocity_{w}'] = df['log_ret'].rolling(w).sum()
+            
+            # 2. Volatility (Garman-Klass) - More precise, uses OHLC
+            # Rolling Vol = sqrt( Rolling Mean of Variance )
+            df[f'volatility_{w}'] = np.sqrt(gk_var.rolling(w).mean())
             
             net_change = df['close'].diff(w).abs()
             path = df['close'].diff().abs().rolling(w).sum()

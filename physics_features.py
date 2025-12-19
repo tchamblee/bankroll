@@ -36,7 +36,7 @@ def frac_diff_ffd(series, d=0.4, thres=1e-4):
     
     return res
 
-def get_hurst_exponent(series, window=100, lags=[2, 4, 8, 16]):
+def get_hurst_exponent(series, window=100, lags=[2, 4, 8, 16, 32, 64]):
     """
     Estimates Hurst Exponent using variance of differences at multiple lags.
     H = 0.5 (Random), >0.5 (Trend), <0.5 (Mean Revert).
