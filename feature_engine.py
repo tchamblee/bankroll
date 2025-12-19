@@ -92,15 +92,29 @@ class FeatureEngine:
         
         # Aggregation
         # We need first ts_event (start) and last ts_event (end)
-        bars = df.groupby('bar_id').agg({
+        agg_dict = {
             'ts_event': ['first', 'last'],
             'mid_price': ['first', 'max', 'min', 'last'],
             'vol_proxy': 'sum',
             'aggressor_vol': 'sum'
-        })
+        }
+        
+        # Add Bid/Ask Size aggregation if available
+        if 'sizebid' in df.columns and 'sizeask' in df.columns:
+            agg_dict['sizebid'] = 'mean'
+            agg_dict['sizeask'] = 'mean'
+            
+        bars = df.groupby('bar_id').agg(agg_dict)
         
         # Flatten Columns
-        bars.columns = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol']
+        # The order depends on the keys. Groupby sorts keys? No, usually follows order.
+        # Safest way is to reconstruct based on what we added
+        
+        flat_cols = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol']
+        if 'sizebid' in agg_dict:
+            flat_cols.extend(['avg_bid_size', 'avg_ask_size'])
+            
+        bars.columns = flat_cols
         bars.reset_index(drop=True, inplace=True)
         
         # Basic Features
@@ -230,6 +244,17 @@ class FeatureEngine:
         if 'log_ret' not in df.columns:
             df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
             
+        # --- NEW: Bar Duration (Time Dilation) ---
+        if 'time_end' in df.columns and 'time_start' in df.columns:
+            # Calculate duration in seconds
+            df['bar_duration'] = (df['time_end'] - df['time_start']).dt.total_seconds()
+            # Normalize duration (optional, but raw seconds is fine for trees)
+            
+        # --- NEW: Pressure Imbalance (L1 Order Book) ---
+        if 'avg_bid_size' in df.columns and 'avg_ask_size' in df.columns:
+            total_size = df['avg_bid_size'] + df['avg_ask_size']
+            df['pres_imbalance'] = (df['avg_bid_size'] - df['avg_ask_size']) / total_size.replace(0, 1)
+            
         for w in windows:
             # 1. Flow Trend (Persistence of Buying/Selling pressure)
             df[f'flow_trend_{w}'] = df['ticket_imbalance'].rolling(w).mean()
@@ -242,6 +267,14 @@ class FeatureEngine:
             # How unusual is this buying/selling relative to recent history?
             flow_std = df['ticket_imbalance'].rolling(w).std()
             df[f'flow_shock_{w}'] = (df['ticket_imbalance'] - df[f'flow_trend_{w}']) / flow_std.replace(0, 1)
+
+            # 4. Duration Trend (Acceleration/Deceleration)
+            if 'bar_duration' in df.columns:
+                df[f'duration_trend_{w}'] = df['bar_duration'].rolling(w).mean()
+                
+            # 5. Pressure Trend (Persistent Support/Resistance)
+            if 'pres_imbalance' in df.columns:
+                df[f'pres_trend_{w}'] = df['pres_imbalance'].rolling(w).mean()
 
         self.bars = df
         
