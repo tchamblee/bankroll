@@ -3,18 +3,19 @@ import numpy as np
 import scipy.stats as stats
 import json
 import os
+import config
 from feature_engine import FeatureEngine
 from validate_features import triple_barrier_labels
 
 def get_feature_correlation_matrix(df, features):
     return df[features].corr(method='spearman')
 
-def purge_features(df, target_col='target_return', ic_threshold=0.01, p_threshold=0.05, corr_threshold=0.95):
+def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p_threshold=0.05, corr_threshold=0.75):
     """
     Identifies features to purge based on Variance, IC, and Collinearity.
-    Saves survivors to data/survivors.json.
+    Saves survivors to data/survivors_{horizon}.json.
     """
-    print(f"\n--- 💀 THE PURGE (IC > {ic_threshold}, P < {p_threshold}, Corr < {corr_threshold}) ---")
+    print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, P < {p_threshold}, Corr < {corr_threshold}) ---")
     
     # 1. Identify Candidate Columns
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
@@ -30,7 +31,7 @@ def purge_features(df, target_col='target_return', ic_threshold=0.01, p_threshol
     for f in candidates:
         if df[f].std() == 0 or df[f].isna().all():
             kill_list.append({'Feature': f, 'Reason': 'Zero Variance / NaN'})
-            print(f"  ❌ {f}: Dead")
+            # print(f"  ❌ {f}: Dead")
         else:
             survivors.append(f)
             
@@ -61,7 +62,50 @@ def purge_features(df, target_col='target_return', ic_threshold=0.01, p_threshol
         return []
 
     stats_df = pd.DataFrame(feature_stats).set_index('Feature')
-    survivors = stats_df.loc[survivors].sort_values('Abs_IC', ascending=False).index.tolist()
+    
+    # --- NEW: CONCEPT DEDUPLICATION (Highlander Rule) ---
+    print("\n[Step 2.5] Checking for Conceptual Redundancy (Best Window per Feature)...")
+    
+    # Helper to get base name (e.g., 'volatility_200' -> 'volatility')
+    def get_base_concept(name):
+        # specific handling for delta features to keep them separate from base features
+        if name.startswith('delta_'):
+            # delta_volatility_50_50 -> delta_volatility
+            parts = name.split('_')
+            # Check if last parts are numbers
+            while parts and parts[-1].isdigit():
+                parts.pop()
+            return "_".join(parts)
+        else:
+            # volatility_200 -> volatility
+            parts = name.split('_')
+            while parts and parts[-1].isdigit():
+                parts.pop()
+            return "_".join(parts)
+
+    concept_map = {}
+    for f in survivors:
+        concept = get_base_concept(f)
+        if concept not in concept_map:
+            concept_map[concept] = []
+        concept_map[concept].append(f)
+        
+    concept_survivors = []
+    for concept, group in concept_map.items():
+        if len(group) == 1:
+            concept_survivors.append(group[0])
+        else:
+            # Pick winner based on Abs_IC
+            winner = stats_df.loc[group].sort_values('Abs_IC', ascending=False).index[0]
+            concept_survivors.append(winner)
+            # Log the kills
+            losers = [g for g in group if g != winner]
+            for l in losers:
+                kill_list.append({'Feature': l, 'Reason': f'Concept Redundant with {winner}'})
+                print(f"  ❌ {l}: Concept Redundant with {winner} (Weaker IC)")
+                
+    survivors = stats_df.loc[concept_survivors].sort_values('Abs_IC', ascending=False).index.tolist()
+    # ----------------------------------------------------
     
     # 4. Redundancy Check (Collinearity)
     print("\n[Step 3] Checking for Redundant Features (Collinearity)...")
@@ -93,9 +137,10 @@ def purge_features(df, target_col='target_return', ic_threshold=0.01, p_threshol
     print(stats_df.loc[final_survivors][['IC', 'P-Value']])
     
     # SAVE SURVIVORS TO JSON
-    output_path = os.path.join("data", "survivors.json")
+    filename = f"survivors_{horizon}.json"
+    output_path = os.path.join(config.DIRS['DATA_DIR'], filename)
     try:
-        os.makedirs("data", exist_ok=True)
+        os.makedirs(config.DIRS['DATA_DIR'], exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(final_survivors, f, indent=4)
         print(f"\n💾 Saved {len(final_survivors)} survivors to {output_path}")
@@ -105,12 +150,12 @@ def purge_features(df, target_col='target_return', ic_threshold=0.01, p_threshol
     return final_survivors
 
 if __name__ == "__main__":
-    DATA_PATH = "/home/tony/bankroll/data/raw_ticks"
+    DATA_PATH = config.DIRS['DATA_RAW_TICKS']
     engine = FeatureEngine(DATA_PATH)
     
     # Load Data (Same setup as validation)
     primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(primary_df, volume_threshold=500)
+    engine.create_volume_bars(primary_df, volume_threshold=250)
     
     for ticker, suffix in [("RAW_TICKS_TNX*.parquet", "_tnx"), 
                            ("RAW_TICKS_DXY*.parquet", "_dxy"), 
@@ -125,8 +170,16 @@ if __name__ == "__main__":
     engine.add_delta_features(lookback=10) 
     engine.add_delta_features(lookback=50) 
     
-    df = engine.bars.copy()
-    df['target_return'] = triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0)
+    base_df = engine.bars.copy()
     
-    # Run the Purge
-    purge_features(df)
+    # Loop through Horizons from Config
+    for horizon in config.PREDICTION_HORIZONS:
+        print(f"\n\n==============================================")
+        print(f"Running Feature Hunger Games for Horizon: {horizon}")
+        print(f"==============================================")
+        
+        df = base_df.copy()
+        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, pt_sl_multiple=2.0)
+        
+        # Run the Purge for this horizon
+        purge_features(df, horizon)

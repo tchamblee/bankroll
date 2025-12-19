@@ -3,6 +3,7 @@ import numpy as np
 from feature_engine import FeatureEngine
 import scipy.stats as stats
 import os
+import config
 
 def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100):
     """
@@ -63,7 +64,7 @@ def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100)
     return pd.Series(outcomes, index=df.index)
 
 if __name__ == "__main__":
-    DATA_PATH = "/home/tony/bankroll/data/raw_ticks"
+    DATA_PATH = config.DIRS['DATA_RAW_TICKS']
     
     # 1. Generate Features
     engine = FeatureEngine(DATA_PATH)
@@ -77,8 +78,8 @@ if __name__ == "__main__":
 
     print(f"Loaded {len(primary_df)} primary ticks.")
     # For FX, Tick Bars (fixed number of quotes) are often more robust than estimated volume
-    # Let's use 500 ticks per bar. 700k ticks -> 1400 bars.
-    engine.create_volume_bars(primary_df, volume_threshold=500)
+    # Let's use 250 ticks per bar. 700k ticks -> 2800 bars.
+    engine.create_volume_bars(primary_df, volume_threshold=250)
     
     if engine.bars is None or len(engine.bars) < 10:
         print(f"Not enough bars generated ({len(engine.bars) if engine.bars is not None else 0}).")
@@ -103,51 +104,56 @@ if __name__ == "__main__":
     engine.add_delta_features(lookback=10) 
     engine.add_delta_features(lookback=50) 
     
-    df = engine.bars.copy()
+    base_df = engine.bars.copy()
     
-    # 2. Generate Labels (Triple Barrier)
-    df['target_return'] = triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0)
-    
-    # 3. Analyze (Hunger Games)
-    print("\n⚔️  FEATURE HUNGER GAMES ⚔️")
-    
-    keywords = ['velocity', 'efficiency', 'volatility', 'autocorr', 'trend_strength', 
-                'imbalance', 'frac_diff', 'hurst', 'residual', 'beta', 'delta']
-    feature_cols = [c for c in df.columns if any(x in c for x in keywords)]
-    target_col = 'target_return'
-    
-    results = []
-    print("\n--- Feature Validation Results (Information Coefficient) ---")
-    for f in feature_cols:
-        valid = df[[f, target_col]].dropna()
-        if len(valid) < 50: continue
+    for horizon in config.PREDICTION_HORIZONS:
+        print(f"\n\n==============================================")
+        print(f"⚔️  FEATURE VALIDATION: Horizon {horizon} ⚔️")
+        print(f"==============================================")
         
-        corr, p_val = stats.spearmanr(valid[f], valid[target_col])
-        results.append({'Feature': f, 'IC': corr, 'P-Value': p_val})
+        df = base_df.copy()
         
-    results_df = pd.DataFrame(results).sort_values('IC', ascending=False)
-    print(results_df)
-    
-    # 4. Bonus: Random Forest Importance
-    try:
-        from sklearn.ensemble import RandomForestRegressor
-        print("\n🌲 Random Forest Importance Check...")
+        # 2. Generate Labels (Triple Barrier)
+        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, pt_sl_multiple=2.0)
         
-        valid_data = df[feature_cols + [target_col]].dropna()
-        if len(valid_data) > 100:
-            X = valid_data[feature_cols]
-            y = valid_data[target_col]
+        # 3. Analyze (Hunger Games)
+        keywords = ['velocity', 'efficiency', 'volatility', 'autocorr', 'trend_strength', 
+                    'imbalance', 'frac_diff', 'hurst', 'residual', 'beta', 'delta']
+        feature_cols = [c for c in df.columns if any(x in c for x in keywords)]
+        target_col = 'target_return'
+        
+        results = []
+        print("\n--- Feature Validation Results (Information Coefficient) ---")
+        for f in feature_cols:
+            valid = df[[f, target_col]].dropna()
+            if len(valid) < 50: continue
             
-            model = RandomForestRegressor(n_estimators=50, max_depth=5, n_jobs=-1, random_state=42)
-            model.fit(X, y)
+            corr, p_val = stats.spearmanr(valid[f], valid[target_col])
+            results.append({'Feature': f, 'IC': corr, 'P-Value': p_val})
             
-            importances = pd.DataFrame({
-                'Feature': feature_cols,
-                'Importance': model.feature_importances_
-            }).sort_values('Importance', ascending=False)
+        results_df = pd.DataFrame(results).sort_values('IC', ascending=False)
+        print(results_df)
+        
+        # 4. Bonus: Random Forest Importance
+        try:
+            from sklearn.ensemble import RandomForestRegressor
+            print("\n🌲 Random Forest Importance Check...")
             
-            print(importances.head(20))
-        else:
-            print("Not enough valid data for Random Forest check.")
-    except Exception as e:
-        print(f"RF Check failed: {e}")
+            valid_data = df[feature_cols + [target_col]].dropna()
+            if len(valid_data) > 100:
+                X = valid_data[feature_cols]
+                y = valid_data[target_col]
+                
+                model = RandomForestRegressor(n_estimators=50, max_depth=5, n_jobs=-1, random_state=42)
+                model.fit(X, y)
+                
+                importances = pd.DataFrame({
+                    'Feature': feature_cols,
+                    'Importance': model.feature_importances_
+                }).sort_values('Importance', ascending=False)
+                
+                print(importances.head(20))
+            else:
+                print("Not enough valid data for Random Forest check.")
+        except Exception as e:
+            print(f"RF Check failed: {e}")
