@@ -1,0 +1,3 @@
+pandas
+ib_insync
+pyarrow
