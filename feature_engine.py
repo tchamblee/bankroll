@@ -104,6 +104,11 @@ class FeatureEngine:
             agg_dict['sizebid'] = 'mean'
             agg_dict['sizeask'] = 'mean'
             
+        # Add Bid/Ask Price aggregation for Spread analysis
+        if 'pricebid' in df.columns and 'priceask' in df.columns:
+            agg_dict['pricebid'] = 'mean'
+            agg_dict['priceask'] = 'mean'
+            
         bars = df.groupby('bar_id').agg(agg_dict)
         
         # Flatten Columns
@@ -113,6 +118,8 @@ class FeatureEngine:
         flat_cols = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol']
         if 'sizebid' in agg_dict:
             flat_cols.extend(['avg_bid_size', 'avg_ask_size'])
+        if 'pricebid' in agg_dict:
+            flat_cols.extend(['avg_bid_price', 'avg_ask_price'])
             
         bars.columns = flat_cols
         bars.reset_index(drop=True, inplace=True)
@@ -270,6 +277,10 @@ class FeatureEngine:
             total_size = df['avg_bid_size'] + df['avg_ask_size']
             df['pres_imbalance'] = (df['avg_bid_size'] - df['avg_ask_size']) / total_size.replace(0, 1)
             
+        # --- NEW: Spread Intensity (Cost of Liquidity) ---
+        if 'avg_bid_price' in df.columns and 'avg_ask_price' in df.columns:
+            df['avg_spread'] = df['avg_ask_price'] - df['avg_bid_price']
+            
         for w in windows:
             # 1. Flow Trend (Persistence of Buying/Selling pressure)
             df[f'flow_trend_{w}'] = df['ticket_imbalance'].rolling(w).mean()
@@ -290,10 +301,17 @@ class FeatureEngine:
             # 5. Pressure Trend (Persistent Support/Resistance)
             if 'pres_imbalance' in df.columns:
                 df[f'pres_trend_{w}'] = df['pres_imbalance'].rolling(w).mean()
+                # Price-Pressure Correlation (Magnet vs Wall)
+                df[f'price_pressure_corr_{w}'] = df['log_ret'].rolling(w).corr(df['pres_imbalance'])
 
             # 6. Flow Autocorrelation (Herding)
             # Persistence of the order flow itself
             df[f'flow_autocorr_{w}'] = df['ticket_imbalance'].rolling(w).corr(df['ticket_imbalance'].shift(1))
+            
+            # 7. Spread Intensity (Spread / Volatility)
+            if 'avg_spread' in df.columns and f'volatility_{w}' in df.columns:
+                # Normalize spread by the volatility environment
+                df[f'spread_intensity_{w}'] = df['avg_spread'] / df[f'volatility_{w}'].replace(0, 1e-6)
 
         self.bars = df
         

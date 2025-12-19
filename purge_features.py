@@ -19,7 +19,8 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     
     # 1. Identify Candidate Columns
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
-               'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', target_col]
+               'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', target_col,
+               'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread']
     candidates = [c for c in df.columns if c not in exclude]
     
     kill_list = []
