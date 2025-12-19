@@ -10,12 +10,12 @@ from validate_features import triple_barrier_labels
 def get_feature_correlation_matrix(df, features):
     return df[features].corr(method='spearman')
 
-def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p_threshold=0.05, corr_threshold=0.75):
+def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p_threshold=0.05, corr_threshold=0.75, stability_threshold=0.5):
     """
     Identifies features to purge based on Variance, IC, and Collinearity.
     Saves survivors to data/survivors_{horizon}.json.
     """
-    print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, P < {p_threshold}, Corr < {corr_threshold}) ---")
+    print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, Stability > {stability_threshold}) ---")
     
     # 1. Identify Candidate Columns
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
@@ -36,22 +36,59 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
         else:
             survivors.append(f)
             
-    # 3. Weakness Check (Low IC)
-    print("\n[Step 2] Checking for Weak Features (Low Predictive Power)...")
+    # 3. Stability & Weakness Check (Walk-Forward Analysis)
+    print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
     ic_survivors = []
     
+    # Create 5 chronological folds
+    n = len(df)
+    fold_size = n // 5
+    folds = []
+    for i in range(5):
+        start = i * fold_size
+        end = (i + 1) * fold_size if i < 4 else n
+        folds.append(df.iloc[start:end])
+    
     for f in survivors:
-        valid = df[[f, target_col]].dropna()
-        if len(valid) < 50:
-            kill_list.append({'Feature': f, 'Reason': 'Insufficient Data'})
-            continue
-            
-        corr, p_val = stats.spearmanr(valid[f], valid[target_col])
-        feature_stats.append({'Feature': f, 'IC': corr, 'Abs_IC': abs(corr), 'P-Value': p_val})
+        fold_ics = []
+        valid_folds = 0
         
-        if abs(corr) < ic_threshold or p_val > p_threshold:
-            kill_list.append({'Feature': f, 'Reason': f'Weak Signal (IC={corr:.4f}, P={p_val:.4f})'})
-            # print(f"  ❌ {f}: Weak")
+        for fold_data in folds:
+            valid = fold_data[[f, target_col]].dropna()
+            if len(valid) < 20: 
+                fold_ics.append(0)
+                continue
+                
+            corr, p_val = stats.spearmanr(valid[f], valid[target_col])
+            # Handle potential nan if constant in fold
+            if np.isnan(corr): corr = 0
+            fold_ics.append(corr)
+            valid_folds += 1
+            
+        mean_ic = np.mean(fold_ics)
+        std_ic = np.std(fold_ics)
+        # Avoid div by zero
+        stability = abs(mean_ic) / (std_ic + 1e-6)
+        
+        # Overall stats (full dataset) for redundancy check
+        full_valid = df[[f, target_col]].dropna()
+        full_corr, full_p = stats.spearmanr(full_valid[f], full_valid[target_col])
+        
+        feature_stats.append({
+            'Feature': f, 
+            'IC': full_corr, 
+            'Abs_IC': abs(full_corr), 
+            'P-Value': full_p,
+            'Stability': stability,
+            'Fold_ICs': [round(x, 3) for x in fold_ics]
+        })
+        
+        # Filter Logic
+        if abs(full_corr) < ic_threshold:
+            kill_list.append({'Feature': f, 'Reason': f'Weak Signal (IC={full_corr:.4f})'})
+        elif stability < stability_threshold:
+            kill_list.append({'Feature': f, 'Reason': f'Unstable (Stability={stability:.2f})'})
+            # print(f"  ❌ {f}: Unstable (Stab={stability:.2f})")
         else:
             ic_survivors.append(f)
             
@@ -135,7 +172,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     print(f"🛡️  {len(final_survivors)} Survivors remaining.")
     
     print("\n--- 🛡️ THE SURVIVORS (Elite Gene Pool) ---")
-    print(stats_df.loc[final_survivors][['IC', 'P-Value']])
+    print(stats_df.loc[final_survivors][['IC', 'Stability', 'P-Value']])
     
     # SAVE SURVIVORS TO JSON
     filename = f"survivors_{horizon}.json"
