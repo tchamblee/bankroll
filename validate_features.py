@@ -100,6 +100,9 @@ if __name__ == "__main__":
     # Add Physics Features
     engine.add_physics_features()
     
+    # Add Microstructure Features
+    engine.add_microstructure_features()
+    
     # Add Delta Features (Flow) - Multiple Horizons
     engine.add_delta_features(lookback=10) 
     engine.add_delta_features(lookback=50) 

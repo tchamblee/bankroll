@@ -203,6 +203,36 @@ class FeatureEngine:
         df['hurst_100'] = phys.get_hurst_exponent(df['close'], window=100)
         df['hurst_200'] = phys.get_hurst_exponent(df['close'], window=200)
         self.bars = df
+
+    def add_microstructure_features(self, windows=[50, 100]):
+        if not hasattr(self, 'bars'): return
+        print(f"Calculating Microstructure (Order Flow) Features...")
+        df = self.bars
+        
+        # Ensure we have the base inputs
+        if 'ticket_imbalance' not in df.columns:
+            # Re-calculate if missing (Net / Vol)
+            # Avoid div by zero
+            vol = df['volume'].replace(0, 1)
+            df['ticket_imbalance'] = df['net_aggressor_vol'] / vol
+            
+        if 'log_ret' not in df.columns:
+            df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+            
+        for w in windows:
+            # 1. Flow Trend (Persistence of Buying/Selling pressure)
+            df[f'flow_trend_{w}'] = df['ticket_imbalance'].rolling(w).mean()
+            
+            # 2. Price-Flow Correlation (Wyckoff / Divergence)
+            # High +Corr = Healthy Trend. Low/Neg Corr = Absorption/Divergence.
+            df[f'price_flow_corr_{w}'] = df['log_ret'].rolling(w).corr(df['ticket_imbalance'])
+            
+            # 3. Flow Shock (Z-Score of Flow)
+            # How unusual is this buying/selling relative to recent history?
+            flow_std = df['ticket_imbalance'].rolling(w).std()
+            df[f'flow_shock_{w}'] = (df['ticket_imbalance'] - df[f'flow_trend_{w}']) / flow_std.replace(0, 1)
+
+        self.bars = df
         
     def add_delta_features(self, lookback=10):
         if not hasattr(self, 'bars'): return
@@ -258,6 +288,7 @@ if __name__ == "__main__":
         
         engine.add_features_to_bars()
         engine.add_physics_features()
+        engine.add_microstructure_features()
         engine.add_delta_features()
         
         # Filter using the JSON config we just generated
