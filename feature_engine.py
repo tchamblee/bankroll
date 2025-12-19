@@ -47,6 +47,18 @@ class FeatureEngine:
         
         # Ensure we have a valid mid_price
         df = df.dropna(subset=['mid_price'])
+        
+        # Outlier Removal: Filter out bad ticks (e.g. > 2% move in one tick)
+        # This fixes the 'FATAL Outliers' identified in integrity checks
+        if len(df) > 1:
+            pct_change = df['mid_price'].pct_change().abs()
+            # 0.02 (2%) is huge for a single tick in FX
+            outliers = pct_change > 0.02
+            outlier_count = outliers.sum()
+            if outlier_count > 0:
+                print(f"  ⚠️  Removed {outlier_count} price outliers from {pattern}")
+                df = df[~outliers]
+        
         return df
 
     def create_volume_bars(self, primary_df, volume_threshold=1000):

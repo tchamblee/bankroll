@@ -3,3 +3,4 @@ ib_insync
 pyarrow
 scipy
 scikit-learn
+matplotlib
