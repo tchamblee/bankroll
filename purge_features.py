@@ -50,31 +50,60 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
         end = (i + 1) * fold_size if i < 4 else n
         folds.append(df.iloc[start:end])
     
+    # --- OPTIMIZED: Vectorized Fold Analysis ---
+    # Calculates ICs for all features at once, avoiding the slow loop overhead.
+    
+    # 1. Pre-calculate all Fold ICs
+    fold_ic_matrix = pd.DataFrame(index=survivors, columns=range(5))
+    
+    print("    ... Vectorizing fold calculations (Speedup) ...")
+    
+    for i, fold_data in enumerate(folds):
+        # Calculate Spearman correlation
+        # corrwith matches pairwise deletion of NaNs (like the loop's dropna)
+        c = fold_data[survivors].corrwith(fold_data[target_col], method='spearman')
+        
+        # Enforce min_periods=20 rule
+        # Count non-NaNs in features where target is also non-NaN
+        target_valid = fold_data[target_col].notna()
+        counts = fold_data.loc[target_valid, survivors].count()
+        c[counts < 20] = 0
+        
+        fold_ic_matrix[i] = c
+    
+    fold_ic_matrix = fold_ic_matrix.fillna(0)
+    
+    # 2. Calculate Stability
+    mean_ic = fold_ic_matrix.mean(axis=1)
+    std_ic = fold_ic_matrix.std(axis=1)
+    stability_scores = mean_ic.abs() / (std_ic + 1e-6)
+    
+    # 3. Calculate Full ICs
+    full_corr_series = df[survivors].corrwith(df[target_col], method='spearman').fillna(0)
+    
+    # 4. Filter and Collect Stats
     for f in survivors:
-        fold_ics = []
-        valid_folds = 0
+        full_corr = full_corr_series.loc[f]
+        stability = stability_scores.loc[f]
+        fold_ics = fold_ic_matrix.loc[f].tolist()
         
-        for fold_data in folds:
-            valid = fold_data[[f, target_col]].dropna()
-            if len(valid) < 20: 
-                fold_ics.append(0)
-                continue
-                
-            corr, p_val = stats.spearmanr(valid[f], valid[target_col])
-            # Handle potential nan if constant in fold
-            if np.isnan(corr): corr = 0
-            fold_ics.append(corr)
-            valid_folds += 1
-            
-        mean_ic = np.mean(fold_ics)
-        std_ic = np.std(fold_ics)
-        # Avoid div by zero
-        stability = abs(mean_ic) / (std_ic + 1e-6)
+        pass_ic = abs(full_corr) >= ic_threshold
+        pass_stab = stability >= stability_threshold
         
-        # Overall stats (full dataset) for redundancy check
-        full_valid = df[[f, target_col]].dropna()
-        full_corr, full_p = stats.spearmanr(full_valid[f], full_valid[target_col])
+        full_p = 1.0 # Default/Dummy
         
+        if not pass_ic:
+             kill_list.append({'Feature': f, 'Reason': f'Weak Signal (IC={full_corr:.4f})'})
+        elif not pass_stab:
+             kill_list.append({'Feature': f, 'Reason': f'Unstable (Stability={stability:.2f})'})
+        else:
+             # Only calculate P-value for survivors (Expensive op, done only on survivors)
+             full_valid = df[[f, target_col]].dropna()
+             if len(full_valid) > 2:
+                 _, full_p = stats.spearmanr(full_valid[f], full_valid[target_col])
+             
+             ic_survivors.append(f)
+
         feature_stats.append({
             'Feature': f, 
             'IC': full_corr, 
@@ -83,15 +112,6 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
             'Stability': stability,
             'Fold_ICs': [round(x, 3) for x in fold_ics]
         })
-        
-        # Filter Logic
-        if abs(full_corr) < ic_threshold:
-            kill_list.append({'Feature': f, 'Reason': f'Weak Signal (IC={full_corr:.4f})'})
-        elif stability < stability_threshold:
-            kill_list.append({'Feature': f, 'Reason': f'Unstable (Stability={stability:.2f})'})
-            # print(f"  ❌ {f}: Unstable (Stab={stability:.2f})")
-        else:
-            ic_survivors.append(f)
             
     survivors = ic_survivors
     
