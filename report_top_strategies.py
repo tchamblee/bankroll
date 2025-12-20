@@ -7,96 +7,26 @@ import numpy as np
 import config
 from collections import Counter
 from backtest_engine import BacktestEngine
-from strategy_genome import Strategy, StaticGene, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
+from strategy_genome import Strategy
 
 class MockEngine:
     def __init__(self, df):
         self.bars = df
 
-def parse_gene_string(gene_str):
-    match = re.match(r"(.+)\s+([<>=!]+)\s+(.+)", gene_str)
-    if not match: return None
-    left, op, right = match.groups()
-    left, op, right = left.strip(), op.strip(), right.strip()
-    
-    if left.startswith("Consecutive("):
-        direction = left.split("(")[1].split(")")[0]
-        return ConsecutiveGene(direction, op, int(re.sub(r"[^0-9]", "", right)))
-    if left.startswith("Time("):
-        mode = left.split("(")[1].split(")")[0]
-        return TimeGene(mode, op, int(re.sub(r"[^0-9]", "", right)))
-    if left.startswith("Z("):
-        try:
-            inner = left.split("Z(")[1].split(")")[0]
-            feature, window = [x.strip() for x in inner.split(",")]
-            if right.endswith('σ'): right = right[:-1]
-            return ZScoreGene(feature, op, float(right), int(window))
-        except: return None
-    if left.startswith("Delta("):
-        try:
-            inner = left.split("Delta(")[1].split(")")[0]
-            feature, lookback = [x.strip() for x in inner.split(",")]
-            return DeltaGene(feature, op, float(right), int(lookback))
-        except: return None
-    try:
-        threshold = float(right)
-        return StaticGene(left, op, threshold)
-    except ValueError:
-        return RelationalGene(left, op, right)
-
-def reconstruct_strategy(strat_dict):
-    logic = strat_dict['logic']
-    name = strat_dict['name']
-    try:
-        match = re.search(r"(])[(](.*?)[)]", logic)
-        logic_type = match.group(1) if match else "AND"
-        min_con = int(logic_type.split("(")[1].split(")")[0]) if logic_type.startswith("VOTE(") else None
-        sep = " + " if logic_type == "VOTE" else " AND "
-        parts = logic.split(" | ")
-        if len(parts) != 2: return None
-        long_block, short_block = parts[0], parts[1]
-        
-        def extract_content(block, tag):
-            if f"{tag}:(" in block:
-                start = block.find(f"{tag}:(") + len(tag) + 2
-                return block[start:block.rfind(")")]
-            return "None"
-
-        long_part = extract_content(long_block, "LONG")
-        short_part = extract_content(short_block, "SHORT")
-        
-        l_genes = [parse_gene_string(g) for g in long_part.split(sep) if g != "None"]
-        s_genes = [parse_gene_string(g) for g in short_part.split(sep) if g != "None"]
-        return Strategy(name=name, long_genes=[g for g in l_genes if g], short_genes=[g for g in s_genes if g], min_concordance=min_con)
-    except Exception as e:
-        print(f"Error parsing {name}: {e}")
-        return None
-
-def parse_genes_from_logic(logic_str):
-    genes = []
-    try:
-        match = re.search(r"(])[(](.*?)[)]", logic_str)
-        logic_type = match.group(1) if match else "AND"
-        sep = " + " if logic_type == "VOTE" else " AND "
-        parts = logic_str.split(" | ")
-        if len(parts) < 2: return []
-        for block, tag in [(parts[0], "LONG"), (parts[1], "SHORT")]:
-            if f"{tag}:(" in block:
-                start = block.find(f"{tag}:(") + len(tag) + 2
-                content = block[start:block.rfind(")")]
-                if content != "None":
-                    for g in content.split(sep):
-                        # Try to match function-style genes first
-                        m = re.match(r"(Delta|Z)\((.*?),", g)
-                        if m: 
-                            # Extract feature name from inside the function
-                            genes.append(f"{m.group(1)}({m.group(2)})")
-                        else:
-                            # Fallback for simple genes
-                            tokens = g.split(' ')
-                            if tokens: genes.append(tokens[0])
-    except: pass
-    return genes
+def get_gene_description(gene):
+    if gene.type == 'delta':
+        return f"Delta({gene.feature}, {gene.lookback})"
+    elif gene.type == 'zscore':
+        return f"Z({gene.feature}, {gene.window})"
+    elif gene.type == 'relational':
+        return f"Rel({gene.feature_left}, {gene.feature_right})"
+    elif gene.type == 'static':
+        return gene.feature
+    elif gene.type == 'consecutive':
+        return f"Consecutive({gene.direction})"
+    elif gene.type == 'time':
+        return f"Time({gene.mode})"
+    return "Unknown"
 
 def main():
     print("\n" + "="*120)
@@ -125,8 +55,11 @@ def main():
             
             strategies = []
             for d in strategies_data:
-                s = reconstruct_strategy(d)
-                if s: strategies.append(s)
+                try:
+                    s = Strategy.from_dict(d)
+                    strategies.append(s)
+                except Exception as e:
+                    print(f"  Warning: Could not load strategy {d.get('name', 'Unknown')}: {e}")
             
             if not strategies: continue
 
@@ -156,9 +89,9 @@ def main():
                 row = res_df.iloc[i]
                 if row['trades'] == 0 and full_rets_pct[i] == 0: continue
                 
-                genes = parse_genes_from_logic(strategies_data[i]['logic'])
-                horizon_genes.extend(genes)
-                global_gene_counts.update(genes)
+                strat_genes = [get_gene_description(g) for g in strat.long_genes + strat.short_genes]
+                horizon_genes.extend(strat_genes)
+                global_gene_counts.update(strat_genes)
                 
                 df_data.append({
                     'Name': strat.name,
@@ -168,7 +101,7 @@ def main():
                     'Trades(OOS)': int(row['trades']),
                     'Stability': row['stability'],
                     'Status': 'PROFITABLE' if row['total_return'] > 0 else 'LOSS',
-                    'Genes': ", ".join(genes[:2]) + ("..." if len(genes)>2 else "")
+                    'Genes': ", ".join(strat_genes[:2]) + ("..." if len(strat_genes)>2 else "")
                 })
             
             if df_data:

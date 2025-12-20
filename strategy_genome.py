@@ -5,9 +5,9 @@ import json
 import os
 import config
 
-# Removed fixed lists to allow dynamic evolution
-# VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
-# VALID_ZSCORE_WINDOWS = [10, 20, 50, 100, 200]
+# Strict grid to prevent overfitting
+VALID_DELTA_LOOKBACKS = [5, 10, 20, 50, 100, 200]
+VALID_ZSCORE_WINDOWS = [20, 50, 100, 200, 400]
 
 def gene_from_dict(d):
     """Factory to restore gene from dictionary."""
@@ -177,10 +177,9 @@ class DeltaGene:
         return res
 
     def mutate(self, features_pool):
-        # 1. Mutate Lookback (Random Walk)
+        # 1. Mutate Lookback (Strict Grid)
         if random.random() < 0.3:
-            change = random.randint(-5, 5)
-            self.lookback = max(1, self.lookback + change)
+            self.lookback = random.choice(VALID_DELTA_LOOKBACKS)
         
         # 2. Mutate Threshold
         if random.random() < 0.3:
@@ -241,10 +240,9 @@ class ZScoreGene:
         return res
 
     def mutate(self, features_pool):
-        # 1. Mutate Window
+        # 1. Mutate Window (Strict Grid)
         if random.random() < 0.3:
-            change = random.randint(-10, 10)
-            self.window = max(5, self.window + change)
+            self.window = random.choice(VALID_ZSCORE_WINDOWS)
             
         # 2. Mutate Threshold (Sigma)
         if random.random() < 0.3:
@@ -498,7 +496,7 @@ class GenomeFactory:
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.5, 0.5) * stats['std']
-            lookback = random.randint(3, 100) # Dynamic Lookback
+            lookback = random.choice(VALID_DELTA_LOOKBACKS) # Strict Grid
             return DeltaGene(feature, operator, threshold, lookback)
             
         # 30% Chance of ZScore Gene (Statistical Extreme)
@@ -506,7 +504,7 @@ class GenomeFactory:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
-            window = random.randint(10, 250) # Dynamic Window
+            window = random.choice(VALID_ZSCORE_WINDOWS) # Strict Grid
             return ZScoreGene(feature, operator, threshold, window)
         
         # Fallback (should not be reached with current probs)

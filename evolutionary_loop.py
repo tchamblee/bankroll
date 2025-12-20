@@ -140,8 +140,9 @@ class EvolutionaryAlphaFactory:
             selected_indices = []
             for idx in sorted_indices:
                 if len(selected_indices) >= 5: break
-                current_score = test_res.loc[idx, 'sortino']
-                if current_score <= 0: continue
+                # current_score = test_res.loc[idx, 'sortino'] 
+                # We allow negative scores now to avoid Empty DataFrame, 
+                # so users can see the "best of the worst" if all fail.
                 
                 if not selected_indices:
                     selected_indices.append(idx)
@@ -150,6 +151,10 @@ class EvolutionaryAlphaFactory:
                     if rho < 0.7: selected_indices.append(idx)
             
             final_res = test_res.iloc[selected_indices]
+            
+            if not final_res.empty and final_res['sortino'].max() <= 0:
+                print("\n⚠️  WARNING: All selected strategies have negative OOS performance.")
+
             print("\nFinal Account Performance Stats (OOS):")
             print(final_res[['id', 'sortino', 'total_return', 'trades']])
             

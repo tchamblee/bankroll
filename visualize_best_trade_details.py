@@ -41,6 +41,17 @@ def parse_gene_string(gene_str):
         return RelationalGene(left, op, right)
 
 def reconstruct_strategy(strat_dict):
+    # 1. New JSON Format (Native Serialization)
+    if 'long_genes' in strat_dict:
+        try:
+            return Strategy.from_dict(strat_dict)
+        except Exception as e:
+            print(f"Error hydrating strategy {strat_dict.get('name')}: {e}")
+            return None
+
+    # 2. Legacy String Format (Regex Parsing)
+    if 'logic' not in strat_dict: return None
+
     logic = strat_dict['logic']
     name = strat_dict['name']
     try:
@@ -71,6 +82,10 @@ def reconstruct_strategy(strat_dict):
 def visualize_best_strategy():
     # 1. Load Data
     print(f"Loading Feature Matrix...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print(f"❌ Feature Matrix not found at {config.DIRS['FEATURE_MATRIX']}")
+        return
+
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     # 2. Find Best Strategy
@@ -82,15 +97,18 @@ def visualize_best_strategy():
         
     all_strats = []
     for f in apex_files:
-        with open(f, 'r') as f_in:
-            all_strats.extend(json.load(f_in))
+        try:
+            with open(f, 'r') as f_in:
+                all_strats.extend(json.load(f_in))
+        except Exception as e:
+            print(f"Error reading {f}: {e}")
             
     if not all_strats: return
     
     # Sort by test_sortino
     all_strats.sort(key=lambda x: x.get('test_sortino', -999), reverse=True)
     best_data = all_strats[0]
-    print(f"🏆 Visualizing Best Strategy: {best_data['name']} (Sortino: {best_data['test_sortino']:.2f})")
+    print(f"🏆 Visualizing Best Strategy: {best_data['name']} (Sortino: {best_data.get('test_sortino', 0.0):.2f})")
     
     strat = reconstruct_strategy(best_data)
     if not strat: return
@@ -100,13 +118,18 @@ def visualize_best_strategy():
     signals = strat.generate_signal(backtester.context)
     
     # 4. Prepare Plotting Data
-    # Focus on the Test set for clarity, or full if requested. 
-    # "Visualize every single trade" -> Full might be too crowded. 
-    # Let's do the Test set first as it's the OOS proof.
+    # Focus on the Test set for clarity
     start_idx = backtester.val_idx
+    
+    # Ensure indices are within bounds
+    if start_idx >= len(df):
+        print("Test set index out of bounds.")
+        return
+
     prices = df['close'].values[start_idx:]
     sig = signals[start_idx:]
-    times = df.index[start_idx:] # Assuming index is time or bar id
+    # Assuming index is available. If default range index, use it.
+    times = df.index[start_idx:] 
     
     plt.figure(figsize=(20, 10))
     plt.plot(times, prices, color='black', alpha=0.4, label='EUR/USD Price')
@@ -116,11 +139,6 @@ def visualize_best_strategy():
     diff = np.diff(sig, prepend=0)
     
     # Positions
-    # Long Entry/Upsize: diff > 0 and sig > 0
-    # Long Exit/Downsize: diff < 0 and sig >= 0
-    # Short Entry/Upsize: diff < 0 and sig < 0
-    # Short Exit/Downsize: diff > 0 and sig <= 0
-    
     for i in range(len(sig)):
         t = times[i]
         p = prices[i]
@@ -142,13 +160,10 @@ def visualize_best_strategy():
                 plt.scatter(t, p, color='blue', marker='x', s=100, alpha=0.6)
                 plt.annotate("EXIT", (t, p), textcoords="offset points", xytext=(0,-15), ha='center', fontsize=8, color='blue')
 
-    plt.title(f"Detailed Trade Log: {best_data['name']} (OOS Period)\n{best_data['logic']}", fontsize=14)
+    plt.title(f"Detailed Trade Log: {best_data['name']} (OOS Period)\n{strat}", fontsize=14)
     plt.ylabel("Price")
     plt.xlabel("Bar Index")
     plt.grid(True, alpha=0.2)
-    
-    # Add secondary axis for cumulative PnL
-    # ... (omitted for focus on entry/exit)
     
     out_path = os.path.join(config.DIRS['PLOTS_DIR'], "best_strategy_trades.png")
     plt.savefig(out_path)
