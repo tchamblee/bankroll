@@ -10,7 +10,7 @@ from strategy_genome import GenomeFactory, Strategy, Gene
 from backtest_engine import BacktestEngine
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=2000, generations=30):
+    def __init__(self, data, survivors_file, population_size=3000, generations=50):
         self.data = data
         self.pop_size = population_size
         self.generations = generations
@@ -122,8 +122,34 @@ class EvolutionaryAlphaFactory:
             for i, s in enumerate(unique_hof):
                 output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.iloc[i]['sharpe']})
             with open("data/apex_strategies.json", "w") as f: json.dump(output, f, indent=4)
+            print(f"\n💾 Saved {len(output)} Apex Strategies to data/apex_strategies.json")
         else:
             print("No strategies survived validation.")
+            
+        # 7. Save Final Population Snapshot (Top 100) for DNA Analysis
+        # We need to re-evaluate current population to get latest scores if needed, 
+        # or just use the last results.
+        print("\nSaving Population Snapshot for DNA Analysis...")
+        pop_results = self.backtester.evaluate_population(self.population, set_type='train')
+        top_100_idx = pop_results.sort_values('sharpe', ascending=False).head(100).index
+        
+        dna_dump = []
+        for idx in top_100_idx:
+            strat = self.population[idx]
+            # Extract raw genes
+            genes = []
+            for g in strat.long_genes: genes.append({'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': 'long'})
+            for g in strat.short_genes: genes.append({'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': 'short'})
+            
+            dna_dump.append({
+                'name': strat.name,
+                'sharpe': pop_results.loc[idx, 'sharpe'],
+                'genes': genes
+            })
+            
+        with open("data/final_population.json", "w") as f:
+            json.dump(dna_dump, f, indent=4)
+        print(f"💾 Saved Top 100 Population Genomes to data/final_population.json")
 
 if __name__ == "__main__":
     engine = FeatureEngine(config.DIRS['DATA_RAW_TICKS'])

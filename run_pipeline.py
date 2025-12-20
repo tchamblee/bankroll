@@ -46,6 +46,10 @@ def main():
     # 4. Strategy Evolution (The Brain)
     run_step("evolutionary_loop.py", "Evolutionary Strategy Discovery")
     
+    # 5. Analysis & Visualization
+    run_step("visualize_strategy_performance.py", "Strategy Performance Visualization (OOS)")
+    run_step("analyze_genome_dna.py", "Genome DNA Analysis")
+    
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
     print("Output Artifacts:")
     print("  - Data: data/clean_ticks/")
