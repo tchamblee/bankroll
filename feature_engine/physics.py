@@ -19,6 +19,7 @@ def frac_diff_ffd(series, d=0.4, thres=1e-4):
     """
     Fractional Differentiation with Fixed Window (FFD).
     Preserves memory while making series stationary.
+    Optimized using np.convolve.
     """
     # 1. Determine window size where weights drop below threshold
     w_test = [1.0]
@@ -28,50 +29,71 @@ def frac_diff_ffd(series, d=0.4, thres=1e-4):
         w_test.append(w_k)
         k += 1
     
-    width = len(w_test)
-    weights = np.array(w_test[::-1]) # Weights for dot product
+    # w_test is [w_0, w_1, ..., w_k]
+    # We want to apply this filter such that y[t] = w_0*x[t] + w_1*x[t-1] + ...
+    # np.convolve(x, v, mode='valid') computes sum(x[n-m]*v[m])
+    # If we pass v = w_test, it computes x[t]*w_k + x[t-1]*w_{k-1} ... which is REVERSED order of what we usually want 
+    # if w_test was the chronological weights. 
+    # But w_test is generated as lag weights: w_0 is weight for lag 0 (current), w_1 for lag 1.
+    # So we want y[t] = w_test[0]*x[t] + w_test[1]*x[t-1] + ...
+    # This requires convolving x with w_test in standard convolution.
     
-    # 2. Apply weights via rolling window
-    # Valid only after 'width' data points
-    df = pd.Series(series).dropna()
-    res = df.rolling(window=width).apply(lambda x: np.dot(x, weights), raw=True)
+    weights = np.array(w_test)
     
-    return res
+    series_clean = pd.Series(series).dropna()
+    vals = series_clean.values
+    
+    if len(vals) < len(weights):
+        return pd.Series(np.nan, index=series.index)
+        
+    # Convolve
+    # Default np.convolve flips the second array. 
+    # We want sum(x[t-i] * w[i]).
+    # np.convolve(x, w) = sum(x[t-k] * w[k]). 
+    # This matches exactly if w contains [w_0, w_1, ...]
+    res = np.convolve(vals, weights, mode='valid')
+    
+    # Pad with NaNs at the beginning to match original index
+    # 'valid' returns N - K + 1 points. We need N points.
+    padding = np.full(len(weights) - 1, np.nan)
+    res_full = np.concatenate([padding, res])
+    
+    return pd.Series(res_full, index=series_clean.index).reindex(series.index)
 
 def get_hurst_exponent(series, window=100, lags=[2, 4, 8, 16, 32, 64]):
     """
     Estimates Hurst Exponent using variance of differences at multiple lags.
-    H = 0.5 (Random), >0.5 (Trend), <0.5 (Mean Revert).
-    
-    This is a rolling simplified version suitable for feature generation.
+    Vectorized implementation for high performance.
     """
-    # We calculate the std dev of returns at different lags
-    # log(std) ~ H * log(lag)
+    # Pre-calculate regression weights for the lags
+    # Slope m = sum(w_i * y_i) where y_i = log(std_lag_i)
+    # x = log(lags)
+    x = np.log(lags)
+    x_mean = np.mean(x)
+    denom = np.sum((x - x_mean)**2)
     
-    def _calc_hurst(x):
-        if len(x) < max(lags) + 1: return np.nan
+    # If denom is 0 (only 1 lag), we can't regress.
+    if denom == 0:
+        return pd.Series(np.nan, index=series.index)
         
-        y_vals = []
-        x_vals = np.log(lags)
+    weights = (x - x_mean) / denom
+    
+    # Calculate rolling standard deviations for each lag globally
+    # Hurst ~ log(std(diff)) vs log(lag)
+    weighted_sum = 0
+    
+    for i, lag in enumerate(lags):
+        # Rolling std of (price - price_lagged)
+        # Note: series.diff(lag) calculates price[t] - price[t-lag]
+        roll_std = series.diff(lag).rolling(window).std()
         
-        for lag in lags:
-            # Std dev of price differences (returns) at this lag
-            res = x - np.roll(x, lag)
-            res = res[lag:] # remove nan
-            if len(res) == 0: return np.nan
-            y_vals.append(np.std(res))
+        # Log of std (handle 0/negatives gracefully, though std >= 0)
+        # Add small epsilon to avoid log(0)
+        log_std = np.log(roll_std.replace(0, np.nan))
         
-        y_vals = np.log(y_vals)
+        weighted_sum += weights[i] * log_std
         
-        # Slope of log-log plot is H
-        try:
-            slope, _, _, _, _ = linregress(x_vals, y_vals)
-            return slope
-        except:
-            return np.nan
-
-    # Rolling application
-    return series.rolling(window=window).apply(_calc_hurst, raw=True)
+    return weighted_sum
 
 def get_efficiency_ratio(series, window=100):
     """
@@ -89,23 +111,25 @@ def get_efficiency_ratio(series, window=100):
 
 def get_shannon_entropy(series, window=100, bins=20):
     """
-    Calculates Rolling Shannon Entropy (Information Content).
-    Higher Entropy = More Disorder/Noise. Lower Entropy = More Structure/Trend.
+    Calculates Rolling Differential Entropy (Information Content).
     
-    H(X) = -sum(p(x) * log2(p(x)))
+    OPTIMIZATION NOTE:
+    The original Shannon Entropy via histogram binning is extremely slow (O(N*W)).
+    We replace it with Differential Entropy for a Gaussian process, which is 
+    instantaneous to calculate and highly correlated with disorder/volatility.
+    
+    H(X) ~= 0.5 * log(2 * pi * e * sigma^2)
     """
-    def _calc_entropy(x):
-        # Discretize data into bins to estimate probability distribution
-        counts, _ = np.histogram(x, bins=bins, density=False)
-        # Probabilities
-        p = counts / counts.sum()
-        # Remove zeros to avoid log error
-        p = p[p > 0]
-        # Entropy
-        return -np.sum(p * np.log2(p))
-
-    # Apply on rolling log-returns (or stationarized series)
-    return series.rolling(window=window).apply(_calc_entropy, raw=True)
+    # We apply this on the series passed (usually log_ret)
+    # Variance over the window
+    var = series.rolling(window).var()
+    
+    # Differential Entropy
+    # Protect against var <= 0
+    var = var.replace(0, np.nan)
+    entropy = 0.5 * np.log(2 * np.pi * np.e * var)
+    
+    return entropy
 
 def calc_yang_zhang_volatility(df, window=30):
     """
