@@ -389,29 +389,25 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 15% Time Gene
-        if rand_val < 0.15:
-            mode = random.choice(['hour', 'weekday'])
-            val = random.randint(0, 23) if mode == 'hour' else random.randint(0, 6)
-            op = random.choice(['>', '<', '==', '!='])
-            return TimeGene(mode, op, val)
+        # 0% Time Gene (DISABLED to prevent overfitting)
+        # if rand_val < 0.15: ...
         
-        # 15% Consecutive Gene (Pattern)
-        elif rand_val < 0.30:
+        # 20% Consecutive Gene (Pattern)
+        if rand_val < 0.20:
             direction = random.choice(['up', 'down'])
             op = random.choice(['>', '=='])
             count = random.randint(2, 6)
             return ConsecutiveGene(direction, op, count)
 
-        # 15% Chance of Relational Gene (Context)
-        elif rand_val < 0.45:
+        # 20% Chance of Relational Gene (Context)
+        elif rand_val < 0.40:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool) 
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
             
-        # 20% Chance of Delta Gene (Momentum)
-        elif rand_val < 0.65:
+        # 30% Chance of Delta Gene (Momentum)
+        elif rand_val < 0.70:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -419,21 +415,17 @@ class GenomeFactory:
             lookback = random.randint(3, 100) # Dynamic Lookback
             return DeltaGene(feature, operator, threshold, lookback)
             
-        # 20% Chance of ZScore Gene (Statistical Extreme)
-        elif rand_val < 0.85:
+        # 30% Chance of ZScore Gene (Statistical Extreme)
+        elif rand_val < 1.00:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
             window = random.randint(10, 250) # Dynamic Window
             return ZScoreGene(feature, operator, threshold, window)
         
-        # 15% Chance of Static Gene (Classic)
+        # Fallback (should not be reached with current probs)
         else:
-            feature = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = stats['mean'] + random.uniform(-1.5, 1.5) * stats['std']
-            return StaticGene(feature, operator, threshold)
+            return self.create_random_gene()
 
     def create_random_gene(self):
         # Legacy fallback

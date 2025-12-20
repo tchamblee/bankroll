@@ -86,9 +86,13 @@ def parse_genes_from_logic(logic_str):
                 content = block[start:block.rfind(")")]
                 if content != "None":
                     for g in content.split(sep):
-                        m = re.match(r"Delta\[(.*?),", g) or re.match(r"Z\[(.*?),", g)
-                        if m: genes.append(m.group(1))
+                        # Try to match function-style genes first
+                        m = re.match(r"(Delta|Z)\((.*?),", g)
+                        if m: 
+                            # Extract feature name from inside the function
+                            genes.append(f"{m.group(1)}({m.group(2)})")
                         else:
+                            # Fallback for simple genes
                             tokens = g.split(' ')
                             if tokens: genes.append(tokens[0])
     except: pass
