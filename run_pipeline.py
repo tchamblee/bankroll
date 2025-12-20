@@ -61,6 +61,7 @@ def main():
     # 5. Analysis & Visualization
     run_step("visualize_strategy_performance.py", "Strategy Performance Visualization (OOS)")
     run_step("analyze_genome_dna.py", "Genome DNA Analysis")
+    run_step("report_top_strategies.py", "Final Apex Strategy Report")
     
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
     print("Output Artifacts:")
@@ -68,6 +69,7 @@ def main():
     print(f"  - Features: {config.DIRS['FEATURES_DIR']}/survivors_*.json")
     print(f"  - Strategies: {config.DIRS['STRATEGIES_DIR']}/apex_strategies.json")
     print(f"  - Plots: {config.DIRS['PLOTS_DIR']}/top5_audit_chart.png")
+    print(f"  - Report: Check stdout for 'APEX STRATEGY REPORT'")
 
 if __name__ == "__main__":
     main()
