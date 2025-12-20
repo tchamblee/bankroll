@@ -52,6 +52,93 @@ def load_ticker_data(data_dir, pattern):
     
     return df
 
+def load_price_series(pattern, name, resample='1h', data_dir=None):
+    """
+    Unified loader for price series data (Parquet).
+    Handles cleaning, sorting, mid-price calculation, and resampling.
+    """
+    print(f"Loading {name}...")
+    
+    # Resolve directory
+    if data_dir is None:
+        # Try clean, then raw
+        search_dirs = [config.DIRS['DATA_CLEAN_TICKS'], config.DIRS['DATA_RAW_TICKS']]
+    else:
+        search_dirs = [data_dir]
+        
+    files = []
+    for d in search_dirs:
+        if os.path.exists(d):
+            found = glob.glob(os.path.join(d, pattern))
+            if found:
+                files = found
+                break
+                
+    if not files:
+        print(f"  ❌ No files for {name}")
+        return None
+    
+    try:
+        print(f"  Found {len(files)} files for {name}...")
+        dfs = []
+        for f in files:
+            try:
+                dfs.append(pd.read_parquet(f))
+            except Exception as e:
+                print(f"  ⚠️ Error reading {f}: {e}")
+
+        if not dfs: return None
+        
+        df = pd.concat(dfs, ignore_index=True)
+        df = df.sort_values("ts_event")
+        
+        # Deduplicate if needed
+        if df.index.duplicated().any(): # If index was set? No, it's RangeIndex here.
+            pass
+
+        # Handle price column with data validity check
+        price = None
+        
+        # 1. Try Mid Price (Pre-calculated)
+        if 'mid_price' in df.columns and not df['mid_price'].isna().all():
+            price = df['mid_price']
+            
+        # 2. Try Bid/Ask (if Mid failed or missing)
+        elif 'pricebid' in df.columns and 'priceask' in df.columns:
+            # Check if they have valid data (not just NaNs)
+            if not df['pricebid'].isna().all() and not df['priceask'].isna().all():
+                # Check for bad data (0s or NaNs)
+                bid = df['pricebid'].replace(0, np.nan)
+                ask = df['priceask'].replace(0, np.nan)
+                price = (bid + ask) / 2
+        
+        # 3. Try Last Price (Fallback)
+        if price is None and 'last_price' in df.columns and not df['last_price'].isna().all():
+            price = df['last_price']
+            
+        # 4. Try generic 'price'
+        if price is None and 'price' in df.columns:
+            price = df['price']
+
+        if price is None:
+            print(f"  ❌ No valid price data for {name}")
+            return None
+        
+        # Align index
+        df = df.set_index("ts_event")
+        price.index = df.index
+        
+        # Resample to common grid if requested
+        if resample:
+            resampled = price.resample(resample).last().ffill()
+            return resampled
+        else:
+            return price
+            
+    except Exception as e:
+        print(f"  ❌ Error loading {name}: {e}")
+        return None
+
 from concurrent.futures import ProcessPoolExecutor
 
 def process_gdelt_file(f):
@@ -70,9 +157,9 @@ def process_gdelt_file(f):
         df['tone'] = tone_data[0].astype(float)
         df['polarity'] = tone_data[3].astype(float)
         
-        # Define Keywords
-        eur_locs = ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro']
-        usd_locs = ['United States', 'US', 'Washington', 'New York', 'America', 'Fed']
+        # Define Keywords from Config
+        eur_locs = config.GDELT_KEYWORDS['EUR_LOCS']
+        usd_locs = config.GDELT_KEYWORDS['USD_LOCS']
         
         # Optimized String Matching
         # FillNa to avoid errors
@@ -85,11 +172,11 @@ def process_gdelt_file(f):
         de_mask = loc_str.str.contains('GERMANY|BERLIN|DE', regex=True)
         
         # Pre-calculate boolean masks for themes to speed up grouping
-        conflict_mask = theme_str.str.contains('ARMEDCONFLICT|CRISISLEX|UNREST', regex=True)
-        epu_mask = theme_str.str.contains('EPU', regex=True)
-        inflation_mask = theme_str.str.contains('ECON_INFLATION|TAX_FNCACT', regex=True)
-        cb_mask = theme_str.str.contains('CENTRAL_BANK', regex=True)
-        energy_mask = theme_str.str.contains('ENV_OIL|ECON_ENERGY_PRICES', regex=True)
+        conflict_mask = theme_str.str.contains(config.GDELT_KEYWORDS['CONFLICT_THEMES'], regex=True)
+        epu_mask = theme_str.str.contains(config.GDELT_KEYWORDS['EPU_THEMES'], regex=True)
+        inflation_mask = theme_str.str.contains(config.GDELT_KEYWORDS['INFLATION_THEMES'], regex=True)
+        cb_mask = theme_str.str.contains(config.GDELT_KEYWORDS['CB_THEMES'], regex=True)
+        energy_mask = theme_str.str.contains(config.GDELT_KEYWORDS['ENERGY_THEMES'], regex=True)
         
         # Aggregate by Date within this file
         agg_data = []

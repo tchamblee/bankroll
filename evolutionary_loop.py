@@ -156,7 +156,11 @@ class EvolutionaryAlphaFactory:
             output = []
             for idx in selected_indices:
                 s = unique_hof[idx]
-                output.append({'name': s.name, 'logic': str(s), 'test_sortino': test_res.loc[idx, 'sortino']})
+                # Serialize Strategy to dict
+                strat_data = s.to_dict()
+                # Append performance metrics
+                strat_data['test_sortino'] = test_res.loc[idx, 'sortino']
+                output.append(strat_data)
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)

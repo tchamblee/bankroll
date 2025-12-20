@@ -42,6 +42,17 @@ def parse_gene_string(gene_str):
         return RelationalGene(left, op, right)
 
 def reconstruct_strategy(strat_dict):
+    # 1. New JSON Format (Native Serialization)
+    if 'long_genes' in strat_dict:
+        try:
+            return Strategy.from_dict(strat_dict)
+        except Exception as e:
+            print(f"Error hydrating strategy {strat_dict.get('name')}: {e}")
+            return None
+
+    # 2. Legacy String Format (Regex Parsing)
+    if 'logic' not in strat_dict: return None
+    
     logic = strat_dict['logic']
     name = strat_dict['name']
     try:

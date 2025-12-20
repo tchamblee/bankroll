@@ -32,3 +32,14 @@ ACCOUNT_SIZE = 30000.0  # USD
 STANDARD_LOT_SIZE = 100000.0 # Units of EUR/USD
 MIN_LOTS = 1
 MAX_LOTS = 3
+
+# --- GDELT SETTINGS ---
+GDELT_KEYWORDS = {
+    'EUR_LOCS': ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro'],
+    'USD_LOCS': ['United States', 'US', 'Washington', 'New York', 'America', 'Fed'],
+    'CONFLICT_THEMES': 'ARMEDCONFLICT|CRISISLEX|UNREST',
+    'EPU_THEMES': 'EPU',
+    'INFLATION_THEMES': 'ECON_INFLATION|TAX_FNCACT',
+    'CB_THEMES': 'CENTRAL_BANK',
+    'ENERGY_THEMES': 'ENV_OIL|ECON_ENERGY_PRICES',
+}

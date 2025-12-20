@@ -2,48 +2,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import glob
 import os
-
-def load_price_series(pattern, name, resample='1h'):
-    print(f"Loading {name}...")
-    files = glob.glob(pattern)
-    if not files:
-        print(f"  ❌ No files for {name}")
-        return None
-    
-    try:
-        df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
-        df = df.sort_values("ts_event").set_index("ts_event")
-        
-        # Handle price column with data validity check
-        price = None
-        
-        # 1. Try Mid Price
-        if 'mid_price' in df.columns and not df['mid_price'].isna().all():
-            price = df['mid_price']
-            
-        # 2. Try Bid/Ask (if Mid failed)
-        elif 'pricebid' in df.columns and 'priceask' in df.columns:
-            # Check if they have data
-            if not df['pricebid'].isna().all() and not df['priceask'].isna().all():
-                price = (df['pricebid'] + df['priceask']) / 2
-        
-        # 3. Try Last Price (Fallback or if others failed)
-        if price is None and 'last_price' in df.columns and not df['last_price'].isna().all():
-            price = df['last_price']
-            
-        if price is None:
-            print(f"  ❌ No valid price data for {name}")
-            return None
-            
-        # Resample to common grid
-        resampled = price.resample(resample).last().ffill()
-        return resampled
-    except Exception as e:
-        print(f"  ❌ Error: {e}")
-        return None
+import config
+from feature_engine.loader import load_price_series
 
 def plot_health_check():
-    base_dir = "data/raw_ticks"
+    base_dir = config.DIRS['DATA_RAW_TICKS']
     assets = {
         "EUR/USD": os.path.join(base_dir, "RAW_TICKS_EURUSD*.parquet"),
         "TNX (Yields)": os.path.join(base_dir, "RAW_TICKS_TNX*.parquet"),
@@ -57,6 +20,24 @@ def plot_health_check():
     start_dates = []
     
     for name, pattern in assets.items():
+        # Pass data_dir explicity or let it fallback. 
+        # Since pattern contains full path now (os.path.join above), we should pass data_dir=None or handle it.
+        # Wait, load_price_series takes (pattern, name, resample, data_dir).
+        # In loader.py: files = glob.glob(os.path.join(search_dir, pattern))
+        # So it expects pattern to be relative to data_dir if data_dir is set, or relative to CLEAN/RAW defaults.
+        
+        # If I pass full path in pattern, and data_dir is None, it tries to join default dirs with full path pattern?
+        # glob.glob(os.path.join(dir, /abs/path)) -> /abs/path (usually).
+        # Let's check os.path.join behavior. os.path.join("foo", "/bar") -> "/bar".
+        # So if I pass full path as pattern, it should work even if search_dir is something else.
+        
+        # However, loader.py logic:
+        # if data_dir is None: search_dirs = [CLEAN, RAW]
+        # for d in search_dirs: glob.glob(os.path.join(d, pattern))
+        
+        # If pattern is absolute (which it is here), os.path.join ignores d.
+        # So it should work.
+        
         data = load_price_series(pattern, name)
         if data is not None:
             loaded_data[name] = data

@@ -9,6 +9,22 @@ import config
 # VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
 # VALID_ZSCORE_WINDOWS = [10, 20, 50, 100, 200]
 
+def gene_from_dict(d):
+    """Factory to restore gene from dictionary."""
+    if d['type'] == 'static':
+        return StaticGene(d['feature'], d['operator'], d['threshold'])
+    elif d['type'] == 'relational':
+        return RelationalGene(d['feature_left'], d['operator'], d['feature_right'])
+    elif d['type'] == 'delta':
+        return DeltaGene(d['feature'], d['operator'], d['threshold'], d['lookback'])
+    elif d['type'] == 'zscore':
+        return ZScoreGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'time':
+        return TimeGene(d['mode'], d['operator'], d['value'])
+    elif d['type'] == 'consecutive':
+        return ConsecutiveGene(d['direction'], d['operator'], d['count'])
+    return None
+
 class StaticGene:
     """
     Classic 'Magic Number' Gene.
@@ -60,6 +76,14 @@ class StaticGene:
     def copy(self):
         return StaticGene(self.feature, self.operator, self.threshold)
 
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold
+        }
+
     def __repr__(self):
         return f"{self.feature} {self.operator} {self.threshold:.10f}"
 
@@ -108,6 +132,14 @@ class RelationalGene:
 
     def copy(self):
         return RelationalGene(self.feature_left, self.operator, self.feature_right)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature_left': self.feature_left,
+            'operator': self.operator,
+            'feature_right': self.feature_right
+        }
 
     def __repr__(self):
         return f"{self.feature_left} {self.operator} {self.feature_right}"
@@ -168,6 +200,15 @@ class DeltaGene:
     def copy(self):
         return DeltaGene(self.feature, self.operator, self.threshold, self.lookback)
 
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'lookback': self.lookback
+        }
+
     def __repr__(self):
         return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.10f}"
 
@@ -220,6 +261,15 @@ class ZScoreGene:
     def copy(self):
         return ZScoreGene(self.feature, self.operator, self.threshold, self.window)
 
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'window': self.window
+        }
+
     def __repr__(self):
         return f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.10f}σ"
 
@@ -269,6 +319,14 @@ class TimeGene:
     def copy(self):
         return TimeGene(self.mode, self.operator, self.value)
 
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'mode': self.mode,
+            'operator': self.operator,
+            'value': self.value
+        }
+
     def __repr__(self):
         return f"Time({self.mode}) {self.operator} {self.value}"
 
@@ -312,6 +370,14 @@ class ConsecutiveGene:
     def copy(self):
         return ConsecutiveGene(self.direction, self.operator, self.count)
     
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'direction': self.direction,
+            'operator': self.operator,
+            'count': self.count
+        }
+
     def __repr__(self):
         return f"Consecutive({self.direction}) {self.operator} {self.count}"
 
@@ -357,6 +423,26 @@ class Strategy:
         signal = np.clip(net_votes, -config.MAX_LOTS, config.MAX_LOTS)
         
         return signal
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'long_genes': [g.to_dict() for g in self.long_genes],
+            'short_genes': [g.to_dict() for g in self.short_genes],
+            'min_concordance': self.min_concordance,
+            'fitness': self.fitness
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        s = cls(
+            name=d.get('name', 'Strategy'),
+            long_genes=[gene_from_dict(g) for g in d.get('long_genes', [])],
+            short_genes=[gene_from_dict(g) for g in d.get('short_genes', [])],
+            min_concordance=d.get('min_concordance')
+        )
+        s.fitness = d.get('fitness', 0.0)
+        return s
 
     def __repr__(self):
         logic_str = "VOTE"
