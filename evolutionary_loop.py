@@ -174,36 +174,18 @@ class EvolutionaryAlphaFactory:
 import argparse
 
 if __name__ == "__main__":
+    from feature_engine import create_full_feature_engine
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
     parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
     args = parser.parse_args()
 
-    engine = FeatureEngine(config.DIRS['DATA_RAW_TICKS'])
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
     survivors_file = args.survivors
     
     print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
     print(f"📂 Using Survivors: {survivors_file}")
-
-    df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(df, volume_threshold=250)
-    engine.add_features_to_bars(windows=[50, 100, 200, 400])
-    
-    # --- CRYPTO & GDELT INTEGRATION ---
-    engine.add_crypto_features("CLEAN_IBIT.parquet")
-    
-    gdelt_df = engine.load_gdelt_data()
-    if gdelt_df is not None:
-        engine.add_gdelt_features(gdelt_df)
-
-    # --- MACRO VOLTAGE ---
-    engine.add_macro_voltage_features()
-
-    engine.add_physics_features()
-    engine.add_microstructure_features()
-    engine.add_advanced_physics_features()
-    engine.add_delta_features(lookback=10)
-    engine.add_delta_features(lookback=50)
     
     factory = EvolutionaryAlphaFactory(engine.bars, survivors_file)
     factory.evolve(horizon=args.horizon)

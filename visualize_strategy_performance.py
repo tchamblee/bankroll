@@ -107,30 +107,10 @@ def plot_performance(engine, strategies):
     print(f"📸 Saved Performance Chart to {output_path}")
 
 if __name__ == "__main__":
+    from feature_engine import create_full_feature_engine
+    
     # Load Data
-    engine = FeatureEngine(config.DIRS['DATA_RAW_TICKS'])
-    df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(df, volume_threshold=250)
-    
-    # Need to load survivors to know what features to calc? 
-    # Or just calc everything. Let's calc everything to be safe.
-    engine.add_features_to_bars(windows=[50, 100, 200, 400])
-    
-    # --- CRYPTO & GDELT INTEGRATION ---
-    engine.add_crypto_features("CLEAN_IBIT.parquet")
-    
-    gdelt_df = engine.load_gdelt_data()
-    if gdelt_df is not None:
-        engine.add_gdelt_features(gdelt_df)
-
-    # --- MACRO VOLTAGE ---
-    engine.add_macro_voltage_features()
-
-    engine.add_physics_features()
-    engine.add_microstructure_features()
-    engine.add_advanced_physics_features()
-    engine.add_delta_features(lookback=10)
-    engine.add_delta_features(lookback=50)
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
     
     # Load Apex Strategies
     # Look for all horizon files

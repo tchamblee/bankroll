@@ -56,33 +56,9 @@ def plot_top5(df):
     print(f"📸 Saved Top 5 Chart to {output_path}")
 
 if __name__ == "__main__":
+    from feature_engine import create_full_feature_engine
+    
     DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/raw_ticks'))
-    engine = FeatureEngine(DATA_PATH)
-    
-    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(primary_df, volume_threshold=250)
-    
-    dxy_df = engine.load_ticker_data("RAW_TICKS_DXY*.parquet")
-    if dxy_df is not None:
-        engine.add_correlator_residual(dxy_df, suffix="_dxy")
-        
-    tnx_df = engine.load_ticker_data("RAW_TICKS_TNX*.parquet")
-    if tnx_df is not None:
-        engine.add_correlator_residual(tnx_df, suffix="_tnx")
-
-    spy_df = engine.load_ticker_data("RAW_TICKS_SPY*.parquet")
-    if spy_df is not None:
-        engine.add_correlator_residual(spy_df, suffix="_spy")
-        
-    engine.add_features_to_bars(windows=[50, 100, 200, 400])
-    print("Calculating Physics Features...")
-    engine.add_physics_features()
-
-    # --- MACRO VOLTAGE ---
-    engine.add_macro_voltage_features()
-
-    engine.add_advanced_physics_features()
-    engine.add_delta_features(lookback=10)
-    engine.add_delta_features(lookback=50)
+    engine = create_full_feature_engine(DATA_PATH)
     
     plot_top5(engine.bars)

@@ -206,39 +206,9 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     return final_survivors
 
 if __name__ == "__main__":
-    DATA_PATH = config.DIRS['DATA_RAW_TICKS']
-    engine = FeatureEngine(DATA_PATH)
+    from feature_engine import create_full_feature_engine
     
-    # Load Data (Same setup as validation)
-    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    engine.create_volume_bars(primary_df, volume_threshold=250)
-    
-    for ticker, suffix in [("RAW_TICKS_TNX*.parquet", "_tnx"), 
-                           ("RAW_TICKS_DXY*.parquet", "_dxy"), 
-                           ("RAW_TICKS_BUND*.parquet", "_bund"),
-                           ("RAW_TICKS_SPY*.parquet", "_spy")]:
-        corr_df = engine.load_ticker_data(ticker)
-        if corr_df is not None:
-            engine.add_correlator_residual(corr_df, suffix=suffix)
-            
-    engine.add_features_to_bars(windows=[50, 100, 200, 400]) 
-    
-    # --- CRYPTO FEATURES ---
-    engine.add_crypto_features("CLEAN_IBIT.parquet")
-    
-    # --- GDELT INTEGRATION ---
-    gdelt_df = engine.load_gdelt_data()
-    if gdelt_df is not None:
-        engine.add_gdelt_features(gdelt_df)
-
-    # --- MACRO VOLTAGE ---
-    engine.add_macro_voltage_features()
-        
-    engine.add_physics_features()
-    engine.add_microstructure_features()
-    engine.add_advanced_physics_features()
-    engine.add_delta_features(lookback=10) 
-    engine.add_delta_features(lookback=50) 
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
     
     base_df = engine.bars.copy()
     

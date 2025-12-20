@@ -64,55 +64,14 @@ def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100)
     return pd.Series(outcomes, index=df.index)
 
 if __name__ == "__main__":
-    DATA_PATH = config.DIRS['DATA_RAW_TICKS']
+    from feature_engine import create_full_feature_engine
     
-    # 1. Generate Features
-    engine = FeatureEngine(DATA_PATH)
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
     
-    # Load Primary (EUR/USD) - The True Target
-    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
-    
-    if primary_df is None:
-        print("Failed to load primary data.")
+    if engine is None or engine.bars is None or len(engine.bars) < 10:
+        print(f"Not enough bars generated.")
         exit()
-
-    print(f"Loaded {len(primary_df)} primary ticks.")
-    # For FX, Tick Bars (fixed number of quotes) are often more robust than estimated volume
-    # Let's use 250 ticks per bar. 700k ticks -> 2800 bars.
-    engine.create_volume_bars(primary_df, volume_threshold=250)
-    
-    if engine.bars is None or len(engine.bars) < 10:
-        print(f"Not enough bars generated ({len(engine.bars) if engine.bars is not None else 0}).")
-        exit()
-
-    # Load Correlators
-    for ticker, suffix in [("RAW_TICKS_TNX*.parquet", "_tnx"), 
-                           ("RAW_TICKS_DXY*.parquet", "_dxy"), 
-                           ("RAW_TICKS_BUND*.parquet", "_bund"),
-                           ("RAW_TICKS_SPY*.parquet", "_spy")]:
-        corr_df = engine.load_ticker_data(ticker)
-        if corr_df is not None:
-            engine.add_correlator_residual(corr_df, suffix=suffix)
-    
-    # Add Standard Features
-    engine.add_features_to_bars(windows=[50, 100, 200, 400]) 
-
-    # --- MACRO VOLTAGE ---
-    engine.add_macro_voltage_features()
-    
-    # Add Physics Features
-    engine.add_physics_features()
-    
-    # Add Microstructure Features
-    engine.add_microstructure_features()
-
-    # Add Advanced Physics Features
-    engine.add_advanced_physics_features()
-    
-    # Add Delta Features (Flow) - Multiple Horizons
-    engine.add_delta_features(lookback=10) 
-    engine.add_delta_features(lookback=50) 
-    
+        
     base_df = engine.bars.copy()
     
     for horizon in config.PREDICTION_HORIZONS:
@@ -140,6 +99,11 @@ if __name__ == "__main__":
             valid = df[[f, target_col]].dropna()
             if len(valid) < 50: continue
             
+            # Check for zero variance to avoid warnings
+            if valid[f].std() == 0 or valid[f].nunique() <= 1:
+                results.append({'Feature': f, 'IC': np.nan, 'P-Value': np.nan})
+                continue
+                
             corr, p_val = stats.spearmanr(valid[f], valid[target_col])
             results.append({'Feature': f, 'IC': corr, 'P-Value': p_val})
             
