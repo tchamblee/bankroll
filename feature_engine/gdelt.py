@@ -62,7 +62,7 @@ def add_gdelt_features(df, gdelt_df):
     # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
     
     # Drop temp date column and Redundant Features
-    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 'news_vol_usd', 'epu_usd', 'news_vol_eur']
+    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 'news_vol_usd', 'epu_usd', 'news_vol_eur', 'global_polarity', 'news_tone_diff']
     merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     
     return merged

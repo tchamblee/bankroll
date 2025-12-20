@@ -296,9 +296,8 @@ def add_advanced_physics_features(df, windows=[50, 100, 200]):
         # Kyle's Lambda (Liquidity Cost)
         df[f'kyle_lambda_{w}'] = calc_kyle_lambda(df, window=w)
         
-        # Market Force (Physics)
-        # Force is instantaneous, but we smooth it
-        df[f'market_force_{w}'] = calc_market_force(df, window=w)
+        # Market Force (Physics) - REDUNDANT with Residual SPY
+        # df[f'market_force_{w}'] = calc_market_force(df, window=w)
         
         # Fractal Dimension Index (Roughness/Complexity)
         df[f'fdi_{w}'] = calc_fractal_dimension(df['close'], window=w)

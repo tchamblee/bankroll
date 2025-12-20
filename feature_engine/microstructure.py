@@ -58,11 +58,11 @@ def add_microstructure_features(df, windows=[50, 100]):
         # Persistence of the order flow itself
         df[f'flow_autocorr_{w}'] = df['ticket_imbalance'].rolling(w).corr(df['ticket_imbalance'].shift(1))
         
-        # 7. Spread Intensity (Spread / Volatility)
-        if 'avg_spread' in df.columns and f'volatility_{w}' in df.columns:
+        # 7. Spread Intensity (Spread / Volatility) - REDUNDANT with avg_spread
+        # if 'avg_spread' in df.columns and f'volatility_{w}' in df.columns:
             # Normalize spread by price to match log-return volatility units
-            spread_pct = df['avg_spread'] / df['close']
-            df[f'spread_intensity_{w}'] = spread_pct / df[f'volatility_{w}'].replace(0, 1e-6)
+            # spread_pct = df['avg_spread'] / df['close']
+            # df[f'spread_intensity_{w}'] = spread_pct / df[f'volatility_{w}'].replace(0, 1e-6)
 
         # 8. Order Book Alignment (Flow * Pressure)
         # Do buyers have support? Or are they hitting walls?

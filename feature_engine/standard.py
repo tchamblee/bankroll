@@ -41,5 +41,8 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
         
         vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
         df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm
+        
+        # Drop redundant efficiency column (Survives only as trend_strength)
+        df.drop(columns=[f'efficiency_{w}'], inplace=True)
 
     return df
