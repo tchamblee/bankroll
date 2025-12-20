@@ -218,17 +218,6 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     print("\n--- 🛡️ THE SURVIVORS (Elite Gene Pool) ---")
     print(stats_df.loc[final_survivors][['IC', 'Stability', 'P-Value']])
     
-    # --- MANUAL BLACKLIST (Overfitting Mitigation) ---
-    # These features have proven to be "Fool's Gold" - high Train/Val scores but OOS failure.
-    BLACKLIST = ['fdi_3200', 'epu_total', 'yang_zhang_vol_800']
-    
-    # Filter list
-    original_count = len(final_survivors)
-    final_survivors = [f for f in final_survivors if f not in BLACKLIST]
-    
-    print(f"🚫 Blacklisted {len(BLACKLIST)} features: {BLACKLIST}")
-    print(f"🛡️  {len(final_survivors)} Survivors remaining after Blacklist (Removed {original_count - len(final_survivors)}).")
-
     # Save Survivors List
     survivors_path = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
     with open(survivors_path, "w") as f:
