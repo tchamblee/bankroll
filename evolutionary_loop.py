@@ -167,10 +167,15 @@ class EvolutionaryAlphaFactory:
             for idx in sorted_indices:
                 if len(selected_indices) >= 5: break
                 
+                # Check for positive performance
+                current_sharpe = test_res.loc[idx, 'sharpe']
+                if current_sharpe <= 0:
+                    continue
+                
                 if not selected_indices:
                     # Always pick the absolute best first
                     selected_indices.append(idx)
-                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sharpe: {test_res.loc[idx, 'sharpe']:.4f})")
+                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sharpe: {current_sharpe:.4f})")
                 else:
                     # Check correlation with ALREADY SELECTED
                     is_uncorrelated = True
@@ -183,7 +188,7 @@ class EvolutionaryAlphaFactory:
                     
                     if is_uncorrelated:
                         selected_indices.append(idx)
-                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sharpe: {test_res.loc[idx, 'sharpe']:.4f})")
+                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sharpe: {current_sharpe:.4f})")
             
             # Subset results to selected
             final_apex = [unique_hof[i] for i in selected_indices]
@@ -217,9 +222,18 @@ class EvolutionaryAlphaFactory:
             genes = []
             
             def extract_gene_data(g, type_lbl):
-                if hasattr(g, 'threshold'): # Static
+                if hasattr(g, 'type'):
+                    if g.type == 'delta':
+                        return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'lookback': g.lookback, 'type': type_lbl, 'mode': 'delta'}
+                    elif g.type == 'zscore':
+                        return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'window': g.window, 'type': type_lbl, 'mode': 'zscore'}
+                    elif g.type == 'relational':
+                        return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
+                    
+                # Fallback for Static or unknown
+                if hasattr(g, 'threshold'): 
                     return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': type_lbl, 'mode': 'static'}
-                else: # Relational
+                else: 
                     return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
 
             for g in strat.long_genes: genes.append(extract_gene_data(g, 'long'))

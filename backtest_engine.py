@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from strategy_genome import Strategy
+from strategy_genome import Strategy, VALID_DELTA_LOOKBACKS, VALID_ZSCORE_WINDOWS
 
 class BacktestEngine:
     """
@@ -11,6 +11,7 @@ class BacktestEngine:
         self.raw_data = data
         self.cost_pct = cost_bps / 10000.0
         self.target_col = target_col
+        self.context = {}
         
         # Pre-calculate log returns for the vectorizer if standard mode
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
@@ -35,6 +36,67 @@ class BacktestEngine:
         
         print(f"Engine Initialized. Data: {n} bars.")
         print(f"Train: 0-{self.train_idx} | Val: {self.train_idx}-{self.val_idx} | Test: {self.val_idx}-{n}")
+        
+        # Precompute Derived Features for Fast Evaluation
+        self.precompute_context()
+
+    def precompute_context(self):
+        """
+        Generates a dictionary of Numpy arrays for all raw and potential derived features.
+        This enables O(1) feature lookup inside the tight strategy loop.
+        """
+        print("⚡ Pre-computing Derived Features (Deltas/ZScores)...")
+        # 1. Base Features
+        # Filter for numeric columns only to avoid errors
+        numeric_cols = self.raw_data.select_dtypes(include=[np.number]).columns
+        
+        # Store base arrays
+        for col in numeric_cols:
+            self.context[col] = self.raw_data[col].values
+            
+        self.context['__len__'] = len(self.raw_data)
+        
+        # 2. Derived Features
+        # We pre-calculate ALL valid mutations so Genes can just look them up.
+        # This is memory intensive but massive speedup for CPU.
+        
+        # Optimization: Only compute for relevant features? 
+        # For now, compute all numeric to support full mutation space.
+        
+        # A. Deltas
+        for w in VALID_DELTA_LOOKBACKS:
+            # Vectorized diff for all columns at once? No, easy enough to loop.
+            for col in numeric_cols:
+                key = f"delta_{col}_{w}"
+                # Numpy diff is slightly different, use pandas for consistency then values
+                # or just straightforward numpy slicing
+                arr = self.context[col]
+                # Diff: arr[i] - arr[i-w]
+                # Pad with zeros
+                diff = np.zeros_like(arr)
+                diff[w:] = arr[w:] - arr[:-w]
+                self.context[key] = diff
+                
+        # B. ZScores
+        for w in VALID_ZSCORE_WINDOWS:
+            # Need pandas rolling for efficiency/correctness of std
+            # We can do this in blocks if needed, but per-column is fine.
+            print(f"   > Computing ZScores (w={w})...")
+            for col in numeric_cols:
+                key = f"zscore_{col}_{w}"
+                series = self.raw_data[col] # Use pandas series for rolling
+                
+                # Rolling Mean/Std
+                # Optimization: Rolling operations are slow. 
+                # If we have 500 cols * 5 windows = 2500 rolling ops.
+                # This might take 10-20 seconds at startup but saves hours in loop.
+                r_mean = series.rolling(w).mean()
+                r_std = series.rolling(w).std()
+                
+                z = (series - r_mean) / (r_std + 1e-9)
+                self.context[key] = z.fillna(0).values
+        
+        print(f"⚡ Context Ready. Total Feature Arrays: {len(self.context)}")
 
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         """
@@ -52,9 +114,8 @@ class BacktestEngine:
         signal_matrix = np.zeros((num_bars, num_strats), dtype=int)
         
         for i, strat in enumerate(population):
-            # This calls the strategy's internal vectorized check
-            # Returns a 1D array of 0s and 1s
-            signal_matrix[:, i] = strat.generate_signal(self.raw_data)
+            # Pass the pre-computed Context (Dict of Numpy Arrays)
+            signal_matrix[:, i] = strat.generate_signal(self.context)
             
         return signal_matrix
 

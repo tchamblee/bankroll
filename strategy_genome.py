@@ -4,6 +4,9 @@ import random
 import json
 import os
 
+VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
+VALID_ZSCORE_WINDOWS = [10, 20, 50, 100, 200]
+
 class StaticGene:
     """
     Classic 'Magic Number' Gene.
@@ -16,15 +19,17 @@ class StaticGene:
         self.threshold = threshold
         self.type = 'static'
 
-    def evaluate(self, df: pd.DataFrame) -> np.array:
-        if self.feature not in df.columns:
-            return np.zeros(len(df), dtype=bool)
+    def evaluate(self, context: dict) -> np.array:
+        # Context is a dict of numpy arrays
+        if self.feature not in context:
+            # Fallback for safety, though precalc should handle this
+            return np.zeros(context['__len__'], dtype=bool) if '__len__' in context else np.array([])
             
-        data = df[self.feature].values
+        data = context[self.feature]
         
         if self.operator == '>': return data > self.threshold
         elif self.operator == '<': return data < self.threshold
-        else: return np.zeros(len(df), dtype=bool)
+        else: return np.zeros(len(data), dtype=bool)
 
     def mutate(self, features_pool):
         # 1. Mutate Threshold
@@ -61,16 +66,16 @@ class RelationalGene:
         self.feature_right = feature_right
         self.type = 'relational'
 
-    def evaluate(self, df: pd.DataFrame) -> np.array:
-        if self.feature_left not in df.columns or self.feature_right not in df.columns:
-            return np.zeros(len(df), dtype=bool)
+    def evaluate(self, context: dict) -> np.array:
+        if self.feature_left not in context or self.feature_right not in context:
+            return np.zeros(context.get('__len__', 0), dtype=bool)
             
-        left_data = df[self.feature_left].values
-        right_data = df[self.feature_right].values
+        left_data = context[self.feature_left]
+        right_data = context[self.feature_right]
         
         if self.operator == '>': return left_data > right_data
         elif self.operator == '<': return left_data < right_data
-        else: return np.zeros(len(df), dtype=bool)
+        else: return np.zeros(len(left_data), dtype=bool)
 
     def mutate(self, features_pool):
         # 1. Mutate Operator
@@ -102,24 +107,31 @@ class DeltaGene:
         self.feature = feature
         self.operator = operator
         self.threshold = threshold
-        self.lookback = lookback
+        # Enforce valid lookback
+        if lookback not in VALID_DELTA_LOOKBACKS:
+             # Snap to nearest
+             self.lookback = min(VALID_DELTA_LOOKBACKS, key=lambda x:abs(x-lookback))
+        else:
+            self.lookback = lookback
         self.type = 'delta'
 
-    def evaluate(self, df: pd.DataFrame) -> np.array:
-        if self.feature not in df.columns:
-            return np.zeros(len(df), dtype=bool)
+    def evaluate(self, context: dict) -> np.array:
+        key = f"delta_{self.feature}_{self.lookback}"
+        if key not in context:
+            # Fallback if precalc missed it (shouldn't happen if engine is sync'd)
+            return np.zeros(context.get('__len__', 0), dtype=bool)
         
-        # Calculate Delta: Feature_t - Feature_{t-lookback}
-        data = df[self.feature].diff(self.lookback).fillna(0).values
+        data = context[key]
         
         if self.operator == '>': return data > self.threshold
         elif self.operator == '<': return data < self.threshold
-        else: return np.zeros(len(df), dtype=bool)
+        else: return np.zeros(len(data), dtype=bool)
 
     def mutate(self, features_pool):
         # 1. Mutate Lookback
         if random.random() < 0.3:
-            self.lookback = max(1, self.lookback + random.choice([-1, 1, -2, 2]))
+            # Pick a new random lookback from the valid list
+            self.lookback = random.choice(VALID_DELTA_LOOKBACKS)
         
         # 2. Mutate Threshold
         if random.random() < 0.3:
@@ -153,29 +165,29 @@ class ZScoreGene:
         self.feature = feature
         self.operator = operator
         self.threshold = threshold # Sigma value
-        self.window = window
+        
+        if window not in VALID_ZSCORE_WINDOWS:
+            self.window = min(VALID_ZSCORE_WINDOWS, key=lambda x:abs(x-window))
+        else:
+            self.window = window
+            
         self.type = 'zscore'
 
-    def evaluate(self, df: pd.DataFrame) -> np.array:
-        if self.feature not in df.columns:
-            return np.zeros(len(df), dtype=bool)
+    def evaluate(self, context: dict) -> np.array:
+        key = f"zscore_{self.feature}_{self.window}"
+        if key not in context:
+            return np.zeros(context.get('__len__', 0), dtype=bool)
         
-        series = df[self.feature]
-        # Optimization: If window is very large, this is slow. Keep windows reasonable.
-        rolling_mean = series.rolling(window=self.window).mean()
-        rolling_std = series.rolling(window=self.window).std()
-        
-        # Z = (X - Mean) / Std
-        z_score = ((series - rolling_mean) / (rolling_std + 1e-9)).fillna(0).values
+        z_score = context[key]
         
         if self.operator == '>': return z_score > self.threshold
         elif self.operator == '<': return z_score < self.threshold
-        else: return np.zeros(len(df), dtype=bool)
+        else: return np.zeros(len(z_score), dtype=bool)
 
     def mutate(self, features_pool):
         # 1. Mutate Window
         if random.random() < 0.3:
-            self.window = max(5, self.window + random.choice([-5, 5, -10, 10]))
+            self.window = random.choice(VALID_ZSCORE_WINDOWS)
             
         # 2. Mutate Threshold (Sigma)
         if random.random() < 0.3:
@@ -205,16 +217,18 @@ class Strategy:
         self.short_genes = short_genes if short_genes else []
         self.fitness = 0.0
         
-    def generate_signal(self, df: pd.DataFrame) -> np.array:
+    def generate_signal(self, context: dict) -> np.array:
+        n_rows = context.get('__len__', 0)
+        
         # Long Signal (AND logic)
-        l_mask = np.ones(len(df), dtype=bool) if self.long_genes else np.zeros(len(df), dtype=bool)
+        l_mask = np.ones(n_rows, dtype=bool) if self.long_genes else np.zeros(n_rows, dtype=bool)
         for gene in self.long_genes:
-            l_mask &= gene.evaluate(df)
+            l_mask &= gene.evaluate(context)
             
         # Short Signal (AND logic)
-        s_mask = np.ones(len(df), dtype=bool) if self.short_genes else np.zeros(len(df), dtype=bool)
+        s_mask = np.ones(n_rows, dtype=bool) if self.short_genes else np.zeros(n_rows, dtype=bool)
         for gene in self.short_genes:
-            s_mask &= gene.evaluate(df)
+            s_mask &= gene.evaluate(context)
             
         # Final: +1, -1, or 0 (Short priority or cancellation if both True)
         return l_mask.astype(int) - s_mask.astype(int)
@@ -264,7 +278,8 @@ class GenomeFactory:
             # We'll start with small random fraction of std dev.
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.5, 0.5) * stats['std']
-            lookback = random.choice([1, 3, 5, 10, 20])
+            # Use valid lookback
+            lookback = random.choice(VALID_DELTA_LOOKBACKS)
             return DeltaGene(feature, operator, threshold, lookback)
             
         # 20% Chance of ZScore Gene (Statistical Extreme)
@@ -273,7 +288,8 @@ class GenomeFactory:
             operator = random.choice(['>', '<'])
             # Thresholds usually -2, -1, 1, 2 sigmas
             threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
-            window = random.choice([10, 20, 50, 100])
+            # Use valid window
+            window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
         
         # 40% Chance of Static Gene (Classic)
