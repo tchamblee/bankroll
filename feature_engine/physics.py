@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
+# --- Math / Helper Functions (from physics_features.py) ---
+
 def get_weights(d, size):
     """
     Calculates weights for fractional differentiation.
@@ -255,3 +257,48 @@ def calc_fractal_dimension(series, window=30):
         return 1 + (np.log(length) + np.log(2)) / np.log(2 * (n - 1))
 
     return series.rolling(window=window).apply(_fdi, raw=True)
+
+
+# --- Feature Engineering Functions ---
+
+def add_physics_features(df):
+    if df is None: return None
+    df = df.copy()
+    print("Calculating Physics Features...")
+    
+    # Ensure log_ret exists for Entropy calc
+    if 'log_ret' not in df.columns:
+        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+        
+    df['frac_diff_04'] = frac_diff_ffd(df['close'], d=0.4)
+    df['frac_diff_02'] = frac_diff_ffd(df['close'], d=0.2)
+    df['hurst_100'] = get_hurst_exponent(df['close'], window=100)
+    df['hurst_200'] = get_hurst_exponent(df['close'], window=200)
+    
+    # Shannon Entropy (Disorder)
+    # Using log_ret (stationarized) is better for distribution analysis than raw price
+    df['entropy_100'] = get_shannon_entropy(df['log_ret'], window=100)
+    df['entropy_200'] = get_shannon_entropy(df['log_ret'], window=200)
+    
+    return df
+
+def add_advanced_physics_features(df, windows=[50, 100]):
+    if df is None: return None
+    df = df.copy()
+    print("Calculating Advanced Physics Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
+    
+    # Yang-Zhang Volatility (Best Open-Close Estimator)
+    for w in windows:
+        df[f'yang_zhang_vol_{w}'] = calc_yang_zhang_volatility(df, window=w)
+        
+        # Kyle's Lambda (Liquidity Cost)
+        df[f'kyle_lambda_{w}'] = calc_kyle_lambda(df, window=w)
+        
+        # Market Force (Physics)
+        # Force is instantaneous, but we smooth it
+        df[f'market_force_{w}'] = calc_market_force(df, window=w)
+        
+        # Fractal Dimension Index (Roughness/Complexity)
+        df[f'fdi_{w}'] = calc_fractal_dimension(df['close'], window=w)
+        
+    return df

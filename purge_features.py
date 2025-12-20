@@ -230,6 +230,9 @@ if __name__ == "__main__":
     gdelt_df = engine.load_gdelt_data()
     if gdelt_df is not None:
         engine.add_gdelt_features(gdelt_df)
+
+    # --- MACRO VOLTAGE ---
+    engine.add_macro_voltage_features()
         
     engine.add_physics_features()
     engine.add_microstructure_features()

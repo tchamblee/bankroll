@@ -115,6 +115,17 @@ if __name__ == "__main__":
     # Need to load survivors to know what features to calc? 
     # Or just calc everything. Let's calc everything to be safe.
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
+    
+    # --- CRYPTO & GDELT INTEGRATION ---
+    engine.add_crypto_features("CLEAN_IBIT.parquet")
+    
+    gdelt_df = engine.load_gdelt_data()
+    if gdelt_df is not None:
+        engine.add_gdelt_features(gdelt_df)
+
+    # --- MACRO VOLTAGE ---
+    engine.add_macro_voltage_features()
+
     engine.add_physics_features()
     engine.add_microstructure_features()
     engine.add_advanced_physics_features()
@@ -122,14 +133,28 @@ if __name__ == "__main__":
     engine.add_delta_features(lookback=50)
     
     # Load Apex Strategies
-    with open("data/apex_strategies.json", "r") as f:
-        apex_data = json.load(f)
-        
+    # Look for all horizon files
+    import glob
+    apex_files = glob.glob("data/apex_strategies_*.json")
+    
+    all_strategies_data = []
+    for fpath in apex_files:
+        try:
+            with open(fpath, "r") as f:
+                data = json.load(f)
+                all_strategies_data.extend(data)
+        except Exception as e:
+            print(f"Error loading {fpath}: {e}")
+            
     strategies = []
-    for d in apex_data:
+    for d in all_strategies_data:
         s = reconstruct_strategy(d)
         if s:
-            s.test_sharpe = d['test_sharpe'] # inject score for legend
+            s.test_sharpe = d.get('test_sharpe', 0.0) # inject score for legend
             strategies.append(s)
+            
+    if not strategies:
+        print("No strategies found to visualize.")
+        sys.exit(0)
             
     plot_performance(engine, strategies)

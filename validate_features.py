@@ -96,6 +96,9 @@ if __name__ == "__main__":
     
     # Add Standard Features
     engine.add_features_to_bars(windows=[50, 100, 200, 400]) 
+
+    # --- MACRO VOLTAGE ---
+    engine.add_macro_voltage_features()
     
     # Add Physics Features
     engine.add_physics_features()

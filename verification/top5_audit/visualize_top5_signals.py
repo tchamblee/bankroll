@@ -75,7 +75,12 @@ if __name__ == "__main__":
         engine.add_correlator_residual(spy_df, suffix="_spy")
         
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
+    print("Calculating Physics Features...")
     engine.add_physics_features()
+
+    # --- MACRO VOLTAGE ---
+    engine.add_macro_voltage_features()
+
     engine.add_advanced_physics_features()
     engine.add_delta_features(lookback=10)
     engine.add_delta_features(lookback=50)

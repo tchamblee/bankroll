@@ -1,0 +1,67 @@
+import pandas as pd
+import numpy as np
+
+def add_gdelt_features(df, gdelt_df):
+    """
+    Merges Daily GDELT features into Intraday Bars.
+    CRITICAL: Uses LAG 1 (Yesterday's News) to avoid Lookahead Bias.
+    """
+    if df is None or gdelt_df is None: return df
+    print("Merging GDELT Features (Lag 1 Day)...")
+    df = df.copy()
+    
+    # Extract Date from Bar Start Time
+    df['date'] = df['time_start'].dt.normalize()
+    
+    # Shift GDELT by 1 Day to represent "Yesterday"
+    # Since gdelt_df is indexed by date, we can shift the index or the data.
+    # Ideally, for date T, we want GDELT from T-1.
+    # So we shift GDELT index forward by 1 day? 
+    # No, if we want T's features to be T-1's data, we merge T with T-1.
+    # Easier: Shift GDELT dataframe forward by 1 day.
+    
+    gdelt_shifted = gdelt_df.shift(1) # Row 1 becomes Row 2. Date index stays? No, shift moves data.
+    # shift(1) on a DF moves values down.
+    # 2025-12-01: Data_A
+    # 2025-12-02: Data_B
+    # after shift(1):
+    # 2025-12-01: NaN
+    # 2025-12-02: Data_A
+    # This is exactly what we want. On Dec 2nd, we see Dec 1st data.
+    
+    # Merge
+    # We reset index to make 'date' a column
+    gdelt_shifted = gdelt_shifted.reset_index()
+    
+    merged = pd.merge(df, gdelt_shifted, on='date', how='left')
+    
+    # Fill NaNs (e.g. weekends or missing days) with 0 or forward fill?
+    # Forward fill is better for sentiment persistence
+    cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 
+                    'global_tone', 'global_polarity', 'conflict_intensity', 
+                    'epu_total', 'epu_usd', 'epu_eur', 'epu_diff',
+                    'inflation_vol', 'central_bank_tone', 'energy_crisis_eur', 'news_vol_zscore']
+    
+    # Only fill columns that exist (in case we run old logic)
+    existing_cols = [c for c in cols_to_fill if c in merged.columns]
+    merged[existing_cols] = merged[existing_cols].ffill().fillna(0)
+    
+    # Derived Physics Features
+    # 1. Sentiment Divergence (Force Differential)
+    merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
+    
+    # 2. Attention Divergence (Mass Differential)
+    merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
+    
+    # 3. News Velocity (Rate of Change of Attention)
+    # This is essentially Delta of Volume
+    merged['news_velocity_eur'] = merged['news_vol_eur'].diff().fillna(0)
+    merged['news_velocity_usd'] = merged['news_vol_usd'].diff().fillna(0)
+    
+    # 4. Regime/Panic Features
+    # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
+    
+    # Drop temp date column
+    merged.drop(columns=['date'], inplace=True)
+    
+    return merged
