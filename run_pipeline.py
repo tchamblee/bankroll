@@ -38,12 +38,16 @@ def run_step(script_command, description):
 def main():
     print("\n🌍 STARTING ALPHA FACTORY PIPELINE 🌍\n")
     
-    # 1. Data ETL
-    run_step("clean_data_lake.py", "Data Cleaning & Normalization")
-    run_step("verify_data_integrity.py", "Data Integrity Audit")
-    
-    # 2. Feature Engineering & Selection
-    run_step("generate_features.py", "Feature Matrix Generation")
+    # 1. Data ETL (Conditional Skip)
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        run_step("clean_data_lake.py", "Data Cleaning & Normalization")
+        run_step("verify_data_integrity.py", "Data Integrity Audit")
+        # 2. Feature Engineering
+        run_step("generate_features.py", "Feature Matrix Generation")
+    else:
+        print("⏩ Skipping Data ETL (Feature Matrix Exists)")
+
+    # Feature Selection & Validation
     # Note: purge_features.py generates the survivors_*.json files needed later
     run_step("purge_features.py", "Feature Hunger Games (Selection)")
     run_step("validate_features.py", "Feature Validation (OOS Check)")
