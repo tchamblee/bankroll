@@ -102,7 +102,7 @@ def plot_performance(engine, strategies):
     plt.legend(loc='upper left')
     plt.grid(True, alpha=0.3)
     
-    output_path = "data/strategy_performance.png"
+    output_path = os.path.join(config.DIRS['PLOTS_DIR'], "strategy_performance.png")
     plt.savefig(output_path)
     print(f"📸 Saved Performance Chart to {output_path}")
 
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # Load Apex Strategies
     # Look for all horizon files
     import glob
-    apex_files = glob.glob("data/apex_strategies_*.json")
+    apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
     
     all_strategies_data = []
     for fpath in apex_files:

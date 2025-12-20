@@ -194,9 +194,9 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     
     # SAVE SURVIVORS TO JSON
     filename = f"survivors_{horizon}.json"
-    output_path = os.path.join(config.DIRS['DATA_DIR'], filename)
+    output_path = os.path.join(config.DIRS['FEATURES_DIR'], filename)
     try:
-        os.makedirs(config.DIRS['DATA_DIR'], exist_ok=True)
+        os.makedirs(config.DIRS['FEATURES_DIR'], exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(final_survivors, f, indent=4)
         print(f"\n💾 Saved {len(final_survivors)} survivors to {output_path}")

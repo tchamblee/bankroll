@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+import config
 from feature_engine import FeatureEngine
 
 def plot_top5(df):
@@ -51,14 +52,13 @@ def plot_top5(df):
             ax.text(0.5, 0.5, f"Missing: {feature}", ha='center', va='center')
 
     plt.tight_layout()
-    output_path = os.path.join(os.path.dirname(__file__), '../../data/top5_audit_chart.png')
+    output_path = os.path.join(config.DIRS['PLOTS_DIR'], 'top5_audit_chart.png')
     plt.savefig(output_path)
     print(f"📸 Saved Top 5 Chart to {output_path}")
 
 if __name__ == "__main__":
     from feature_engine import create_full_feature_engine
     
-    DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/raw_ticks'))
-    engine = create_full_feature_engine(DATA_PATH)
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
     
     plot_top5(engine.bars)

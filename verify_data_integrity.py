@@ -106,9 +106,11 @@ def check_ticker_health(ticker_pattern, name):
     else:
         print("  ✅ Volatility Check: No massive outliers")
 
+import config
+
 if __name__ == "__main__":
     # Point to CLEAN ticks now
-    base_dir = "data/clean_ticks"
+    base_dir = config.DIRS['DATA_CLEAN_TICKS']
     
     targets = [
         (os.path.join(base_dir, "CLEAN_EURUSD.parquet"), "EUR/USD"),

@@ -136,7 +136,7 @@ if __name__ == "__main__":
                 
                 # Merge on Feature (IC + Importance)
                 merged_metrics = pd.merge(importances, results_df, on='Feature', how='outer')
-                metrics_path = os.path.join(config.DIRS['DATA_DIR'], f"feature_metrics_{horizon}.csv")
+                metrics_path = os.path.join(config.DIRS['FEATURES_DIR'], f"feature_metrics_{horizon}.csv")
                 merged_metrics.to_csv(metrics_path, index=False)
                 print(f"\n💾 Saved Feature Metrics to {metrics_path}")
             else:

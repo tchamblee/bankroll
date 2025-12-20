@@ -140,7 +140,7 @@ class EvolutionaryAlphaFactory:
             for i, s in enumerate(unique_hof):
                 output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.iloc[i]['sharpe']})
             
-            out_path = f"data/apex_strategies_{horizon}.json"
+            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
             print(f"\n💾 Saved {len(output)} Apex Strategies to {out_path}")
         else:
@@ -167,9 +167,9 @@ class EvolutionaryAlphaFactory:
                 'genes': genes
             })
             
-        with open("data/final_population.json", "w") as f:
+        with open(os.path.join(config.DIRS['OUTPUT_DIR'], "final_population.json"), "w") as f:
             json.dump(dna_dump, f, indent=4)
-        print(f"💾 Saved Top 100 Population Genomes to data/final_population.json")
+        print(f"💾 Saved Top 100 Population Genomes to {os.path.join(config.DIRS['OUTPUT_DIR'], 'final_population.json')}")
 
 import argparse
 

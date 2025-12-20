@@ -1,12 +1,12 @@
 import pandas as pd
 import glob
 import os
+import config
 
 def load_ticker_data(data_dir, pattern):
     """Loads and returns a sorted DataFrame for a specific ticker pattern."""
     # Point to Clean Data Lake
-    # Pattern usually passed as "RAW_TICKS_..." so we join with clean dir
-    clean_dir = os.path.join(os.path.dirname(data_dir), "clean_ticks")
+    clean_dir = config.DIRS['DATA_CLEAN_TICKS']
     if os.path.exists(clean_dir):
         search_dir = clean_dir
     else:
@@ -55,7 +55,7 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     Loads GDELT GKG data and aggregates it to Daily resolution.
     Extracts Sentiment (Tone) and Attention (Volume) for EUR vs USD.
     """
-    search_dir = os.path.join(os.path.dirname(data_dir), "gdelt")
+    search_dir = config.DIRS['DATA_GDELT']
     if not os.path.exists(search_dir):
         # Try raw dir
         search_dir = os.path.join(data_dir, "gdelt")

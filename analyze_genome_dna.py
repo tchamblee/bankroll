@@ -5,12 +5,13 @@ import json
 import os
 import glob
 from collections import Counter
+import config
 
 def analyze_dna():
     print("Analyzing Genome DNA...")
     
     # 1. Load DNA
-    path = "data/final_population.json"
+    path = os.path.join(config.DIRS['OUTPUT_DIR'], "final_population.json")
     if not os.path.exists(path):
         print(f"❌ Error: {path} not found. Run evolution first.")
         return
@@ -29,7 +30,7 @@ def analyze_dna():
     # 2. Load Metrics (Try 60, then 30, then 90)
     metrics_file = None
     for h in [60, 30, 90]:
-        fpath = f"data/feature_metrics_{h}.csv"
+        fpath = os.path.join(config.DIRS['FEATURES_DIR'], f"feature_metrics_{h}.csv")
         if os.path.exists(fpath):
             metrics_file = fpath
             print(f"Loading metrics from {fpath}...")
@@ -60,8 +61,9 @@ def analyze_dna():
         plt.title(f"Feature Power Ranking (RF Importance) in Elite DNA", fontsize=16)
         plt.xlabel("Random Forest Importance")
         plt.tight_layout()
-        plt.savefig("data/genome_dna_analysis.png")
-        print(f"📸 Saved DNA Analysis to data/genome_dna_analysis.png")
+        out_path = os.path.join(config.DIRS['PLOTS_DIR'], "genome_dna_analysis.png")
+        plt.savefig(out_path)
+        print(f"📸 Saved DNA Analysis to {out_path}")
         
         print("\n--- Top 20 Dominant Features (Ranked by Importance) ---")
         print(merged[['Feature', 'Importance', 'IC', 'Count']].head(20))
@@ -75,7 +77,8 @@ def analyze_dna():
         plt.figure(figsize=(12, 10))
         features_df['count'].plot(kind='barh', color='skyblue')
         plt.title(f"Dominant Genes (Count)", fontsize=16)
-        plt.savefig("data/genome_dna_analysis.png")
+        out_path = os.path.join(config.DIRS['PLOTS_DIR'], "genome_dna_analysis.png")
+        plt.savefig(out_path)
         print(features_df.sort_values('count', ascending=False).head(20))
 
 if __name__ == "__main__":

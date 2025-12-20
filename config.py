@@ -5,7 +5,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DIRS = {
     "DATA_DIR": os.path.join(BASE_DIR, "data"),
     "DATA_RAW_TICKS": os.path.join(BASE_DIR, "data", "raw_ticks"),
-    "DATA_CLEAN_TICKS": os.path.join(BASE_DIR, "data", "clean_ticks"),
+    "DATA_GDELT": os.path.join(BASE_DIR, "data", "gdelt"),
+    
+    "PROCESSED_DIR": os.path.join(BASE_DIR, "processed_data"),
+    "DATA_CLEAN_TICKS": os.path.join(BASE_DIR, "processed_data", "clean_ticks"),
+    
+    "OUTPUT_DIR": os.path.join(BASE_DIR, "output"),
+    "FEATURES_DIR": os.path.join(BASE_DIR, "output", "features"),
+    "STRATEGIES_DIR": os.path.join(BASE_DIR, "output", "strategies"),
+    "PLOTS_DIR": os.path.join(BASE_DIR, "output", "plots"),
+    
     "LOGS": os.path.join(BASE_DIR, "logs"),
 }
 

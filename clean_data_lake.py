@@ -49,9 +49,11 @@ def clean_file(file_path, output_dir, threshold=0.02):
     except Exception as e:
         print(f"  ❌ Error cleaning {file_path}: {e}")
 
+import config
+
 def clean_data_lake():
-    raw_dir = "data/raw_ticks"
-    clean_dir = "data/clean_ticks"
+    raw_dir = config.DIRS['DATA_RAW_TICKS']
+    clean_dir = config.DIRS['DATA_CLEAN_TICKS']
     
     os.makedirs(clean_dir, exist_ok=True)
     

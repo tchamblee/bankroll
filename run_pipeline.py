@@ -53,7 +53,7 @@ def main():
     
     # 4. Strategy Evolution (The Brain)
     for horizon in config.PREDICTION_HORIZONS:
-        survivors_file = os.path.join("data", f"survivors_{horizon}.json")
+        survivors_file = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
         run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon}", 
                  f"Evolutionary Strategy Discovery (Horizon: {horizon})")
     
@@ -63,10 +63,10 @@ def main():
     
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
     print("Output Artifacts:")
-    print("  - Data: data/clean_ticks/")
-    print("  - Features: data/survivors_*.json")
-    print("  - Strategies: data/apex_strategies.json")
-    print("  - Plots: data/top5_audit_chart.png")
+    print(f"  - Data: {config.DIRS['DATA_CLEAN_TICKS']}")
+    print(f"  - Features: {config.DIRS['FEATURES_DIR']}/survivors_*.json")
+    print(f"  - Strategies: {config.DIRS['STRATEGIES_DIR']}/apex_strategies.json")
+    print(f"  - Plots: {config.DIRS['PLOTS_DIR']}/top5_audit_chart.png")
 
 if __name__ == "__main__":
     main()
