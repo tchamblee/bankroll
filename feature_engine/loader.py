@@ -187,7 +187,13 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     
     # Panic Score Logic (re-implemented)
     # 'panic_score': (global_polarity * -1) if global_tone < -5 else 0
-    gdelt_daily['panic_score'] = np.where(gdelt_daily['global_tone'] < -5, gdelt_daily['global_polarity'] * -1, 0)
+    # Use Z-Score for robustness
+    tone_mean = gdelt_daily['global_tone'].mean()
+    tone_std = gdelt_daily['global_tone'].std()
+    if tone_std == 0: tone_std = 1.0
+    gdelt_daily['tone_zscore'] = (gdelt_daily['global_tone'] - tone_mean) / tone_std
+    
+    gdelt_daily['panic_score'] = np.where(gdelt_daily['tone_zscore'] < -2.0, gdelt_daily['global_polarity'] * -1, 0)
     
     gdelt_daily['conflict_intensity'] = final_agg['conflict_intensity']
     

@@ -59,7 +59,8 @@ def main():
                  f"Evolutionary Strategy Discovery (Horizon: {horizon})")
     
     # 5. Analysis & Visualization
-    run_step("visualize_strategy_performance.py", "Strategy Performance Visualization (OOS)")
+    run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
+    run_step("visualize_best_trade_details.py", "Best Strategy Trade-by-Trade Analysis")
     run_step("analyze_genome_dna.py", "Genome DNA Analysis")
     run_step("report_top_strategies.py", "Final Apex Strategy Report")
     

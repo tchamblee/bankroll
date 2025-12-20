@@ -40,7 +40,7 @@ def add_gdelt_features(df, gdelt_df):
     cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 
                     'news_vol_zscore', 'global_polarity', 
                     'epu_total', 'epu_usd', 'epu_eur',
-                    'central_bank_tone', 'energy_crisis_eur']
+                    'central_bank_tone', 'energy_crisis_eur', 'panic_score']
     
     # Only fill columns that exist (in case we run old logic)
     existing_cols = [c for c in cols_to_fill if c in merged.columns]

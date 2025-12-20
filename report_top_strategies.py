@@ -8,7 +8,6 @@ import config
 from collections import Counter
 from backtest_engine import BacktestEngine
 from strategy_genome import Strategy, StaticGene, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
-from validate_features import triple_barrier_labels
 
 class MockEngine:
     def __init__(self, df):
@@ -49,10 +48,10 @@ def reconstruct_strategy(strat_dict):
     logic = strat_dict['logic']
     name = strat_dict['name']
     try:
-        match = re.search(r"\]\[(.*?)\]", logic)
+        match = re.search(r"(])[(](.*?)[)]", logic)
         logic_type = match.group(1) if match else "AND"
         min_con = int(logic_type.split("(")[1].split(")")[0]) if logic_type.startswith("VOTE(") else None
-        sep = f" {logic_type} "
+        sep = " + " if logic_type == "VOTE" else " AND "
         parts = logic.split(" | ")
         if len(parts) != 2: return None
         long_block, short_block = parts[0], parts[1]
@@ -76,9 +75,9 @@ def reconstruct_strategy(strat_dict):
 def parse_genes_from_logic(logic_str):
     genes = []
     try:
-        match = re.search(r"\]\[(.*?)\]", logic_str)
+        match = re.search(r"(])[(](.*?)[)]", logic_str)
         logic_type = match.group(1) if match else "AND"
-        sep = f" {logic_type} "
+        sep = " + " if logic_type == "VOTE" else " AND "
         parts = logic_str.split(" | ")
         if len(parts) < 2: return []
         for block, tag in [(parts[0], "LONG"), (parts[1], "SHORT")]:
@@ -97,15 +96,17 @@ def parse_genes_from_logic(logic_str):
 
 def main():
     print("\n" + "="*120)
-    print("🏆 APEX STRATEGY REPORT (ALIGNED WITH SEARCH) 🏆")
+    print("🏆 APEX STRATEGY REPORT (REAL-MONEY TRADING MODE) 🏆")
+    print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: 0.5 bps + Spread")
     print("="*120 + "\n")
     
-    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found.")
         sys.exit(1)
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+    backtester = BacktestEngine(base_df, cost_bps=0.5, annualization_factor=181440)
+    
     horizons = config.PREDICTION_HORIZONS
     global_gene_counts = Counter()
     
@@ -115,72 +116,61 @@ def main():
             
         print(f"\n--- Horizon: {h} Bars ---")
         try:
-            # 1. Prepare Labels for this Horizon
-            df = base_df.copy()
-            df['target_return'] = triple_barrier_labels(df, lookahead=h, pt_sl_multiple=2.0)
-            
-            # 2. Setup Aligned Backtester
-            backtester = BacktestEngine(df, cost_bps=0.5, target_col='target_return', annualization_factor=181440)
-            
             with open(file_path, 'r') as f:
                 strategies_data = json.load(f)
             
             strategies = []
             for d in strategies_data:
                 s = reconstruct_strategy(d)
-                if s:
-                    s.json_sortino = d.get('test_sortino', 0.0)
-                    strategies.append(s)
+                if s: strategies.append(s)
             
             if not strategies: continue
 
-            # 3. Evaluations
-            # Prediction Mode (Match search logic)
-            pred_results = backtester.evaluate_population(strategies, set_type='test', prediction_mode=True)
+            # Evaluate on Test Set
+            res_df = backtester.evaluate_population(strategies, set_type='test')
             
-            # Trading Mode (Reality check)
-            # Switch backtester to log_ret for reality check
-            backtester.target_col = 'log_ret'
-            backtester.returns_vec = backtester.raw_data['log_ret'].values.reshape(-1, 1).astype(np.float32)
-            trade_results = backtester.evaluate_population(strategies, set_type='test', prediction_mode=False)
-            
-            # Full history trading
+            # Evaluate on Full History for context
             full_signals = backtester.generate_signal_matrix(strategies)
-            signals_shft = np.roll(full_signals, 1, axis=0); signals_shft[0,:]=0
-            full_rets = np.sum(signals_shft * backtester.returns_vec - np.abs(np.diff(full_signals, axis=0, prepend=0))*backtester.total_cost_pct, axis=0)
+            prices = backtester.close_vec
+            rets = backtester.returns_vec
             
-            # Trades Calculation
-            all_trades_matrix = np.abs(np.diff(full_signals, axis=0, prepend=0))
-            full_trades = np.sum(all_trades_matrix, axis=0)
+            sigs_shft = np.roll(full_signals, 1, axis=0); sigs_shft[0,:]=0
+            prcs_shft = np.roll(prices, 1, axis=0); prcs_shft[0]=prices[0]
             
-            # Test Set Trades
-            test_start = backtester.val_idx
-            test_trades_vec = np.sum(all_trades_matrix[test_start:], axis=0)
+            pos_notional = sigs_shft * backtester.standard_lot * prcs_shft
+            gross_pnl = pos_notional * rets
+            
+            lot_change = np.abs(np.diff(full_signals, axis=0, prepend=0))
+            costs = lot_change * backtester.standard_lot * prices * backtester.total_cost_pct
+            
+            full_net_returns = (gross_pnl - costs) / backtester.account_size
+            full_rets_pct = np.sum(full_net_returns, axis=0)
 
             df_data = []
             horizon_genes = []
             for i, strat in enumerate(strategies):
-                if full_trades[i] == 0: continue
+                row = res_df.iloc[i]
+                if row['trades'] == 0 and full_rets_pct[i] == 0: continue
                 
                 genes = parse_genes_from_logic(strategies_data[i]['logic'])
                 horizon_genes.extend(genes)
                 global_gene_counts.update(genes)
                 
-                ret_pred = pred_results.iloc[i]['total_return']
-                
                 df_data.append({
                     'Name': strat.name,
-                    'Srt(Pred)': pred_results.iloc[i]['sortino'],
-                    'Ret(Pred)': ret_pred,
-                    'Trades': int(test_trades_vec[i]),
-                    'Status': 'PROFITABLE' if ret_pred > 0 else 'LOSS',
+                    'Sortino(OOS)': row['sortino'],
+                    'Ret%(OOS)': row['total_return'] * 100,
+                    'Ret%(Full)': full_rets_pct[i] * 100,
+                    'Trades(OOS)': int(row['trades']),
+                    'Stability': row['stability'],
+                    'Status': 'PROFITABLE' if row['total_return'] > 0 else 'LOSS',
                     'Genes': ", ".join(genes[:2]) + ("..." if len(genes)>2 else "")
                 })
             
             if df_data:
-                df = pd.DataFrame(df_data).sort_values(by='Srt(Pred)', ascending=False)
-                for col in ['Srt(Pred)', 'Ret(Pred)']:
-                    df[col] = df[col].apply(lambda x: f"{x:.4f}")
+                df = pd.DataFrame(df_data).sort_values(by='Sortino(OOS)', ascending=False)
+                for col in ['Sortino(OOS)', 'Ret%(OOS)', 'Ret%(Full)', 'Stability']:
+                    df[col] = df[col].apply(lambda x: f"{x:.2f}")
                 print(df.to_string(index=False))
             else:
                 print("  No active strategies found.")

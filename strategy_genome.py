@@ -3,6 +3,7 @@ import pandas as pd
 import random
 import json
 import os
+import config
 
 # Removed fixed lists to allow dynamic evolution
 # VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
@@ -60,7 +61,7 @@ class StaticGene:
         return StaticGene(self.feature, self.operator, self.threshold)
 
     def __repr__(self):
-        return f"{self.feature} {self.operator} {self.threshold:.4f}"
+        return f"{self.feature} {self.operator} {self.threshold:.10f}"
 
 class RelationalGene:
     """
@@ -168,7 +169,7 @@ class DeltaGene:
         return DeltaGene(self.feature, self.operator, self.threshold, self.lookback)
 
     def __repr__(self):
-        return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.4f}"
+        return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.10f}"
 
 class ZScoreGene:
     """
@@ -220,7 +221,7 @@ class ZScoreGene:
         return ZScoreGene(self.feature, self.operator, self.threshold, self.window)
 
     def __repr__(self):
-        return f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.2f}σ"
+        return f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.10f}σ"
 
 class TimeGene:
     """
@@ -338,36 +339,29 @@ class Strategy:
                      n_rows = val.shape[0]
                      break
         
-        # Helper for Voting/AND Logic
-        def evaluate_leg(genes, threshold):
-            if not genes: return np.zeros(n_rows, dtype=bool)
-            
-            # Optimization: If strict AND (threshold is None or len(genes)), use fast bitwise
-            eff_threshold = threshold if threshold is not None else len(genes)
-            
-            if eff_threshold == len(genes):
-                # Strict AND
-                mask = np.ones(n_rows, dtype=bool)
-                for gene in genes:
-                    mask &= gene.evaluate(context, cache)
-                return mask
-            else:
-                # Voting Logic
-                votes = np.zeros(n_rows, dtype=int)
-                for gene in genes:
-                    votes += gene.evaluate(context, cache).astype(int)
-                return votes >= eff_threshold
+        # Helper for Voting Logic
+        def get_votes(genes):
+            if not genes: return np.zeros(n_rows, dtype=int)
+            votes = np.zeros(n_rows, dtype=int)
+            for gene in genes:
+                votes += gene.evaluate(context, cache).astype(int)
+            return votes
 
-        l_mask = evaluate_leg(self.long_genes, self.min_concordance)
-        s_mask = evaluate_leg(self.short_genes, self.min_concordance)
-            
-        # Final: +1, -1, or 0 (Short priority or cancellation if both True)
-        return l_mask.astype(int) - s_mask.astype(int)
+        l_votes = get_votes(self.long_genes)
+        s_votes = get_votes(self.short_genes)
+        
+        # Net Vote
+        net_votes = l_votes - s_votes
+        
+        # Clip to Max Lots
+        signal = np.clip(net_votes, -config.MAX_LOTS, config.MAX_LOTS)
+        
+        return signal
 
     def __repr__(self):
-        logic_str = "AND" if self.min_concordance is None else f"VOTE({self.min_concordance})"
-        l_str = f" {logic_str} ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
-        s_str = f" {logic_str} ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
+        logic_str = "VOTE"
+        l_str = f" + ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
+        s_str = f" + ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
         return f"[{self.name}][{logic_str}] LONG:({l_str}) | SHORT:({s_str})"
 
 class GenomeFactory:
@@ -449,12 +443,18 @@ class GenomeFactory:
         threshold = stats['mean'] + random.uniform(-2, 2) * stats['std']
         return StaticGene(feature, operator, threshold)
 
-    def create_strategy(self, num_genes_range=(2, 2)):
-        # Force Structure: 1 Regime Gene + 1 Trigger Gene
-        # Only supports 2 genes for now to enforce the Regime+Trigger pair
+    def create_strategy(self, num_genes_range=(3, 5)):
+        num_genes = random.randint(num_genes_range[0], num_genes_range[1])
+        long_genes = []
+        short_genes = []
         
-        long_genes = [self.create_gene_from_pool(self.regime_pool), self.create_gene_from_pool(self.trigger_pool)]
-        short_genes = [self.create_gene_from_pool(self.regime_pool), self.create_gene_from_pool(self.trigger_pool)]
+        for _ in range(num_genes):
+            pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
+            long_genes.append(self.create_gene_from_pool(pool))
+            
+        for _ in range(num_genes):
+            pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
+            short_genes.append(self.create_gene_from_pool(pool))
         
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",

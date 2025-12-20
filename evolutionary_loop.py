@@ -15,44 +15,42 @@ class EvolutionaryAlphaFactory:
         self.data = data
         self.pop_size = population_size
         self.generations = generations
-        self.decay_rate = decay_rate # Penalty for later generations to prevent overfitting
+        self.decay_rate = decay_rate
         self.survivors_file = survivors_file
         self.prediction_mode = prediction_mode
         
         self.factory = GenomeFactory(survivors_file)
         self.factory.set_stats(data)
-        # Assuming ~2 min bars -> ~181,440 bars/year. 
-        # Standardizing cost to 0.5 bps.
+        
+        # Aligned with refactored BacktestEngine
         self.backtester = BacktestEngine(
             data, 
             cost_bps=0.5, 
             target_col=target_col,
-            annualization_factor=181440
+            annualization_factor=181440,
+            account_size=config.ACCOUNT_SIZE
         )
         
         self.population = []
         self.hall_of_fame = []
 
     def initialize_population(self):
-        print(f"🧬 Spawning {self.pop_size} bidirectional strategies...")
-        self.population = [self.factory.create_strategy() for _ in range(self.pop_size)]
+        print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
+        # strategies will now have 3-5 genes to allow up/downsizing
+        self.population = [self.factory.create_strategy(num_genes_range=(3, 5)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
-        # Strict Crossover: Maintain Regime (0) + Trigger (1) structure
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
         
-        # Long Leg: Pick Regime from one parent, Trigger from the other (Deep Copy!)
-        l_regime = random.choice([p1.long_genes[0], p2.long_genes[0]]).copy()
-        l_trigger = random.choice([p1.long_genes[1], p2.long_genes[1]]).copy()
-        child.long_genes = [l_regime, l_trigger]
+        # Pick random number of genes from parents
+        n_long = random.randint(3, 5)
+        n_short = random.randint(3, 5)
         
-        # Short Leg (Deep Copy!)
-        s_regime = random.choice([p1.short_genes[0], p2.short_genes[0]]).copy()
-        s_trigger = random.choice([p1.short_genes[1], p2.short_genes[1]]).copy()
-        child.short_genes = [s_regime, s_trigger]
+        combined_long = p1.long_genes + p2.long_genes
+        combined_short = p1.short_genes + p2.short_genes
         
-        # Inherit Logic Mode
-        child.min_concordance = random.choice([p1.min_concordance, p2.min_concordance])
+        child.long_genes = [g.copy() for g in random.sample(combined_long, min(len(combined_long), n_long))]
+        child.short_genes = [g.copy() for g in random.sample(combined_short, min(len(combined_short), n_short))]
         
         return child
 
@@ -64,38 +62,33 @@ class EvolutionaryAlphaFactory:
         self.initialize_population()
         
         generations_without_improvement = 0
-        global_best_sharpe = -999.0
+        global_best_fitness = -999.0
         
         for gen in range(self.generations):
             start_time = time.time()
             
-            # 1. Evaluate on TRAIN
-            results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
+            # 1. Evaluate on TRAIN (Using TRADING mode)
+            results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=False)
             
-            # 2. Apply Trade Penalty (Statistical Significance Check)
-            # Prop Firm Standard: Need enough samples to validate alpha.
-            results.loc[results['trades'] < 30, 'sortino'] = -1.0
+            # 2. Filtering & Scoring
+            # Need at least 10 lot changes to be significant
+            results.loc[results['trades'] < 10, 'sortino'] = -1.0
             
-            # Capture Raw Metrics
-            raw_best_sortino = results['sortino'].max()
-            
-            # 2.5 Apply Generational Decay (Alpha Decay Simulation)
-            # Penalize later generations to force significant improvements
+            raw_best = results['sortino'].max()
             decay_factor = self.decay_rate ** gen
-            results['sortino'] = results['sortino'] * decay_factor
+            results['sortino'] *= decay_factor
             
-            best_sortino = results['sortino'].max()
-            print(f"\n--- Generation {gen} | Best [Train] Sortino: {best_sortino:.4f} (Raw: {raw_best_sortino:.4f} | Decay: {decay_factor:.4f}) ---")
+            best_fitness = results['sortino'].max()
+            print(f"\n--- Generation {gen} | Best [Train] Sortino: {best_fitness:.4f} (Raw: {raw_best:.4f}) ---")
             
-            # Early Stopping Check (using Decayed Sortino to force robustness)
-            if best_sortino > global_best_sharpe: # Reusing var name for logic, but content is sortino
-                global_best_sharpe = best_sortino
+            if best_fitness > global_best_fitness:
+                global_best_fitness = best_fitness
                 generations_without_improvement = 0
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 5: # Relaxed slightly for decay
-                print(f"🛑 Early Stopping Triggered: No improvement for 5 generations (Best: {global_best_sharpe:.4f})")
+            if generations_without_improvement >= 7:
+                print(f"🛑 Early Stopping Triggered.")
                 break
             
             # 3. Selection
@@ -103,118 +96,62 @@ class EvolutionaryAlphaFactory:
             elites_ids = results.sort_values('sortino', ascending=False).head(num_elite).index.tolist()
             elites = [self.population[idx] for idx in elites_ids]
             
-            # 4. Cross-Validation Gating
-            val_results = self.backtester.evaluate_population(elites, set_type='validation', prediction_mode=self.prediction_mode)
-            val_results.loc[val_results['trades'] < 10, 'sortino'] = -1.0 # Loose check for val
-            
+            # 4. Cross-Validation
+            val_results = self.backtester.evaluate_population(elites, set_type='validation', prediction_mode=False)
             for i, elite in enumerate(elites):
                 val_score = val_results.iloc[i]['sortino']
                 if val_score > 0.0:
                     self.hall_of_fame.append((elite, val_score))
             
-            # 5. Create Next Gen
-            new_population = elites[:20]
-            
-            # Migration (Higher diversity to avoid monoculture)
-            if gen % 5 == 0 and gen > 0:
-                for _ in range(int(self.pop_size * 0.4)):
-                    new_population.append(self.factory.create_strategy())
-            
+            # 5. Next Gen
+            new_population = elites[:50]
             while len(new_population) < self.pop_size:
                 p1, p2 = random.sample(elites, 2)
                 child = self.crossover(p1, p2)
                 
-                # Structural Mutation
-                # Mutate aggressively if decaying best_sortino is low
-                mut_rate = 0.25 if best_sortino < 0.01 else 0.1
-                
-                # Long Genes
-                if random.random() < mut_rate: # Mutate Regime
-                    child.long_genes[0].mutate(self.factory.regime_pool)
-                if random.random() < mut_rate: # Mutate Trigger
-                    child.long_genes[1].mutate(self.factory.trigger_pool)
-                    
-                # Short Genes
-                if random.random() < mut_rate:
-                    child.short_genes[0].mutate(self.factory.regime_pool)
-                if random.random() < mut_rate:
-                    child.short_genes[1].mutate(self.factory.trigger_pool)
-                    
-                # Logic Mutation (New Feature)
-                if random.random() < 0.05:
-                    # Toggle between Strict (None) and OR (1)
-                    if child.min_concordance is None:
-                        child.min_concordance = 1
-                    else:
-                        child.min_concordance = None
+                # Mutation
+                mut_rate = 0.15
+                for g in child.long_genes + child.short_genes:
+                    if random.random() < mut_rate:
+                        g.mutate(self.factory.features)
                 
                 new_population.append(child)
                 
             self.population = new_population
             print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
-        # 6. Final OOS Test
-        print("\n--- 🏆 APEX PREDATORS (OOS TEST) ---")
+        # 6. OOS Test
+        print("\n--- 🏆 APEX TRADERS (OOS TEST) ---")
         unique_hof = []
         seen = set()
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
             if str(s) not in seen:
                 unique_hof.append(s)
                 seen.add(str(s))
-            # Keep more candidates for orthogonality check (Top 50 instead of 5)
             if len(unique_hof) >= 50: break
             
         if unique_hof:
-            # Get Metrics AND Returns Series
-            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=self.prediction_mode)
+            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False)
             
-            # --- FIX: ORTHOGONALITY CHECK (Monoculture Prevention) ---
-            # Greedy Selection: Pick Best, then pick next Best that is uncorrelated (< 0.7)
-            
-            # 1. Sort by Sortino
             sorted_indices = test_res.sort_values('sortino', ascending=False).index.tolist()
-            
-            # 2. Calculate Correlation Matrix of Strategies
-            # (Strategies are columns in net_returns)
             returns_df = pd.DataFrame(net_returns)
-            corr_matrix = returns_df.corr().abs() # Absolute correlation
+            corr_matrix = returns_df.corr().abs()
             
             selected_indices = []
-            
-            print(f"Selecting uncorrelated strategies from {len(unique_hof)} candidates...")
-            
             for idx in sorted_indices:
                 if len(selected_indices) >= 5: break
-                
-                # Check for positive performance
                 current_score = test_res.loc[idx, 'sortino']
-                if current_score <= 0:
-                    continue
+                if current_score <= 0: continue
                 
                 if not selected_indices:
-                    # Always pick the absolute best first
                     selected_indices.append(idx)
-                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sortino: {current_score:.4f})")
                 else:
-                    # Check correlation with ALREADY SELECTED
-                    is_uncorrelated = True
-                    for selected_idx in selected_indices:
-                        rho = corr_matrix.loc[idx, selected_idx]
-                        if rho > 0.7:
-                            is_uncorrelated = False
-                            # print(f"     Skipping {test_res.loc[idx, 'id']} (Corr: {rho:.2f} with {test_res.loc[selected_idx, 'id']})")
-                            break
-                    
-                    if is_uncorrelated:
-                        selected_indices.append(idx)
-                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sortino: {current_score:.4f})")
+                    rho = corr_matrix.loc[idx, selected_indices].max()
+                    if rho < 0.7: selected_indices.append(idx)
             
-            # Subset results to selected
-            final_apex = [unique_hof[i] for i in selected_indices]
             final_res = test_res.iloc[selected_indices]
-            
-            print("\nFinal Portfolio Stats:")
-            print(final_res[['id', 'sortino', 'sharpe', 'total_return', 'trades']])
+            print("\nFinal Account Performance Stats (OOS):")
+            print(final_res[['id', 'sortino', 'total_return', 'trades']])
             
             output = []
             for idx in selected_indices:
@@ -226,94 +163,31 @@ class EvolutionaryAlphaFactory:
             print(f"\n💾 Saved {len(output)} Apex Strategies to {out_path}")
         else:
             print("No strategies survived validation.")
-            
-        # 7. Save Final Population Snapshot (Top 100) for DNA Analysis
-        # We need to re-evaluate current population to get latest scores if needed, 
-        # or just use the last results.
-        print("\nSaving Population Snapshot for DNA Analysis...")
-        pop_results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
-        top_100_idx = pop_results.sort_values('sortino', ascending=False).head(100).index
-        
-        dna_dump = []
-        for idx in top_100_idx:
-            strat = self.population[idx]
-            # Extract raw genes
-            genes = []
-            
-            def extract_gene_data(g, type_lbl):
-                if hasattr(g, 'type'):
-                    if g.type == 'delta':
-                        return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'lookback': g.lookback, 'type': type_lbl, 'mode': 'delta'}
-                    elif g.type == 'zscore':
-                        return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'window': g.window, 'type': type_lbl, 'mode': 'zscore'}
-                    elif g.type == 'relational':
-                        return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
-                    elif g.type == 'time':
-                        return {'feature': g.mode, 'op': g.operator, 'threshold': g.value, 'type': type_lbl, 'mode': 'time'}
-                    elif g.type == 'consecutive':
-                        return {'feature': g.direction, 'op': g.operator, 'threshold': g.count, 'type': type_lbl, 'mode': 'consecutive'}
-                    
-                # Fallback for Static or unknown
-                if hasattr(g, 'threshold') and hasattr(g, 'feature'): 
-                    return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': type_lbl, 'mode': 'static'}
-                else: 
-                    # Last resort fallback to avoid crash
-                    return {'feature': 'unknown', 'op': '?', 'threshold': 0, 'type': type_lbl, 'mode': 'unknown'}
-
-            for g in strat.long_genes: genes.append(extract_gene_data(g, 'long'))
-            for g in strat.short_genes: genes.append(extract_gene_data(g, 'short'))
-            
-            dna_dump.append({
-                'name': strat.name,
-                'sortino': pop_results.loc[idx, 'sortino'],
-                'genes': genes
-            })
-            
-        with open(os.path.join(config.DIRS['OUTPUT_DIR'], "final_population.json"), "w") as f:
-            json.dump(dna_dump, f, indent=4)
-        print(f"💾 Saved Top 100 Population Genomes to {os.path.join(config.DIRS['OUTPUT_DIR'], 'final_population.json')}")
 
 import argparse
 
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
-    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
-    parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
-    parser.add_argument("--pop_size", type=int, default=2000, help="Population Size")
-    parser.add_argument("--gens", type=int, default=100, help="Number of Generations")
-    parser.add_argument("--decay", type=float, default=0.99, help="Generational Sharpe Decay Rate")
+    parser.add_argument("--survivors", type=str, required=True)
+    parser.add_argument("--horizon", type=int, default=60)
+    parser.add_argument("--pop_size", type=int, default=2000)
+    parser.add_argument("--gens", type=int, default=100)
     args = parser.parse_args()
 
-    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
-        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        print("❌ Feature Matrix not found.")
         exit(1)
         
     bars_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    survivors_file = args.survivors
     
-    print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
-    print(f"📂 Using Survivors: {survivors_file}")
-    
-    # --- FIX: ALIGNMENT WITH PURGE PROCESS ---
-    # We must train strategies to predict the SAME target used to select the features.
-    # Calculating Triple Barrier Labels...
-    print(f"🎯 calculating Triple Barrier Labels (Horizon: {args.horizon})...")
-    bars_df['target_return'] = triple_barrier_labels(bars_df, lookahead=args.horizon, pt_sl_multiple=2.0)
-    
-    # -----------------------------------------
-
-    print(f"👥 Population: {args.pop_size} | 🧬 Generations: {args.gens} | 📉 Decay: {args.decay}")
+    print(f"\n🚀 Starting Real-Money Evolution ($30k Account, 1-3 Lots)")
     
     factory = EvolutionaryAlphaFactory(
         bars_df, 
-        survivors_file, 
+        args.survivors, 
         population_size=args.pop_size, 
         generations=args.gens,
-        decay_rate=args.decay,
-        target_col='target_return',
-        prediction_mode=True
+        target_col='log_ret',
+        prediction_mode=False
     )
     factory.evolve(horizon=args.horizon)

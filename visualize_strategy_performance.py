@@ -9,7 +9,6 @@ from feature_engine import FeatureEngine
 from strategy_genome import Strategy, StaticGene, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
 from backtest_engine import BacktestEngine
 import config
-from validate_features import triple_barrier_labels
 
 def parse_gene_string(gene_str):
     match = re.match(r"(.+)\s+([<>=!]+)\s+(.+)", gene_str)
@@ -46,10 +45,10 @@ def reconstruct_strategy(strat_dict):
     logic = strat_dict['logic']
     name = strat_dict['name']
     try:
-        match = re.search(r"\]\[(.*?)\]", logic)
+        match = re.search(r"(])[(](.*?)[)]", logic)
         logic_type = match.group(1) if match else "AND"
         min_con = int(logic_type.split("(")[1].split(")")[0]) if logic_type.startswith("VOTE(") else None
-        sep = f" {logic_type} "
+        sep = " + " if logic_type == "VOTE" else " AND "
         parts = logic.split(" | ")
         if len(parts) != 2: return None
         long_block, short_block = parts[0], parts[1]
@@ -73,60 +72,63 @@ def reconstruct_strategy(strat_dict):
 def plot_performance(engine, strategies):
     print("Running Backtest for Visualization...")
     
-    # Setup Aligned Backtester
+    # Setup Aligned Backtester (Trading Mode)
     backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
     
-    # Calculate Prediction Sortino and Get Series
-    # We need to compute labels. We'll use H=60 as default for visualization.
-    df_labels = engine.bars.copy()
-    df_labels['target_return'] = triple_barrier_labels(df_labels, lookahead=60, pt_sl_multiple=2.0)
-    backtester_pred = BacktestEngine(df_labels, cost_bps=0.5, target_col='target_return', annualization_factor=181440)
+    # Get Metrics AND Account Return Series (Full Data for Visualization)
+    # evaluate_population handles splitting, but we want full curve.
+    # We can pass set_type='test' or just calculate manually for full data.
     
-    # Get Metrics AND Returns Series
-    pred_results, pred_net_returns = backtester_pred.evaluate_population(strategies, set_type='test', prediction_mode=True, return_series=True)
-
-    # Calculate Cumulative Returns for Prediction Mode
-    cumulative = np.cumsum(pred_net_returns, axis=0)
+    full_signal_matrix = backtester.generate_signal_matrix(strategies)
+    returns_vec = backtester.returns_vec # log_ret
+    prices = backtester.close_vec
     
-    # Calc Trade Sortino for comparison (table only)
-    trade_results = backtester.evaluate_population(strategies, set_type='test', prediction_mode=False)
-    returns_vec = backtester.returns_vec
-
+    # Calculate Real Account PnL
+    signals_shifted = np.roll(full_signal_matrix, 1, axis=0); signals_shifted[0, :] = 0
+    prices_shifted = np.roll(prices, 1, axis=0); prices_shifted[0] = prices[0]
+    
+    position_notional = signals_shifted * backtester.standard_lot * prices_shifted
+    gross_pnl_dollar = position_notional * returns_vec
+    
+    lot_change = np.abs(np.diff(full_signal_matrix, axis=0, prepend=0))
+    turnover_notional = lot_change * backtester.standard_lot * prices
+    costs_dollar = turnover_notional * backtester.total_cost_pct
+    
+    net_pnl_dollar = gross_pnl_dollar - costs_dollar
+    net_returns = net_pnl_dollar / backtester.account_size # % Return
+    
+    cumulative = np.cumsum(net_returns, axis=0)
+    
     # Plotting
     plt.figure(figsize=(15, 8))
     
-    print(f"\n{'Strategy':<30} | {'Srt(Pred)':<8} | {'Ret(Pred)':<8} | {'Trades':<8} | {'Status':<12}")
-    print("-" * 90)
+    print(f"\n{'Strategy':<30} | {'Sortino':<8} | {'Total Ret %':<12} | {'Trades':<8}")
+    print("-" * 75)
     
     for i, strat in enumerate(strategies):
-        # Use trades count from the Prediction calculation (matches training log)
-        # Trades in prediction mode are just non-zero signals because we pay cost on entry? 
-        # Actually backtester calculates cost on turnover.
-        # But for 'Trades' count display, let's use the one that matches logic.
+        total_ret_pct = cumulative[-1, i]
+        n_trades = np.sum(lot_change[:, i])
         
-        # We need the trade count from the prediction execution
-        # In prediction mode, 'signals' was used directly.
-        # Let's trust the 'trades' column from the results df
-        n_trades = pred_results.iloc[i]['trades']
-        if n_trades == 0: continue
-            
-        full_ret = pred_results.iloc[i]['total_return']
-        s_pred = pred_results.iloc[i]['sortino']
+        # We need Sortino for table. Use evaluation on test set for accuracy.
+        res_test = backtester.evaluate_population([strat], set_type='test')
+        sortino = res_test.iloc[0]['sortino']
         
-        print(f"{strat.name:<30} | {s_pred:<8.2f} | {full_ret:<8.4f} | {int(n_trades):<8} | {'PROFITABLE' if full_ret > 0 else 'LOSS'}")
+        print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
         
-        label = f"{strat.name} (Sortino: {s_pred:.1f} | Ret: {full_ret:.2%} | Trades: {int(n_trades)})"
+        label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})"
         plt.plot(cumulative[:, i], label=label)
         
-    # Plot Asset (Buy & Hold) for comparison - Normalized to start at 0
-    asset_cum = np.cumsum(returns_vec[backtester_pred.val_idx:])
-    plt.plot(asset_cum, label="Buy & Hold (EUR/USD)", color='black', alpha=0.3, linestyle='--')
+    # Plot Buy & Hold (Log Ret sum normalized to account %) for scale
+    asset_cum = np.cumsum(returns_vec)
+    plt.plot(asset_cum, label="Market Bench (Log Ret)", color='black', alpha=0.3, linestyle='--')
     
-    # Shade Regions (Only Test Set is relevant here as we sliced net_returns for 'test')
-    # cumulative is length of test set.
+    # Shade Regions
+    plt.axvspan(0, backtester.train_idx, color='green', alpha=0.05, label="Train")
+    plt.axvspan(backtester.train_idx, backtester.val_idx, color='yellow', alpha=0.05, label="Val")
+    plt.axvspan(backtester.val_idx, len(cumulative), color='red', alpha=0.05, label="Test (OOS)")
     
-    plt.title("Apex Strategies: Prediction Performance (Triple Barrier Execution)", fontsize=16)
-    plt.ylabel("Cumulative Log Return")
+    plt.title(f"Apex Trading Performance: $30k Account, 1-3 Lots (Tiered Position Sizing)", fontsize=16)
+    plt.ylabel("Cumulative Account Return (%)")
     plt.xlabel("Bar Index")
     plt.legend(loc='upper left', fontsize='small')
     plt.grid(True, alpha=0.3)
@@ -140,7 +142,7 @@ class MockEngine:
         self.bars = df
 
 if __name__ == "__main__":
-    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    print(f"Loading Feature Matrix...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found.")
         sys.exit(1)
@@ -167,7 +169,7 @@ if __name__ == "__main__":
             seen.add(str(s))
             
     if not strategies:
-        print("No strategies found to visualize.")
+        print("No strategies found.")
         sys.exit(0)
             
     plot_performance(engine, strategies)
