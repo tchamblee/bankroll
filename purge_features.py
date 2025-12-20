@@ -206,11 +206,13 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     return final_survivors
 
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
     
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
-    
-    base_df = engine.bars.copy()
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        exit(1)
+        
+    base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     # Loop through Horizons from Config
     for horizon in config.PREDICTION_HORIZONS:

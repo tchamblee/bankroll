@@ -106,11 +106,20 @@ def plot_performance(engine, strategies):
     plt.savefig(output_path)
     print(f"📸 Saved Performance Chart to {output_path}")
 
+class MockEngine:
+    def __init__(self, df):
+        self.bars = df
+
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
     
     # Load Data
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        sys.exit(1)
+        
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+    engine = MockEngine(df)
     
     # Load Apex Strategies
     # Look for all horizon files

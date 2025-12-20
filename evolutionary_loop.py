@@ -181,11 +181,16 @@ if __name__ == "__main__":
     parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
     args = parser.parse_args()
 
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        exit(1)
+        
+    bars_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     survivors_file = args.survivors
     
     print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
     print(f"📂 Using Survivors: {survivors_file}")
     
-    factory = EvolutionaryAlphaFactory(engine.bars, survivors_file)
+    factory = EvolutionaryAlphaFactory(bars_df, survivors_file)
     factory.evolve(horizon=args.horizon)

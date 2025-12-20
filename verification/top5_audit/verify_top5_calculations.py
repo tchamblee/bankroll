@@ -6,6 +6,7 @@ import numpy as np
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
+import config
 from feature_engine import FeatureEngine
 
 def audit_calculation(df, feature_name, description):
@@ -33,14 +34,13 @@ def audit_calculation(df, feature_name, description):
         pass
 
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
     
-    DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/raw_ticks'))
-    
-    print("Loading Data for Top 5 Audit...")
-    engine = create_full_feature_engine(DATA_PATH)
-    
-    df = engine.bars
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        sys.exit(1)
+        
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     # Top 5 Champions (Horizon 60)
     champions = [

@@ -9,6 +9,7 @@ DIRS = {
     
     "PROCESSED_DIR": os.path.join(BASE_DIR, "processed_data"),
     "DATA_CLEAN_TICKS": os.path.join(BASE_DIR, "processed_data", "clean_ticks"),
+    "FEATURE_MATRIX": os.path.join(BASE_DIR, "processed_data", "feature_matrix.parquet"),
     
     "OUTPUT_DIR": os.path.join(BASE_DIR, "output"),
     "FEATURES_DIR": os.path.join(BASE_DIR, "output", "features"),

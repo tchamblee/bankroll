@@ -57,8 +57,12 @@ def plot_top5(df):
     print(f"📸 Saved Top 5 Chart to {output_path}")
 
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
     
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        sys.exit(1)
+        
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
-    plot_top5(engine.bars)
+    plot_top5(df)

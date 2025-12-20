@@ -43,6 +43,7 @@ def main():
     run_step("verify_data_integrity.py", "Data Integrity Audit")
     
     # 2. Feature Engineering & Selection
+    run_step("generate_features.py", "Feature Matrix Generation")
     # Note: purge_features.py generates the survivors_*.json files needed later
     run_step("purge_features.py", "Feature Hunger Games (Selection)")
     run_step("validate_features.py", "Feature Validation (OOS Check)")

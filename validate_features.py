@@ -64,15 +64,13 @@ def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100)
     return pd.Series(outcomes, index=df.index)
 
 if __name__ == "__main__":
-    from feature_engine import create_full_feature_engine
     
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
-    
-    if engine is None or engine.bars is None or len(engine.bars) < 10:
-        print(f"Not enough bars generated.")
-        exit()
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found. Run generate_features.py first.")
+        exit(1)
         
-    base_df = engine.bars.copy()
+    base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     for horizon in config.PREDICTION_HORIZONS:
         print(f"\n\n==============================================")
