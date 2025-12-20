@@ -218,16 +218,21 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     print("\n--- 🛡️ THE SURVIVORS (Elite Gene Pool) ---")
     print(stats_df.loc[final_survivors][['IC', 'Stability', 'P-Value']])
     
-    # SAVE SURVIVORS TO JSON
-    filename = f"survivors_{horizon}.json"
-    output_path = os.path.join(config.DIRS['FEATURES_DIR'], filename)
-    try:
-        os.makedirs(config.DIRS['FEATURES_DIR'], exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(final_survivors, f, indent=4)
-        print(f"\n💾 Saved {len(final_survivors)} survivors to {output_path}")
-    except Exception as e:
-        print(f"Error saving survivors: {e}")
+    # --- MANUAL BLACKLIST (Overfitting Mitigation) ---
+    # These features have proven to be "Fool's Gold" - high Train/Val scores but OOS failure.
+    BLACKLIST = ['fdi_3200', 'epu_total', 'yang_zhang_vol_800']
+    
+    # Filter list
+    original_count = len(final_survivors)
+    final_survivors = [f for f in final_survivors if f not in BLACKLIST]
+    
+    print(f"🚫 Blacklisted {len(BLACKLIST)} features: {BLACKLIST}")
+    print(f"🛡️  {len(final_survivors)} Survivors remaining after Blacklist (Removed {original_count - len(final_survivors)}).")
+
+    # Save Survivors List
+    survivors_path = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
+    with open(survivors_path, "w") as f:
+        json.dump(final_survivors, f, indent=4)
     
     return final_survivors
 

@@ -36,15 +36,15 @@ class EvolutionaryAlphaFactory:
 
     def initialize_population(self):
         print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
-        # strategies will now have 3-5 genes to allow up/downsizing
-        self.population = [self.factory.create_strategy(num_genes_range=(3, 5)) for _ in range(self.pop_size)]
+        # strategies will now have 1-2 genes to allow up/downsizing
+        self.population = [self.factory.create_strategy(num_genes_range=(1, 2)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
         
         # Pick random number of genes from parents
-        n_long = random.randint(3, 5)
-        n_short = random.randint(3, 5)
+        n_long = random.randint(1, 2)
+        n_short = random.randint(1, 2)
         
         combined_long = p1.long_genes + p2.long_genes
         combined_short = p1.short_genes + p2.short_genes
@@ -67,53 +67,81 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
-            # 1. Evaluate on TRAIN and VALIDATION simultaneously (Robustness Check)
-            train_results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=False)
-            val_results = self.backtester.evaluate_population(self.population, set_type='validation', prediction_mode=False)
+            # 1. Evaluate using Rolling Walk-Forward Validation (4 Folds)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4)
             
             # 2. Filtering & Scoring
-            # Calculate penalties on Train (primary driver of complexity)
-            train_sortino = train_results['sortino'].values
-            val_sortino = val_results['sortino'].values
-            trade_counts = train_results['trades'].values
+            wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
+            
+            # --- FEATURE DOMINANCE PENALTY ---
+            # Count feature usage across population
+            feature_counts = {}
+            for strat in self.population:
+                used_features = set()
+                for gene in strat.long_genes + strat.short_genes:
+                    if hasattr(gene, 'feature'):
+                        used_features.add(gene.feature)
+                    elif hasattr(gene, 'feature_left'):
+                        used_features.add(gene.feature_left)
+                        used_features.add(gene.feature_right)
+                    elif hasattr(gene, 'mode'): # TimeGene
+                        used_features.add(f"time_{gene.mode}")
+                    elif hasattr(gene, 'direction'): # ConsecutiveGene
+                        used_features.add(f"consecutive_{gene.direction}")
+                
+                for f in used_features:
+                    feature_counts[f] = feature_counts.get(f, 0) + 1
+            
+            # Identify dominant features (>20% of population)
+            threshold = self.pop_size * 0.20
+            dominant_features = {f for f, count in feature_counts.items() if count > threshold}
+            
+            # Log dominant features
+            if dominant_features:
+                sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
+                print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
             
             # Penalties
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
-                complexity_penalty = n_genes * 0.02
                 
-                # Apply penalties to raw scores
-                train_sortino[i] -= complexity_penalty
-                val_sortino[i] -= complexity_penalty
+                # Complexity Penalty (Small Data = Simple Models)
+                complexity_penalty = n_genes * 0.05
                 
-                # Minimum Trade Activity Filter (on Train)
-                if trade_counts[i] < 10:
-                    train_sortino[i] = -1.0
-                    val_sortino[i] = -1.0
+                # Apply Dominance Penalty (Relaxed to 0.1)
+                dom_penalty = 0.0
+                strat_features = set()
+                for gene in strat.long_genes + strat.short_genes:
+                    if hasattr(gene, 'feature'):
+                        strat_features.add(gene.feature)
+                    elif hasattr(gene, 'feature_left'):
+                        strat_features.add(gene.feature_left)
+                        strat_features.add(gene.feature_right)
+                    elif hasattr(gene, 'mode'):
+                        strat_features.add(f"time_{gene.mode}")
+                    elif hasattr(gene, 'direction'):
+                        strat_features.add(f"consecutive_{gene.direction}")
 
-            # 3. Robust Fitness Calculation
-            # Fitness = min(Train, Val) -> Strategy must work in BOTH regimes to survive
-            # This aggressively kills overfitting
-            robust_fitness = np.minimum(train_sortino, val_sortino)
-            
-            # Update Strategy objects for selection
-            for i, strat in enumerate(self.population):
-                strat.fitness = robust_fitness[i]
-                # Store split metrics for debugging/HOF
-                strat.train_score = train_sortino[i]
-                strat.val_score = val_sortino[i]
+                for f in strat_features:
+                    if f in dominant_features:
+                        dom_penalty += 0.1 # Penalize 0.1 per dominant feature (Relaxed)
+                
+                total_penalty = complexity_penalty + dom_penalty
+
+                # Apply penalties to WFV scores
+                wfv_scores[i] -= total_penalty
+                
+                strat.fitness = wfv_scores[i]
 
             # Statistics
-            best_idx = np.argmax(robust_fitness)
-            best_fitness = robust_fitness[best_idx]
+            best_idx = np.argmax(wfv_scores)
+            best_fitness = wfv_scores[best_idx]
             best_strat = self.population[best_idx]
             
-            avg_train = np.mean(train_sortino)
-            avg_val = np.mean(val_sortino)
-            gen_gap = avg_train - avg_val
+            # Extract detailed WFV stats for best strat
+            best_stats = wfv_results.iloc[best_idx]
             
-            print(f"\n--- Gen {gen} | Best Robust Fitness: {best_fitness:.4f} (Tr:{best_strat.train_score:.2f}/Val:{best_strat.val_score:.2f}) ---")
-            print(f"    Avg Gap: {gen_gap:.4f} | Avg Train: {avg_train:.4f} | Avg Val: {avg_val:.4f}")
+            print(f"\n--- Gen {gen} | Best WFV Score: {best_fitness:.4f} (Avg:{best_stats['avg_sortino']:.2f}/Min:{best_stats['min_sortino']:.2f}) ---")
             
             if best_fitness > global_best_fitness:
                 global_best_fitness = best_fitness
@@ -128,7 +156,7 @@ class EvolutionaryAlphaFactory:
             # 4. Selection (Elitism on Robust Fitness)
             num_elite = int(self.pop_size * 0.2)
             # Sort by ROBUST fitness
-            sorted_indices = np.argsort(robust_fitness)[::-1]
+            sorted_indices = np.argsort(wfv_scores)[::-1]
             elites = [self.population[i] for i in sorted_indices[:num_elite]]
             
             # Update Hall of Fame (Survivors of the Robust Filter)
@@ -219,8 +247,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True)
     parser.add_argument("--horizon", type=int, default=60)
-    parser.add_argument("--pop_size", type=int, default=2000)
-    parser.add_argument("--gens", type=int, default=100)
+    parser.add_argument("--pop_size", type=int, default=3000)
+    parser.add_argument("--gens", type=int, default=50)
     args = parser.parse_args()
 
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):

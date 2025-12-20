@@ -233,3 +233,86 @@ class BacktestEngine:
             
         results_df = pd.DataFrame(results)
         return (results_df, net_returns) if return_series else results_df
+
+    def evaluate_walk_forward(self, population: list[Strategy], folds=4):
+        """
+        Conducts a rigorous Rolling Walk-Forward Validation on the Development Set (0-80%).
+        The last 20% is held out as the Final Exam.
+        """
+        if not population: return []
+
+        full_signal_matrix = self.generate_signal_matrix(population)
+        n_bars = len(self.raw_data)
+        
+        # Define Development Set (0% - 80%)
+        dev_end_idx = int(n_bars * 0.8)
+        
+        # Fixed indices for 4 folds on ~22k bars (scaled to actual size)
+        # We target ~18k dev set.
+        # Window ~10k, Step ~2k.
+        
+        # Dynamic resizing based on actual dev_end_idx
+        window_size = int(dev_end_idx * 0.55) # ~10k / 18k
+        step_size = int(dev_end_idx * 0.11)   # ~2k / 18k
+        
+        fold_scores = np.zeros((len(population), folds))
+        
+        for f in range(folds):
+            start = f * step_size
+            train_end = start + window_size
+            test_end = train_end + step_size
+            
+            # Clip to dev set end
+            if test_end > dev_end_idx:
+                test_end = dev_end_idx
+                train_end = test_end - step_size # Maintain test size? or shrink?
+            
+            # Extract Test Slice for this fold
+            signals = full_signal_matrix[train_end:test_end]
+            returns = self.returns_vec[train_end:test_end]
+            prices = self.close_vec[train_end:test_end]
+            
+            # --- Vectorized PnL (Same logic as evaluate_population) ---
+            signals_shifted = np.roll(signals, 1, axis=0); signals_shifted[0, :] = 0
+            prices_shifted = np.roll(prices, 1, axis=0); prices_shifted[0] = prices[0]
+            
+            position_notional = signals_shifted * self.standard_lot * prices_shifted
+            gross_pnl = position_notional * returns
+            
+            lot_change = np.abs(np.diff(signals, axis=0, prepend=0))
+            costs = lot_change * self.standard_lot * prices * self.total_cost_pct
+            
+            net_pnl = gross_pnl - costs
+            net_ret = net_pnl / self.account_size
+            
+            # Metrics
+            avg = np.mean(net_ret, axis=0)
+            downside = np.std(np.minimum(net_ret, 0), axis=0) + 1e-9
+            sortino = (avg / downside) * np.sqrt(self.annualization_factor)
+            
+            # Activity Filter (Per Fold)
+            trades = np.sum(lot_change, axis=0)
+            sortino[trades < 3] = -1.0 # Min 3 trades per 2k bars (~1 month)
+            
+            fold_scores[:, f] = sortino
+            
+        # Aggregated Score
+        avg_sortino = np.mean(fold_scores, axis=1)
+        min_sortino = np.min(fold_scores, axis=1) # Worst case scenario
+        
+        # Robust Score = Average - Penalty for Variance between folds
+        fold_std = np.std(fold_scores, axis=1)
+        robust_score = avg_sortino - (fold_std * 0.5)
+        
+        results = []
+        for i, strat in enumerate(population):
+            strat.fitness = robust_score[i]
+            results.append({
+                'id': strat.name,
+                'sortino': robust_score[i],
+                'avg_sortino': avg_sortino[i],
+                'min_sortino': min_sortino[i],
+                'fold_std': fold_std[i]
+            })
+            
+        return pd.DataFrame(results)
