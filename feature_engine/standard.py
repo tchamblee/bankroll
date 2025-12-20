@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-def add_features_to_bars(df, windows=[50, 100, 200, 400]):
+def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     if df is None: return None
     df = df.copy() # Avoid SettingWithCopy if necessary
     

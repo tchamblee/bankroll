@@ -274,15 +274,17 @@ def add_physics_features(df):
     df['frac_diff_02'] = frac_diff_ffd(df['close'], d=0.2)
     df['hurst_100'] = get_hurst_exponent(df['close'], window=100)
     df['hurst_200'] = get_hurst_exponent(df['close'], window=200)
+    df['hurst_400'] = get_hurst_exponent(df['close'], window=400)
     
     # Shannon Entropy (Disorder)
     # Using log_ret (stationarized) is better for distribution analysis than raw price
     df['entropy_100'] = get_shannon_entropy(df['log_ret'], window=100)
     df['entropy_200'] = get_shannon_entropy(df['log_ret'], window=200)
+    df['entropy_400'] = get_shannon_entropy(df['log_ret'], window=400)
     
     return df
 
-def add_advanced_physics_features(df, windows=[50, 100]):
+def add_advanced_physics_features(df, windows=[50, 100, 200]):
     if df is None: return None
     df = df.copy()
     print("Calculating Advanced Physics Features (YZ Vol, Kyle's Lambda, Force, FDI)...")

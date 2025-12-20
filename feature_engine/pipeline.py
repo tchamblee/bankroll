@@ -37,7 +37,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
             engine.add_correlator_residual(corr_df, suffix=suffix)
             
     # 3. Standard Features
-    engine.add_features_to_bars(windows=[50, 100, 200, 400])
+    engine.add_features_to_bars(windows=[50, 100, 200, 400, 800, 1600])
     
     # 4. Crypto Features
     engine.add_crypto_features("CLEAN_IBIT.parquet")
@@ -53,10 +53,11 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # 7. Physics & Microstructure
     engine.add_physics_features()
     engine.add_microstructure_features()
-    engine.add_advanced_physics_features()
+    engine.add_advanced_physics_features(windows=[50, 100, 200])
     
     # 8. Deltas (Flow)
     engine.add_delta_features(lookback=10)
     engine.add_delta_features(lookback=50)
+    engine.add_delta_features(lookback=100)
     
     return engine
