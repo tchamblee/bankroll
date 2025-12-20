@@ -10,9 +10,10 @@ from validate_features import triple_barrier_labels
 import warnings
 
 def get_feature_correlation_matrix(df, features):
-    return df[features].corr(method='spearman')
+    # Optimized: Rank then Pearson (Equivalent to Spearman but much faster)
+    return df[features].rank(method='average').corr(method='pearson')
 
-def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p_threshold=0.05, corr_threshold=0.75, stability_threshold=0.5):
+def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, p_threshold=0.05, corr_threshold=0.75, stability_threshold=0.25):
     """
     Identifies features to purge based on Variance, IC, and Collinearity.
     Saves survivors to data/survivors_{horizon}.json.
@@ -128,65 +129,15 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
 
     stats_df = pd.DataFrame(feature_stats).set_index('Feature')
     
-    # --- NEW: CONCEPT DEDUPLICATION (Highlander Rule) ---
-    print("\n[Step 2.5] Checking for Conceptual Redundancy (Best Window per Feature)...")
+    # --- OPTIMIZATION: Sort by Signal Strength (Abs_IC) ---
+    # We must ensure we iterate from Strongest -> Weakest so that
+    # when we find a correlation, we drop the WEAKER one.
+    survivors = stats_df.sort_values('Abs_IC', ascending=False).index.tolist()
     
-    # Helper to get base name (e.g., 'volatility_200' -> 'volatility')
-    def get_base_concept(name):
-        # 1. Strip 'delta_' prefix
-        clean_name = name.replace('delta_', '')
-        
-        # 2. Strip window suffixes (_10, _50, _200, etc)
-        parts = clean_name.split('_')
-        while parts and parts[-1].isdigit():
-            parts.pop()
-        base = "_".join(parts)
-        
-        # 3. Custom Grouping for GDELT Volume Proxies
-        # These are highly correlated in small samples; force them to compete.
-        gdelt_vol_proxies = ['news_vol_usd', 'news_vol_eur', 'news_vol_diff', 
-                             'news_crisis_vol', 'epu_total', 'epu_usd', 'epu_eur', 
-                             'inflation_vol', 'conflict_intensity', 'news_instability',
-                             'news_velocity_usd', 'news_velocity_eur']
-        
-        if base in gdelt_vol_proxies:
-            return 'GDELT_Attention_Metrics'
-            
-        return base
-
-    concept_map = {}
-    for f in survivors:
-        concept = get_base_concept(f)
-        if concept not in concept_map:
-            concept_map[concept] = []
-        concept_map[concept].append(f)
-        
-    concept_survivors = []
-    for concept, group in concept_map.items():
-        if len(group) == 1:
-            concept_survivors.append(group[0])
-        else:
-            # Pick winner based on Abs_IC
-            # For GDELT features, we might want to keep the top 2 if they are distinct enough?
-            # But the collinearity check will catch them anyway. Let's keep top 2 for GDELT group.
-            
-            sorted_group = stats_df.loc[group].sort_values('Abs_IC', ascending=False).index.tolist()
-            
-            if concept == 'GDELT_Attention_Metrics':
-                # Keep top 3 for GDELT to allow for EUR vs USD vs Diff nuances
-                winners = sorted_group[:3]
-            else:
-                winners = sorted_group[:1]
-                
-            concept_survivors.extend(winners)
-            
-            # Log the kills
-            losers = [g for g in group if g not in winners]
-            for l in losers:
-                kill_list.append({'Feature': l, 'Reason': f'Concept Redundant with {winners[0]}'})
-                # print(f"  ❌ {l}: Concept Redundant with {winners[0]} (Weaker IC)")
-                
-    survivors = stats_df.loc[concept_survivors].sort_values('Abs_IC', ascending=False).index.tolist()
+    # ----------------------------------------------------
+    # [REMOVED] Step 2.5: Conceptual Redundancy (Highlander Rule)
+    # We now allow multiple windows of the same concept (e.g. vol_20 and vol_200) to survive
+    # provided they are not strictly collinear (handled in Step 3).
     # ----------------------------------------------------
     
     # 4. Redundancy Check (Collinearity)
@@ -194,7 +145,12 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     final_survivors = []
     dropped_redundant = set()
     
-    corr_matrix = get_feature_correlation_matrix(df, survivors)
+    # --- OPTIMIZATION: Fast Rank-Based Correlation ---
+    # Pandas .corr(method='spearman') is very slow (O(N^2) sorting).
+    # Instead, we rank once, then use Pearson (optimized matrix multiplication).
+    print(f"    ... Computing Correlation Matrix for {len(survivors)} survivors ...")
+    ranked_df = df[survivors].rank(method='average')
+    corr_matrix = ranked_df.corr(method='pearson')
     
     for i, f1 in enumerate(survivors):
         if f1 in dropped_redundant: continue
@@ -209,7 +165,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
             if abs(rho) > corr_threshold:
                 kill_list.append({'Feature': f2, 'Reason': f'Redundant with {f1} (Corr={rho:.2f})'})
                 dropped_redundant.add(f2)
-                print(f"  ❌ {f2}: Redundant with {f1} ({rho:.2f})")
+                # print(f"  ❌ {f2}: Redundant with {f1} ({rho:.2f})")
 
     # Output Results
     print(f"\n💀 Purged {len(kill_list)} features.")

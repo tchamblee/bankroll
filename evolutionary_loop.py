@@ -64,6 +64,11 @@ class EvolutionaryAlphaFactory:
         generations_without_improvement = 0
         global_best_fitness = -999.0
         
+        # --- FEATURE BLACKLIST ---
+        # Explicitly ban features known to cause OOS failure or Regime Overfitting
+        BLACKLIST = {'central_bank_tone', 'trend_strength_400'}
+        print(f"🚫 Blacklisted Features: {BLACKLIST}")
+        
         for gen in range(self.generations):
             start_time = time.time()
             
@@ -73,8 +78,7 @@ class EvolutionaryAlphaFactory:
             # 2. Filtering & Scoring
             wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
             
-            # --- FEATURE DOMINANCE PENALTY ---
-            # Count feature usage across population
+            # Count feature usage
             feature_counts = {}
             for strat in self.population:
                 used_features = set()
@@ -92,8 +96,8 @@ class EvolutionaryAlphaFactory:
                 for f in used_features:
                     feature_counts[f] = feature_counts.get(f, 0) + 1
             
-            # Identify dominant features (>20% of population)
-            threshold = self.pop_size * 0.20
+            # Identify dominant features (>15% of population)
+            threshold = self.pop_size * 0.15
             dominant_features = {f for f, count in feature_counts.items() if count > threshold}
             
             # Log dominant features
@@ -108,9 +112,11 @@ class EvolutionaryAlphaFactory:
                 # Complexity Penalty (Small Data = Simple Models)
                 complexity_penalty = n_genes * 0.05
                 
-                # Apply Dominance Penalty (Relaxed to 0.1)
+                # Apply Dynamic Dominance Penalty AND Blacklist Check
                 dom_penalty = 0.0
                 strat_features = set()
+                blacklisted_found = False
+                
                 for gene in strat.long_genes + strat.short_genes:
                     if hasattr(gene, 'feature'):
                         strat_features.add(gene.feature)
@@ -123,13 +129,21 @@ class EvolutionaryAlphaFactory:
                         strat_features.add(f"consecutive_{gene.direction}")
 
                 for f in strat_features:
-                    if f in dominant_features:
-                        dom_penalty += 0.1 # Penalize 0.1 per dominant feature (Relaxed)
+                    # KILL BLACKLISTED
+                    if f in BLACKLIST:
+                        blacklisted_found = True
+                        break
+                        
+                    # Penalty scales with popularity: 50% usage -> 1.0 Penalty, 90% -> 1.8
+                    usage_ratio = feature_counts.get(f, 0) / self.pop_size
+                    if usage_ratio > 0.15:
+                         dom_penalty += usage_ratio * 2.0
                 
-                total_penalty = complexity_penalty + dom_penalty
-
-                # Apply penalties to WFV scores
-                wfv_scores[i] -= total_penalty
+                if blacklisted_found:
+                    wfv_scores[i] = -999.0
+                else:
+                    total_penalty = complexity_penalty + dom_penalty
+                    wfv_scores[i] -= total_penalty
                 
                 strat.fitness = wfv_scores[i]
 
