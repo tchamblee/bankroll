@@ -107,20 +107,26 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     
     # Helper to get base name (e.g., 'volatility_200' -> 'volatility')
     def get_base_concept(name):
-        # specific handling for delta features to keep them separate from base features
-        if name.startswith('delta_'):
-            # delta_volatility_50_50 -> delta_volatility
-            parts = name.split('_')
-            # Check if last parts are numbers
-            while parts and parts[-1].isdigit():
-                parts.pop()
-            return "_".join(parts)
-        else:
-            # volatility_200 -> volatility
-            parts = name.split('_')
-            while parts and parts[-1].isdigit():
-                parts.pop()
-            return "_".join(parts)
+        # 1. Strip 'delta_' prefix
+        clean_name = name.replace('delta_', '')
+        
+        # 2. Strip window suffixes (_10, _50, _200, etc)
+        parts = clean_name.split('_')
+        while parts and parts[-1].isdigit():
+            parts.pop()
+        base = "_".join(parts)
+        
+        # 3. Custom Grouping for GDELT Volume Proxies
+        # These are highly correlated in small samples; force them to compete.
+        gdelt_vol_proxies = ['news_vol_usd', 'news_vol_eur', 'news_vol_diff', 
+                             'news_crisis_vol', 'epu_total', 'epu_usd', 'epu_eur', 
+                             'inflation_vol', 'conflict_intensity', 'news_instability',
+                             'news_velocity_usd', 'news_velocity_eur']
+        
+        if base in gdelt_vol_proxies:
+            return 'GDELT_Attention_Metrics'
+            
+        return base
 
     concept_map = {}
     for f in survivors:
@@ -135,13 +141,24 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
             concept_survivors.append(group[0])
         else:
             # Pick winner based on Abs_IC
-            winner = stats_df.loc[group].sort_values('Abs_IC', ascending=False).index[0]
-            concept_survivors.append(winner)
+            # For GDELT features, we might want to keep the top 2 if they are distinct enough?
+            # But the collinearity check will catch them anyway. Let's keep top 2 for GDELT group.
+            
+            sorted_group = stats_df.loc[group].sort_values('Abs_IC', ascending=False).index.tolist()
+            
+            if concept == 'GDELT_Attention_Metrics':
+                # Keep top 3 for GDELT to allow for EUR vs USD vs Diff nuances
+                winners = sorted_group[:3]
+            else:
+                winners = sorted_group[:1]
+                
+            concept_survivors.extend(winners)
+            
             # Log the kills
-            losers = [g for g in group if g != winner]
+            losers = [g for g in group if g not in winners]
             for l in losers:
-                kill_list.append({'Feature': l, 'Reason': f'Concept Redundant with {winner}'})
-                print(f"  ❌ {l}: Concept Redundant with {winner} (Weaker IC)")
+                kill_list.append({'Feature': l, 'Reason': f'Concept Redundant with {winners[0]}'})
+                # print(f"  ❌ {l}: Concept Redundant with {winners[0]} (Weaker IC)")
                 
     survivors = stats_df.loc[concept_survivors].sort_values('Abs_IC', ascending=False).index.tolist()
     # ----------------------------------------------------
@@ -205,6 +222,9 @@ if __name__ == "__main__":
             engine.add_correlator_residual(corr_df, suffix=suffix)
             
     engine.add_features_to_bars(windows=[50, 100, 200, 400]) 
+    
+    # --- CRYPTO FEATURES ---
+    engine.add_crypto_features("CLEAN_IBIT.parquet")
     
     # --- GDELT INTEGRATION ---
     gdelt_df = engine.load_gdelt_data()

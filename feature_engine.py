@@ -522,7 +522,90 @@ class FeatureEngine:
                 df[f'order_book_alignment_{w}'] = alignment.rolling(w).mean()
 
         self.bars = df
+
+    def add_crypto_features(self, ibit_pattern="CLEAN_IBIT.parquet"):
+        """
+        Adds Crypto-Lead features using IBIT data.
+        1. Resamples EURUSD (self.bars) and IBIT to 1-min fixed intervals.
+        2. Calculates Time-Based correlations and lags.
+        3. Merges back to Volume Clock.
+        """
+        if not hasattr(self, 'bars'): return
         
+        # Load IBIT
+        ibit_df = self.load_ticker_data(ibit_pattern)
+        if ibit_df is None:
+            print("Skipping Crypto Features (IBIT not found).")
+            return
+            
+        print("Calculating Crypto Features (IBIT/EURUSD)...")
+        
+        # 1. Resample to 1-Minute Grid
+        # EURUSD (From Bars - approximate but good enough if bars are granular)
+        # We use time_end as the timestamp
+        eur_1m = self.bars.set_index('time_end')[['close']].resample('1min').last().ffill()
+        eur_1m.columns = ['eur_close']
+        
+        # IBIT
+        ibit_df['ts_event'] = pd.to_datetime(ibit_df['ts_event'])
+        ibit_1m = ibit_df.set_index('ts_event')[['mid_price']].resample('1min').last().ffill()
+        ibit_1m.columns = ['ibit_close']
+        
+        # Align
+        joined = pd.concat([eur_1m, ibit_1m], axis=1).dropna()
+        
+        # 2. Calculate Features on Time Grid
+        # Returns
+        joined['eur_ret'] = np.log(joined['eur_close'] / joined['eur_close'].shift(1))
+        joined['ibit_ret'] = np.log(joined['ibit_close'] / joined['ibit_close'].shift(1))
+        
+        # A. The "Crypto Lead" (2-Minute Lag)
+        # Logic: ln(Price_{t-2} / Price_{t-3})
+        # This is the return of the bar 2 minutes ago?
+        # If t is current time, t-1 is 1 min ago, t-2 is 2 min ago.
+        # Return at t-2 is ln(P_{t-2}/P_{t-3}). 
+        # So we shift the return series by 2.
+        joined['IBIT_Lag2_Return'] = joined['ibit_ret'].shift(2)
+        
+        # B. Dynamic Correlation Regime (60m)
+        joined['Corr_Regime_60m'] = joined['eur_ret'].rolling(60).corr(joined['ibit_ret'])
+        
+        # C. Volatility Ratio (30m)
+        # Ratio of StdDevs
+        vol_eur = joined['eur_ret'].rolling(30).std()
+        vol_ibit = joined['ibit_ret'].rolling(30).std()
+        joined['Vol_Ratio_30m'] = vol_eur / vol_ibit.replace(0, np.nan)
+        
+        # 3. Merge back to Volume Bars
+        # We use merge_asof on the Bar's time_end matching the 1-min timestamp
+        # Reset index to make 'timestamp' a column
+        joined.index.name = 'timestamp'
+        joined = joined.reset_index()
+        
+        # Sort for asof merge
+        joined = joined.sort_values('timestamp')
+        self.bars = self.bars.sort_values('time_end')
+        
+        # We only want the new columns
+        cols_to_add = ['timestamp', 'IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']
+        
+        merged = pd.merge_asof(
+            self.bars,
+            joined[cols_to_add],
+            left_on='time_end',
+            right_on='timestamp',
+            direction='backward' # Use latest known 1-min data
+        )
+        
+        # Drop temp timestamp
+        merged.drop(columns=['timestamp'], inplace=True)
+        
+        # Fill NaNs (early windows)
+        merged[['IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']] = \
+            merged[['IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']].fillna(0)
+            
+        self.bars = merged
+
     def add_monster_features(self, windows=[50, 100]):
         if not hasattr(self, 'bars'): return
         print("Calculating MONSTER Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
@@ -607,6 +690,9 @@ if __name__ == "__main__":
         
         engine.add_features_to_bars()
         
+        # Crypto Features (IBIT)
+        engine.add_crypto_features("CLEAN_IBIT.parquet")
+
         # GDELT Integration
         gdelt_df = engine.load_gdelt_data()
         if gdelt_df is not None:
