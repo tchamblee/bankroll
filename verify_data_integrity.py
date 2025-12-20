@@ -1,124 +1,71 @@
 import pandas as pd
 import numpy as np
-import glob
+import config
 import os
 
-def check_ticker_health(ticker_pattern, name):
-    print(f"\n--- Checking Health: {name} ({ticker_pattern}) ---")
-    files = glob.glob(ticker_pattern)
-    if not files:
-        print("  ❌ No files found.")
+def check_leaks():
+    print("🕵️  Starting Data Leakage Investigation...")
+    
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found.")
         return
 
-    try:
-        df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
-        df = df.sort_values("ts_event").reset_index(drop=True)
-    except Exception as e:
-        print(f"  ❌ Error reading files: {e}")
-        return
-
-    # 1. Basic Stats
-    n = len(df)
-    start = df['ts_event'].min()
-    end = df['ts_event'].max()
-    duration = end - start
-    print(f"  ✅ Count: {n:,} ticks")
-    print(f"  ✅ Range: {start} to {end} ({duration})")
-
-    # 2. Price Integrity
-    # Handle different column names with validity check
-    price = None
+    # Load Data
+    print(f"Loading {config.DIRS['FEATURE_MATRIX']}...")
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
-    # Helper to check validity
-    def has_data(col):
-        return col in df.columns and df[col].notna().sum() > 0
+    # Calculate Target (Next Day Return)
+    # log_ret is return from T-1 to T.
+    # We want to predict log_ret at T+1 (Target).
+    # So Target[i] = log_ret[i+1].
+    # Which corresponds to df['log_ret'].shift(-1).
     
-    # Try Mid Price
-    if has_data('mid_price'):
-        price = df['mid_price']
-    # Try Bid/Ask
-    elif has_data('pricebid') and has_data('priceask'):
-        price = (df['pricebid'] + df['priceask']) / 2
-    # Try Last Price
-    elif has_data('last_price'):
-        price = df['last_price']
+    if 'log_ret' not in df.columns:
+        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
         
-    if price is None:
-        print("  ❌ No valid price column found!")
-        return
-
-    zeros = (price == 0).sum()
-    negs = (price < 0).sum()
-    nans = price.isna().sum()
+    df['target_next_ret'] = df['log_ret'].shift(-1)
     
-    if zeros + negs + nans > 0:
-        print(f"  ⚠️ Bad Prices: NaNs={nans}, Zeros={zeros}, Negs={negs}")
+    # Drop NaNs created by shift
+    valid_df = df.dropna()
+    
+    print(f"Analyzing {len(valid_df)} rows and {len(valid_df.columns)} features...")
+    
+    # 1. Check Correlation with Future Return (The Holy Grail Leak)
+    print("\n🔍 Checking for Direct Future Leaks (Correlation with T+1 Return)...")
+    
+    # Suppress divide by zero warnings for constant features
+    with np.errstate(divide='ignore', invalid='ignore'):
+        corrs = valid_df.corrwith(valid_df['target_next_ret']).abs().sort_values(ascending=False)
+    
+    # Exclude the target itself from the report
+    corrs = corrs.drop('target_next_ret', errors='ignore')
+    
+    print(corrs.head(20))
+    
+    potential_leaks = corrs[corrs > 0.2] # 0.2 is essentially impossible for daily data
+    if not potential_leaks.empty:
+        print(f"\n⚠️  FOUND {len(potential_leaks)} POTENTIAL LEAKS (Corr > 0.2 with Future):")
+        print(potential_leaks)
     else:
-        print("  ✅ Price Integrity: Clean")
+        print("\n✅ No obvious direct linear leaks found (Max Corr < 0.2).")
 
-    # 3. Gap Detection (Time)
-    # Calc diff in seconds
-    time_diffs = df['ts_event'].diff().dt.total_seconds()
+    # 2. Check for "Perfect Predictors" of TODAY's return (which might be confused by the engine)
+    print("\n🔍 Checking for Features Identical to Current Return (T)...")
+    with np.errstate(divide='ignore', invalid='ignore'):
+        corrs_current = valid_df.corrwith(valid_df['log_ret']).abs().sort_values(ascending=False)
     
-    # Define thresholds
-    GAP_THRESHOLD = 3600 # 1 hour
-    OVERNIGHT_MAX = 20 * 3600 # 20 hours (Standard daily close)
-    CLOSURE_MAX = 100 * 3600 # 100 hours (Long weekends / Holidays)
+    # Exclude the feature itself (log_ret) from the proxy check
+    corrs_current = corrs_current.drop('log_ret', errors='ignore')
     
-    # Find all gaps > 1 hour
-    large_gaps = time_diffs[time_diffs > GAP_THRESHOLD]
-    
-    if len(large_gaps) > 0:
-        overnights = 0
-        closures = 0
-        anomalies = []
-        
-        for idx, duration in large_gaps.items():
-            if duration < OVERNIGHT_MAX:
-                overnights += 1
-            elif duration < CLOSURE_MAX:
-                closures += 1
-            else:
-                timestamp = df.loc[idx, 'ts_event']
-                anomalies.append((timestamp, duration))
-        
-        # Report
-        print(f"  ℹ️  Gaps > 1h: {len(large_gaps)} (Overnight: {overnights}, Closures: {closures})")
-        
-        if len(anomalies) > 0:
-            print(f"  ⚠️ UNEXPECTED GAPS (>100h): Found {len(anomalies)} anomalies!")
-            for ts, dur in anomalies[:3]:
-                print(f"     - {ts}: {dur/3600:.2f} hours")
-            if len(anomalies) > 3: print(f"     ... (+ {len(anomalies)-3} more)")
-        else:
-            print("  ✅ Continuity: All gaps are expected closures.")
-    else:
-        print("  ✅ Continuity: Continuous stream.")
+    print(corrs_current.head(10))
 
-    # 4. Outlier Detection (Flash Crashes/Bad Ticks)
-    # Return > 5% in 1 tick?
-    pct_change = price.pct_change(fill_method=None).abs()
-    outliers = pct_change[pct_change > 0.05] # 5% move in 1 tick is likely bad data
-    
-    if len(outliers) > 0:
-        print(f"  ❌ FATAL: Found {len(outliers)} massive outliers (>5% 1-tick move).")
-        print(f"     Example indices: {outliers.index[:5].tolist()}")
-    else:
-        print("  ✅ Volatility Check: No massive outliers")
-
-import config
+    # 3. Deep Dive into Top Suspects
+    # If any feature has corr > 0.99 with current return, and the engine has an off-by-one error, that's the smoking gun.
+    suspects = corrs_current[corrs_current > 0.95].index.tolist()
+    if suspects:
+        print(f"\n⚠️  {len(suspects)} features are effectively proxies for Current Return:")
+        for s in suspects:
+            print(f"   - {s}")
 
 if __name__ == "__main__":
-    # Point to CLEAN ticks now
-    base_dir = config.DIRS['DATA_CLEAN_TICKS']
-    
-    targets = [
-        (os.path.join(base_dir, "CLEAN_EURUSD.parquet"), "EUR/USD"),
-        (os.path.join(base_dir, "CLEAN_TNX.parquet"), "TNX (US 10Y)"),
-        (os.path.join(base_dir, "CLEAN_DXY.parquet"), "DXY (Dollar)"),
-        (os.path.join(base_dir, "CLEAN_BUND.parquet"), "BUND (DE 10Y)"),
-        (os.path.join(base_dir, "CLEAN_SPY.parquet"), "SPY (S&P 500)"),
-    ]
-    
-    for pattern, name in targets:
-        check_ticker_health(pattern, name)
+    check_leaks()

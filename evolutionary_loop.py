@@ -11,7 +11,7 @@ from backtest_engine import BacktestEngine
 from validate_features import triple_barrier_labels
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=20000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
+    def __init__(self, data, survivors_file, population_size=2000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
         self.data = data
         self.pop_size = population_size
         self.generations = generations
@@ -67,19 +67,53 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
-            # 1. Evaluate on TRAIN (Using TRADING mode)
-            results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=False)
+            # 1. Evaluate on TRAIN and VALIDATION simultaneously (Robustness Check)
+            train_results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=False)
+            val_results = self.backtester.evaluate_population(self.population, set_type='validation', prediction_mode=False)
             
             # 2. Filtering & Scoring
-            # Need at least 10 lot changes to be significant
-            results.loc[results['trades'] < 10, 'sortino'] = -1.0
+            # Calculate penalties on Train (primary driver of complexity)
+            train_sortino = train_results['sortino'].values
+            val_sortino = val_results['sortino'].values
+            trade_counts = train_results['trades'].values
             
-            raw_best = results['sortino'].max()
-            decay_factor = self.decay_rate ** gen
-            results['sortino'] *= decay_factor
+            # Penalties
+            for i, strat in enumerate(self.population):
+                n_genes = len(strat.long_genes) + len(strat.short_genes)
+                complexity_penalty = n_genes * 0.02
+                
+                # Apply penalties to raw scores
+                train_sortino[i] -= complexity_penalty
+                val_sortino[i] -= complexity_penalty
+                
+                # Minimum Trade Activity Filter (on Train)
+                if trade_counts[i] < 10:
+                    train_sortino[i] = -1.0
+                    val_sortino[i] = -1.0
+
+            # 3. Robust Fitness Calculation
+            # Fitness = min(Train, Val) -> Strategy must work in BOTH regimes to survive
+            # This aggressively kills overfitting
+            robust_fitness = np.minimum(train_sortino, val_sortino)
             
-            best_fitness = results['sortino'].max()
-            print(f"\n--- Generation {gen} | Best [Train] Sortino: {best_fitness:.4f} (Raw: {raw_best:.4f}) ---")
+            # Update Strategy objects for selection
+            for i, strat in enumerate(self.population):
+                strat.fitness = robust_fitness[i]
+                # Store split metrics for debugging/HOF
+                strat.train_score = train_sortino[i]
+                strat.val_score = val_sortino[i]
+
+            # Statistics
+            best_idx = np.argmax(robust_fitness)
+            best_fitness = robust_fitness[best_idx]
+            best_strat = self.population[best_idx]
+            
+            avg_train = np.mean(train_sortino)
+            avg_val = np.mean(val_sortino)
+            gen_gap = avg_train - avg_val
+            
+            print(f"\n--- Gen {gen} | Best Robust Fitness: {best_fitness:.4f} (Tr:{best_strat.train_score:.2f}/Val:{best_strat.val_score:.2f}) ---")
+            print(f"    Avg Gap: {gen_gap:.4f} | Avg Train: {avg_train:.4f} | Avg Val: {avg_val:.4f}")
             
             if best_fitness > global_best_fitness:
                 global_best_fitness = best_fitness
@@ -87,24 +121,25 @@ class EvolutionaryAlphaFactory:
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 7:
-                print(f"🛑 Early Stopping Triggered.")
+            if generations_without_improvement >= 10: # Increased patience for robust convergence
+                print(f"🛑 Early Stopping Triggered (No Robust Improvement).")
                 break
             
-            # 3. Selection
+            # 4. Selection (Elitism on Robust Fitness)
             num_elite = int(self.pop_size * 0.2)
-            elites_ids = results.sort_values('sortino', ascending=False).head(num_elite).index.tolist()
-            elites = [self.population[idx] for idx in elites_ids]
+            # Sort by ROBUST fitness
+            sorted_indices = np.argsort(robust_fitness)[::-1]
+            elites = [self.population[i] for i in sorted_indices[:num_elite]]
             
-            # 4. Cross-Validation
-            val_results = self.backtester.evaluate_population(elites, set_type='validation', prediction_mode=False)
-            for i, elite in enumerate(elites):
-                val_score = val_results.iloc[i]['sortino']
-                if val_score > 0.0:
-                    self.hall_of_fame.append((elite, val_score))
+            # Update Hall of Fame (Survivors of the Robust Filter)
+            # We keep unique strategies that have > 0.1 Robust Score
+            for elite in elites:
+                if elite.fitness > 0.1:
+                    # Check for duplicates in HOF (simple name check or gene hash ideally)
+                    self.hall_of_fame.append((elite, elite.fitness))
             
             # 5. Next Gen
-            new_population = elites[:50]
+            new_population = elites[:50] # Keep top 50 unchanged
             while len(new_population) < self.pop_size:
                 p1, p2 = random.sample(elites, 2)
                 child = self.crossover(p1, p2)
@@ -120,67 +155,63 @@ class EvolutionaryAlphaFactory:
             self.population = new_population
             print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
-        # 6. Final Selection (Validation Phase)
-        print("\n--- 🛡️ FINAL SELECTION (VALIDATION PHASE) ---")
+        # 6. Final Selection
+        print("\n--- 🛡️ FINAL SELECTION (TEST PHASE) ---")
         unique_hof = []
         seen = set()
-        # sort HOF by validation score
+        # sort HOF by Robust Score
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
-            if str(s) not in seen:
+            s_str = str(s)
+            if s_str not in seen:
                 unique_hof.append(s)
-                seen.add(str(s))
-            if len(unique_hof) >= 50: break # Top 50 unique candidates based on Validation Score
+                seen.add(s_str)
+            if len(unique_hof) >= 50: break
 
         selected_indices = []
         final_strategies = []
         
         if unique_hof:
-            # Re-evaluate top candidates on VALIDATION set to get returns for correlation check
+            # We already know they are robust (min(train, val) > 0.1).
+            # Now we check correlation on Validation returns to diversify.
             val_res, val_returns = self.backtester.evaluate_population(unique_hof, set_type='validation', return_series=True, prediction_mode=False)
             
-            # Sort by VALIDATION Sortino
-            sorted_indices = val_res.sort_values('sortino', ascending=False).index.tolist()
             returns_df = pd.DataFrame(val_returns)
             corr_matrix = returns_df.corr().abs()
             
-            # Select top 5 uncorrelated based on Validation performance
-            for idx in sorted_indices:
+            # Select top 5 uncorrelated
+            # They are already sorted by robustness from HOF extraction
+            for i in range(len(unique_hof)):
                 if len(selected_indices) >= 5: break
                 
                 if not selected_indices:
-                    selected_indices.append(idx)
+                    selected_indices.append(i)
                 else:
-                    # Check correlation against already selected (using validation returns)
-                    rho = corr_matrix.loc[idx, selected_indices].max()
-                    if rho < 0.7: selected_indices.append(idx)
+                    rho = corr_matrix.loc[i, selected_indices].max()
+                    if rho < 0.7: selected_indices.append(i)
             
             final_strategies = [unique_hof[i] for i in selected_indices]
             
             # 7. OOS Reporting (Test Phase)
             print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
-            # Run ONLY the selected strategies on Test data
             test_res, _ = self.backtester.evaluate_population(final_strategies, set_type='test', return_series=True, prediction_mode=False)
             
-            print("\nFinal Account Performance Stats (OOS) - FOR REPORTING ONLY:")
+            print("\nFinal Account Performance Stats (OOS):")
             if not test_res.empty:
                 print(test_res[['id', 'sortino', 'total_return', 'trades']])
-                if test_res['sortino'].max() <= 0:
-                    print("\n⚠️  WARNING: Selected strategies have negative OOS performance. (This is the honest result)")
             
             output = []
             for i, idx in enumerate(selected_indices):
-                # idx is index in unique_hof, i is index in final_strategies/test_res
                 s = final_strategies[i]
                 strat_data = s.to_dict()
                 strat_data['test_sortino'] = test_res.iloc[i]['sortino'] if not test_res.empty else 0.0
-                strat_data['validation_sortino'] = val_res.loc[idx, 'sortino']
+                strat_data['robust_score'] = s.fitness
                 output.append(strat_data)
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
             print(f"\n💾 Saved {len(output)} Apex Strategies to {out_path}")
         else:
-            print("No strategies survived validation.")
+            print("No strategies survived robustness filter.")
 
 import argparse
 
