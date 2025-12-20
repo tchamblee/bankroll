@@ -93,32 +93,61 @@ if __name__ == "__main__":
         
         results = []
         print("\n--- Feature Validation Results (Information Coefficient) ---")
-        for f in feature_cols:
-            valid = df[[f, target_col]].dropna()
-            if len(valid) < 50: continue
+        
+        # Optimized Vectorized Spearman Correlation
+        # 1. Drop rows where target is NaN
+        valid_df = df[feature_cols + [target_col]].dropna(subset=[target_col])
+        
+        if len(valid_df) > 50:
+            # 2. Rank the features and target
+            # method='average' is standard for Spearman
+            ranked_df = valid_df.rank(method='average')
             
-            # Check for zero variance to avoid warnings
-            if valid[f].std() == 0 or valid[f].nunique() <= 1:
-                results.append({'Feature': f, 'IC': np.nan, 'P-Value': np.nan})
-                continue
-                
-            corr, p_val = stats.spearmanr(valid[f], valid[target_col])
-            results.append({'Feature': f, 'IC': corr, 'P-Value': p_val})
+            # 3. Calculate Pearson correlation on ranks (which is Spearman)
+            # This is much faster than iterative spearmanr
+            corrs = ranked_df[feature_cols].corrwith(ranked_df[target_col])
             
-        results_df = pd.DataFrame(results).sort_values('IC', ascending=False)
+            # 4. Calculate P-values using t-distribution approximation
+            # n = number of non-NaN pairs for each feature
+            # We use a slightly conservative approach with global n for speed, 
+            # or we can compute it per feature if NaNs vary significantly.
+            n = valid_df[feature_cols].notna().sum()
+            
+            # Avoid division by zero for features with all NaNs or constant values
+            mask = (n > 2) & (corrs.abs() < 1.0)
+            t_stats = np.zeros(len(corrs))
+            t_stats[mask] = corrs[mask] * np.sqrt((n[mask] - 2) / (1 - corrs[mask]**2))
+            
+            p_vals = np.ones(len(corrs))
+            # Use survival function (sf) for 2-tailed p-value: 2 * (1 - cdf(|t|))
+            from scipy.stats import t
+            p_vals[mask] = 2 * t.sf(np.abs(t_stats[mask]), df=n[mask]-2)
+            
+            results_df = pd.DataFrame({
+                'Feature': feature_cols,
+                'IC': corrs.values,
+                'P-Value': p_vals
+            }).sort_values('IC', ascending=False)
+        else:
+            results_df = pd.DataFrame(columns=['Feature', 'IC', 'P-Value'])
+
         print(results_df)
         
         # 4. Bonus: Random Forest Importance
         try:
-            from sklearn.ensemble import RandomForestRegressor
-            print("\n🌲 Random Forest Importance Check...")
+            from sklearn.ensemble import ExtraTreesRegressor
+            print("\n🌲 Random Forest Importance Check (Optimized)...")
             
             valid_data = df[feature_cols + [target_col]].dropna()
             if len(valid_data) > 100:
+                # Performance optimization: Subsample if too large
+                if len(valid_data) > 10000:
+                    valid_data = valid_data.sample(n=10000, random_state=42)
+
                 X = valid_data[feature_cols]
                 y = valid_data[target_col]
                 
-                model = RandomForestRegressor(n_estimators=50, max_depth=5, n_jobs=-1, random_state=42)
+                model = ExtraTreesRegressor(n_estimators=30, max_depth=5, n_jobs=-1, random_state=42)
                 model.fit(X, y)
                 
                 importances = pd.DataFrame({
