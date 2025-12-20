@@ -50,6 +50,9 @@ class EvolutionaryAlphaFactory:
         
         self.initialize_population()
         
+        generations_without_improvement = 0
+        global_best_sharpe = -999.0
+        
         for gen in range(self.generations):
             start_time = time.time()
             
@@ -61,6 +64,17 @@ class EvolutionaryAlphaFactory:
             
             best_sharpe = results['sharpe'].max()
             print(f"\n--- Generation {gen} | Best [Train] Sharpe: {best_sharpe:.4f} ---")
+            
+            # Early Stopping Check
+            if best_sharpe > global_best_sharpe:
+                global_best_sharpe = best_sharpe
+                generations_without_improvement = 0
+            else:
+                generations_without_improvement += 1
+                
+            if generations_without_improvement >= 5:
+                print(f"🛑 Early Stopping Triggered: No improvement for 5 generations (Best: {global_best_sharpe:.4f})")
+                break
             
             # 3. Selection
             num_elite = int(self.pop_size * 0.2)
@@ -79,9 +93,9 @@ class EvolutionaryAlphaFactory:
             # 5. Create Next Gen
             new_population = elites[:20]
             
-            # Migration
+            # Migration (Higher diversity to avoid monoculture)
             if gen % 5 == 0 and gen > 0:
-                for _ in range(int(self.pop_size * 0.3)):
+                for _ in range(int(self.pop_size * 0.4)):
                     new_population.append(self.factory.create_strategy())
             
             while len(new_population) < self.pop_size:
@@ -89,7 +103,7 @@ class EvolutionaryAlphaFactory:
                 child = self.crossover(p1, p2)
                 
                 # Structural Mutation
-                mut_rate = 0.2 if best_sharpe < 0.01 else 0.05
+                mut_rate = 0.25 if best_sharpe < 0.01 else 0.1
                 
                 # Long Genes
                 if random.random() < mut_rate: # Mutate Regime
