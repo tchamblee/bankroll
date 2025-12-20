@@ -335,7 +335,7 @@ def add_advanced_physics_features(df, windows=[50, 100, 200]):
         
         # Rate of Change (ROC) Features
         # Volatility & Liquidity: Percentage Change (Expansion/Contraction)
-        df[f'yang_zhang_vol_roc_{w}'] = df[f'yang_zhang_vol_{w}'].pct_change()
+        # df[f'yang_zhang_vol_roc_{w}'] = df[f'yang_zhang_vol_{w}'].pct_change()
         df[f'kyle_lambda_roc_{w}'] = df[f'kyle_lambda_{w}'].pct_change()
         
         # FDI: Absolute Change

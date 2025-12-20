@@ -49,5 +49,9 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
         
         # Drop redundant efficiency column (Survives only as trend_strength)
         df.drop(columns=[f'efficiency_{w}'], inplace=True)
+        
+        # Drop redundant volatility_800 (Redundant with yang_zhang_vol_400)
+        if w == 800:
+            df.drop(columns=[f'volatility_{w}'], inplace=True)
 
     return df

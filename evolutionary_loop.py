@@ -120,51 +120,60 @@ class EvolutionaryAlphaFactory:
             self.population = new_population
             print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
-        # 6. OOS Test
-        print("\n--- 🏆 APEX TRADERS (OOS TEST) ---")
+        # 6. Final Selection (Validation Phase)
+        print("\n--- 🛡️ FINAL SELECTION (VALIDATION PHASE) ---")
         unique_hof = []
         seen = set()
+        # sort HOF by validation score
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
             if str(s) not in seen:
                 unique_hof.append(s)
                 seen.add(str(s))
-            if len(unique_hof) >= 50: break
-            
+            if len(unique_hof) >= 50: break # Top 50 unique candidates based on Validation Score
+
+        selected_indices = []
+        final_strategies = []
+        
         if unique_hof:
-            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False)
+            # Re-evaluate top candidates on VALIDATION set to get returns for correlation check
+            val_res, val_returns = self.backtester.evaluate_population(unique_hof, set_type='validation', return_series=True, prediction_mode=False)
             
-            sorted_indices = test_res.sort_values('sortino', ascending=False).index.tolist()
-            returns_df = pd.DataFrame(net_returns)
+            # Sort by VALIDATION Sortino
+            sorted_indices = val_res.sort_values('sortino', ascending=False).index.tolist()
+            returns_df = pd.DataFrame(val_returns)
             corr_matrix = returns_df.corr().abs()
             
-            selected_indices = []
+            # Select top 5 uncorrelated based on Validation performance
             for idx in sorted_indices:
                 if len(selected_indices) >= 5: break
-                # current_score = test_res.loc[idx, 'sortino'] 
-                # We allow negative scores now to avoid Empty DataFrame, 
-                # so users can see the "best of the worst" if all fail.
                 
                 if not selected_indices:
                     selected_indices.append(idx)
                 else:
+                    # Check correlation against already selected (using validation returns)
                     rho = corr_matrix.loc[idx, selected_indices].max()
                     if rho < 0.7: selected_indices.append(idx)
             
-            final_res = test_res.iloc[selected_indices]
+            final_strategies = [unique_hof[i] for i in selected_indices]
             
-            if not final_res.empty and final_res['sortino'].max() <= 0:
-                print("\n⚠️  WARNING: All selected strategies have negative OOS performance.")
-
-            print("\nFinal Account Performance Stats (OOS):")
-            print(final_res[['id', 'sortino', 'total_return', 'trades']])
+            # 7. OOS Reporting (Test Phase)
+            print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
+            # Run ONLY the selected strategies on Test data
+            test_res, _ = self.backtester.evaluate_population(final_strategies, set_type='test', return_series=True, prediction_mode=False)
+            
+            print("\nFinal Account Performance Stats (OOS) - FOR REPORTING ONLY:")
+            if not test_res.empty:
+                print(test_res[['id', 'sortino', 'total_return', 'trades']])
+                if test_res['sortino'].max() <= 0:
+                    print("\n⚠️  WARNING: Selected strategies have negative OOS performance. (This is the honest result)")
             
             output = []
-            for idx in selected_indices:
-                s = unique_hof[idx]
-                # Serialize Strategy to dict
+            for i, idx in enumerate(selected_indices):
+                # idx is index in unique_hof, i is index in final_strategies/test_res
+                s = final_strategies[i]
                 strat_data = s.to_dict()
-                # Append performance metrics
-                strat_data['test_sortino'] = test_res.loc[idx, 'sortino']
+                strat_data['test_sortino'] = test_res.iloc[i]['sortino'] if not test_res.empty else 0.0
+                strat_data['validation_sortino'] = val_res.loc[idx, 'sortino']
                 output.append(strat_data)
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")

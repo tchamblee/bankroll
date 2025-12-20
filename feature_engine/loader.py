@@ -278,9 +278,10 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     tone_mean = gdelt_daily['global_tone'].mean()
     tone_std = gdelt_daily['global_tone'].std()
     if tone_std == 0: tone_std = 1.0
-    gdelt_daily['tone_zscore'] = (gdelt_daily['global_tone'] - tone_mean) / tone_std
+    # gdelt_daily['tone_zscore'] = (gdelt_daily['global_tone'] - tone_mean) / tone_std
+    tone_zscore = (gdelt_daily['global_tone'] - tone_mean) / tone_std
     
-    gdelt_daily['panic_score'] = np.where(gdelt_daily['tone_zscore'] < -2.0, gdelt_daily['global_polarity'] * -1, 0)
+    gdelt_daily['panic_score'] = np.where(tone_zscore < -2.0, gdelt_daily['global_polarity'] * -1, 0)
     
     gdelt_daily['conflict_intensity'] = final_agg['conflict_intensity']
     
@@ -301,7 +302,7 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     gdelt_daily['total_vol'] = gdelt_daily['news_vol_eur'] + gdelt_daily['news_vol_usd']
     roll_mean = gdelt_daily['total_vol'].rolling(30, min_periods=5).mean()
     roll_std = gdelt_daily['total_vol'].rolling(30, min_periods=5).std()
-    gdelt_daily['news_vol_zscore'] = (gdelt_daily['total_vol'] - roll_mean) / roll_std.replace(0, 1)
+    # gdelt_daily['news_vol_zscore'] = (gdelt_daily['total_vol'] - roll_mean) / roll_std.replace(0, 1)
     
     print(f"Processed GDELT data: {len(gdelt_daily)} days.")
     return gdelt_daily

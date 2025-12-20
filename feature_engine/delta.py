@@ -9,7 +9,7 @@ def add_delta_features(df, lookback=10):
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret',
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size',
                'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_dxy', 'residual_spy',
-               'IBIT_Lag2_Return']
+               'IBIT_Lag2_Return', 'us_curve', 'bund']
 
     def is_valid_feature(c):
         if c in exclude: return False
