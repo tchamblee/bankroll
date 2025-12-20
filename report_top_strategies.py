@@ -26,6 +26,10 @@ def get_gene_description(gene):
         return f"Consecutive({gene.direction})"
     elif gene.type == 'time':
         return f"Time({gene.mode})"
+    elif gene.type == 'cross':
+        return f"{gene.feature_left} CROSS {gene.direction.upper()} {gene.feature_right}"
+    elif gene.type == 'persistence':
+        return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
     return "Unknown"
 
 def main():
