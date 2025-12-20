@@ -8,9 +8,18 @@ def add_delta_features(df, lookback=10):
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret',
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size',
-               'ticket_imbalance', 'residual_bund']
+               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_dxy', 'residual_spy',
+               'IBIT_Lag2_Return']
+
+    def is_valid_feature(c):
+        if c in exclude: return False
+        if c.startswith('delta_'): return False
+        if '_roc_' in c: return False
+        if 'residual' in c: return False
+        return True
+
     # Also exclude existing delta columns to avoid delta_delta...
-    feature_cols = [c for c in df.columns if c not in exclude and not c.startswith('delta_')]
+    feature_cols = [c for c in df.columns if is_valid_feature(c)]
     
     # To avoid fragmentation warnings, collect new columns in a list and concat at once
     new_cols = {}

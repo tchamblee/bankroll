@@ -63,7 +63,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     engine.add_advanced_physics_features(windows=windows_list)
     
     # 8. Deltas (Flow)
-    engine.add_delta_features(lookback=10)
+    engine.add_delta_features(lookback=25)
     engine.add_delta_features(lookback=50)
     engine.add_delta_features(lookback=100)
     
