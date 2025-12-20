@@ -1,17 +1,18 @@
 # Alpha Factory TODO List
 
-## Phase 1: Feature Engineering (The "DNA")
-- [ ] Build `feature_engine.py` to ingest raw ticks.
-- [ ] Implement **Velocity** features (Rate of change: 1s, 1m, 1h).
-- [ ] Implement **Efficiency** features (Kaufman Efficiency Ratio: Displacement / Path Length).
-- [ ] Implement **Cyclicality** features (Hilbert Transform / Autocorrelation).
-- [ ] Implement **Regime Detection** features (Volatility clusters, Trend strength).
-- [ ] Normalize/Scale features for consistent "Gene" usage.
+## Phase 1: Feature Engineering (The "DNA") - **COMPLETE ✅**
+- [x] Build `feature_engine.py` to ingest raw ticks.
+- [x] Implement **Physics** features (Velocity, GK Volatility, Entropy, Skew).
+- [x] Implement **Microstructure** features (Order Book Pressure, Price-Flow Correlation).
+- [x] Implement **Regime Detection** features (Hurst, Stability Scoring).
+- [x] Validate features via "Hunger Games" (IC, P-Value, Stability) across multiple horizons (30, 60, 90).
+- [x] Audit code for "Prop Desk" accuracy and redundancy.
 
-## Phase 2: The Genome Structure
-- [ ] Define a standardized `Strategy` class/structure.
-- [ ] Create a "Gene" representation (Feature, Operator, Threshold).
-- [ ] Implement logic to translate a `Strategy` object into executable code/logic.
+## Phase 2: The Genome Structure (The "Blueprint") - **IN PROGRESS 🚀**
+- [ ] Define `Gene` class: Tuple of (Feature, Operator, Threshold).
+- [ ] Define `Strategy` class: Collection of Genes with logic (AND/OR).
+- [ ] Implement **Vectorized Translator**: Convert a `Strategy` object into a Pandas/Numpy Boolean Mask for high-speed testing.
+- [ ] Create `GenomeFactory` to generate random strategies based on the Survivor features.
 
 ## Phase 3: The Engine (Backtester)
 - [ ] Build a high-performance, vectorized backtester using `polars` or `numpy`.
