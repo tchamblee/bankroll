@@ -91,6 +91,110 @@ class RelationalGene:
     def __repr__(self):
         return f"{self.feature_left} {self.operator} {self.feature_right}"
 
+class DeltaGene:
+    """
+    'Momentum' Gene.
+    Checks the change in a feature over time.
+    Format: Delta(Feature, Lookback) <Operator> Threshold
+    Example: delta(volatility, 5) > 0.05 (Volatility Spiking)
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, lookback: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold
+        self.lookback = lookback
+        self.type = 'delta'
+
+    def evaluate(self, df: pd.DataFrame) -> np.array:
+        if self.feature not in df.columns:
+            return np.zeros(len(df), dtype=bool)
+        
+        # Calculate Delta: Feature_t - Feature_{t-lookback}
+        data = df[self.feature].diff(self.lookback).fillna(0).values
+        
+        if self.operator == '>': return data > self.threshold
+        elif self.operator == '<': return data < self.threshold
+        else: return np.zeros(len(df), dtype=bool)
+
+    def mutate(self, features_pool):
+        # 1. Mutate Lookback
+        if random.random() < 0.3:
+            self.lookback = max(1, self.lookback + random.choice([-1, 1, -2, 2]))
+        
+        # 2. Mutate Threshold
+        if random.random() < 0.3:
+            change = self.threshold * 0.1 * (1 if random.random() > 0.5 else -1)
+            if abs(self.threshold) < 0.001: 
+                change = 0.001 * (1 if random.random() > 0.5 else -1)
+            self.threshold += change
+            
+        # 3. Mutate Feature
+        if random.random() < 0.1: 
+            self.feature = random.choice(features_pool)
+            
+        # 4. Mutate Operator
+        if random.random() < 0.2: 
+            self.operator = '>' if self.operator == '<' else '<'
+
+    def copy(self):
+        return DeltaGene(self.feature, self.operator, self.threshold, self.lookback)
+
+    def __repr__(self):
+        return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.4f}"
+
+class ZScoreGene:
+    """
+    'Statistical' Gene (Prop Desk Favorite).
+    Checks if a feature is an outlier relative to its recent history (Bollinger-style logic).
+    Format: ZScore(Feature, Window) <Operator> Sigma
+    Example: zscore(close, 20) < -2.0 (Price 2 sigmas below 20d mean)
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, window: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold # Sigma value
+        self.window = window
+        self.type = 'zscore'
+
+    def evaluate(self, df: pd.DataFrame) -> np.array:
+        if self.feature not in df.columns:
+            return np.zeros(len(df), dtype=bool)
+        
+        series = df[self.feature]
+        # Optimization: If window is very large, this is slow. Keep windows reasonable.
+        rolling_mean = series.rolling(window=self.window).mean()
+        rolling_std = series.rolling(window=self.window).std()
+        
+        # Z = (X - Mean) / Std
+        z_score = ((series - rolling_mean) / (rolling_std + 1e-9)).fillna(0).values
+        
+        if self.operator == '>': return z_score > self.threshold
+        elif self.operator == '<': return z_score < self.threshold
+        else: return np.zeros(len(df), dtype=bool)
+
+    def mutate(self, features_pool):
+        # 1. Mutate Window
+        if random.random() < 0.3:
+            self.window = max(5, self.window + random.choice([-5, 5, -10, 10]))
+            
+        # 2. Mutate Threshold (Sigma)
+        if random.random() < 0.3:
+            self.threshold += random.uniform(-0.5, 0.5)
+            
+        # 3. Mutate Feature
+        if random.random() < 0.1: 
+            self.feature = random.choice(features_pool)
+            
+        # 4. Mutate Operator
+        if random.random() < 0.2: 
+            self.operator = '>' if self.operator == '<' else '<'
+
+    def copy(self):
+        return ZScoreGene(self.feature, self.operator, self.threshold, self.window)
+
+    def __repr__(self):
+        return f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.2f}σ"
+
 class Strategy:
     """
     Represents a Bidirectional Trading Strategy.
@@ -143,14 +247,36 @@ class GenomeFactory:
     def create_gene_from_pool(self, pool):
         if not pool: return self.create_random_gene() # Fallback
         
-        # 30% Chance of Relational Gene (Sophisticated)
-        if random.random() < 0.3:
+        rand_val = random.random()
+        
+        # 20% Chance of Relational Gene (Context)
+        if rand_val < 0.20:
             feature_left = random.choice(pool)
-            feature_right = random.choice(pool) # Compare against same category
+            feature_right = random.choice(pool) 
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
+            
+        # 20% Chance of Delta Gene (Momentum)
+        elif rand_val < 0.40:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            # Delta threshold usually smaller than absolute values. 
+            # We'll start with small random fraction of std dev.
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = random.uniform(-0.5, 0.5) * stats['std']
+            lookback = random.choice([1, 3, 5, 10, 20])
+            return DeltaGene(feature, operator, threshold, lookback)
+            
+        # 20% Chance of ZScore Gene (Statistical Extreme)
+        elif rand_val < 0.60:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            # Thresholds usually -2, -1, 1, 2 sigmas
+            threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
+            window = random.choice([10, 20, 50, 100])
+            return ZScoreGene(feature, operator, threshold, window)
         
-        # 70% Chance of Static Gene (Classic)
+        # 40% Chance of Static Gene (Classic)
         else:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
