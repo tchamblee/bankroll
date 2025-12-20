@@ -7,19 +7,25 @@ class BacktestEngine:
     High-Performance Vectorized Backtester.
     Capable of evaluating thousands of strategies simultaneously via Matrix operations.
     """
-    def __init__(self, data: pd.DataFrame, cost_bps=0.5):
+    def __init__(self, data: pd.DataFrame, cost_bps=0.5, target_col='log_ret'):
         self.raw_data = data
         self.cost_pct = cost_bps / 10000.0
+        self.target_col = target_col
         
-        # Pre-calculate log returns for the vectorizer
-        if 'log_ret' not in self.raw_data.columns:
+        # Pre-calculate log returns for the vectorizer if standard mode
+        if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
             self.raw_data['log_ret'] = np.log(self.raw_data['close'] / self.raw_data['close'].shift(1))
             
         # Clean Nans
+        # Note: If using custom labels (Triple Barrier), they might have NaNs at the end. 
+        # We fill them with 0 to preserve shape.
+        if target_col in self.raw_data.columns:
+            self.raw_data[target_col] = self.raw_data[target_col].fillna(0)
+            
         self.raw_data = self.raw_data.dropna().reset_index(drop=True)
         
         # Prepare Data Matrices (Numpy is faster than Pandas for Dot Products)
-        self.returns_vec = self.raw_data['log_ret'].values.reshape(-1, 1)
+        self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1)
         self.close_vec = self.raw_data['close'].values
         
         # Split Indices (60% Train, 20% Val, 20% Test)
@@ -52,10 +58,13 @@ class BacktestEngine:
             
         return signal_matrix
 
-    def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False):
+    def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False, prediction_mode=False):
         """
         Runs the full backtest math on the entire population matrix.
         Returns a list of metrics dictionaries.
+        
+        :param prediction_mode: If True, assumes 'returns' are pre-calculated labels (e.g., Triple Barrier)
+                                aligned with the signal time. No shifting is performed.
         """
         if not population: return []
         
@@ -77,14 +86,20 @@ class BacktestEngine:
             raise ValueError("set_type must be 'train', 'validation', or 'test'")
             
         # 3. Vectorized PnL Calculation
-        # Strategy Returns = Signal(t) * Market_Return(t+1)
-        # Shift signals forward by 1 to align with NEXT bar's return (No lookahead bias)
-        signals_shifted = np.roll(signals, 1, axis=0)
-        signals_shifted[0, :] = 0 # Zero out first row after shift
-        
-        # Gross Returns (Matrix Mult: [T x 1] broadcasted over [T x N])
-        # Actually simple element-wise mult is easier here since dimensions align columns
-        strat_returns = signals_shifted * returns
+        if prediction_mode:
+            # PREDICTION MODE (Triple Barrier / Label Match)
+            # Signal(t) predicts Label(t). No shift needed.
+            # "Returns" here effectively acts as the PnL of the specific outcome associated with that bar.
+            strat_returns = signals * returns
+        else:
+            # TRADING MODE (Next-Bar Return)
+            # Strategy Returns = Signal(t) * Market_Return(t+1)
+            # Shift signals forward by 1 to align with NEXT bar's return (No lookahead bias)
+            signals_shifted = np.roll(signals, 1, axis=0)
+            signals_shifted[0, :] = 0 # Zero out first row after shift
+            
+            # Gross Returns (Matrix Mult: [T x 1] broadcasted over [T x N])
+            strat_returns = signals_shifted * returns
         
         # 4. Cost Adjustment
         # Cost is paid on turnover (change in signal).

@@ -8,18 +8,20 @@ import config
 from feature_engine import FeatureEngine
 from strategy_genome import GenomeFactory, Strategy
 from backtest_engine import BacktestEngine
+from validate_features import triple_barrier_labels
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=10000, generations=100, decay_rate=0.99):
+    def __init__(self, data, survivors_file, population_size=10000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
         self.data = data
         self.pop_size = population_size
         self.generations = generations
         self.decay_rate = decay_rate # Penalty for later generations to prevent overfitting
         self.survivors_file = survivors_file
+        self.prediction_mode = prediction_mode
         
         self.factory = GenomeFactory(survivors_file)
         self.factory.set_stats(data)
-        self.backtester = BacktestEngine(data, cost_bps=0.2) # Lower costs for easier discovery
+        self.backtester = BacktestEngine(data, cost_bps=0.2, target_col=target_col) # Lower costs for easier discovery
         
         self.population = []
         self.hall_of_fame = []
@@ -58,7 +60,7 @@ class EvolutionaryAlphaFactory:
             start_time = time.time()
             
             # 1. Evaluate on TRAIN
-            results = self.backtester.evaluate_population(self.population, set_type='train')
+            results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
             
             # 2. Apply Trade Penalty
             results.loc[results['trades'] < 5, 'sharpe'] = -1.0
@@ -91,7 +93,7 @@ class EvolutionaryAlphaFactory:
             elites = [self.population[idx] for idx in elites_ids]
             
             # 4. Cross-Validation Gating
-            val_results = self.backtester.evaluate_population(elites, set_type='validation')
+            val_results = self.backtester.evaluate_population(elites, set_type='validation', prediction_mode=self.prediction_mode)
             val_results.loc[val_results['trades'] < 3, 'sharpe'] = -1.0
             
             for i, elite in enumerate(elites):
@@ -145,7 +147,7 @@ class EvolutionaryAlphaFactory:
             
         if unique_hof:
             # Get Metrics AND Returns Series
-            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True)
+            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=self.prediction_mode)
             
             # --- FIX: ORTHOGONALITY CHECK (Monoculture Prevention) ---
             # Greedy Selection: Pick Best, then pick next Best that is uncorrelated (< 0.7)
@@ -205,7 +207,7 @@ class EvolutionaryAlphaFactory:
         # We need to re-evaluate current population to get latest scores if needed, 
         # or just use the last results.
         print("\nSaving Population Snapshot for DNA Analysis...")
-        pop_results = self.backtester.evaluate_population(self.population, set_type='train')
+        pop_results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
         top_100_idx = pop_results.sort_values('sharpe', ascending=False).head(100).index
         
         dna_dump = []
@@ -256,6 +258,17 @@ if __name__ == "__main__":
     
     print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
     print(f"📂 Using Survivors: {survivors_file}")
+    
+    # --- FIX: ALIGNMENT WITH PURGE PROCESS ---
+    # We must train strategies to predict the SAME target used to select the features.
+    # Calculating Triple Barrier Labels...
+    print(f"🎯 calculating Triple Barrier Labels (Horizon: {args.horizon})...")
+    bars_df['target_return'] = triple_barrier_labels(bars_df, lookahead=args.horizon, pt_sl_multiple=2.0)
+    
+    # Fill NaNs in target (usually at the end of the series) with 0 to prevent crashes
+    bars_df['target_return'] = bars_df['target_return'].fillna(0.0)
+    # -----------------------------------------
+
     print(f"👥 Population: {args.pop_size} | 🧬 Generations: {args.gens} | 📉 Decay: {args.decay}")
     
     factory = EvolutionaryAlphaFactory(
@@ -263,6 +276,8 @@ if __name__ == "__main__":
         survivors_file, 
         population_size=args.pop_size, 
         generations=args.gens,
-        decay_rate=args.decay
+        decay_rate=args.decay,
+        target_col='target_return',
+        prediction_mode=True
     )
     factory.evolve(horizon=args.horizon)
