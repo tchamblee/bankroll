@@ -52,7 +52,7 @@ class BacktestEngine:
             
         return signal_matrix
 
-    def evaluate_population(self, population: list[Strategy], set_type='train'):
+    def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False):
         """
         Runs the full backtest math on the entire population matrix.
         Returns a list of metrics dictionaries.
@@ -131,7 +131,12 @@ class BacktestEngine:
             }
             results.append(metrics)
             
-        return pd.DataFrame(results)
+        results_df = pd.DataFrame(results)
+        
+        if return_series:
+            return results_df, net_returns
+        else:
+            return results_df
 
 if __name__ == "__main__":
     # Test Driver

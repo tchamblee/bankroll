@@ -214,13 +214,25 @@ if __name__ == "__main__":
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
+    # --- FIX: DATA LEAKAGE PREVENTION ---
+    # Only use the Training Set (First 60%) for Feature Selection.
+    # The remaining 40% (Val/Test) must remain unseen by the "Hunger Games".
+    train_size = int(len(base_df) * 0.6)
+    train_df = base_df.iloc[:train_size].copy()
+    
+    print(f"\n🔒 LOCKDOWN: Feature Selection restricted to TRAINING SET only.")
+    print(f"   Range: {train_df['time_start'].min()} to {train_df['time_start'].max()}")
+    print(f"   Size: {len(train_df)} bars (Total: {len(base_df)})")
+    # ------------------------------------
+    
     # Loop through Horizons from Config
     for horizon in config.PREDICTION_HORIZONS:
         print(f"\n\n==============================================")
         print(f"Running Feature Hunger Games for Horizon: {horizon}")
         print(f"==============================================")
         
-        df = base_df.copy()
+        # Use only Training Data
+        df = train_df.copy()
         df['target_return'] = triple_barrier_labels(df, lookahead=horizon, pt_sl_multiple=2.0)
         
         # Run the Purge for this horizon

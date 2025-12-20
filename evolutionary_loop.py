@@ -140,15 +140,60 @@ class EvolutionaryAlphaFactory:
             if str(s) not in seen:
                 unique_hof.append(s)
                 seen.add(str(s))
-            if len(unique_hof) >= 5: break
+            # Keep more candidates for orthogonality check (Top 50 instead of 5)
+            if len(unique_hof) >= 50: break
             
         if unique_hof:
-            test_res = self.backtester.evaluate_population(unique_hof, set_type='test')
-            print(test_res)
+            # Get Metrics AND Returns Series
+            test_res, net_returns = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True)
+            
+            # --- FIX: ORTHOGONALITY CHECK (Monoculture Prevention) ---
+            # Greedy Selection: Pick Best, then pick next Best that is uncorrelated (< 0.7)
+            
+            # 1. Sort by Sharpe
+            sorted_indices = test_res.sort_values('sharpe', ascending=False).index.tolist()
+            
+            # 2. Calculate Correlation Matrix of Strategies
+            # (Strategies are columns in net_returns)
+            returns_df = pd.DataFrame(net_returns)
+            corr_matrix = returns_df.corr().abs() # Absolute correlation
+            
+            selected_indices = []
+            
+            print(f"Selecting uncorrelated strategies from {len(unique_hof)} candidates...")
+            
+            for idx in sorted_indices:
+                if len(selected_indices) >= 5: break
+                
+                if not selected_indices:
+                    # Always pick the absolute best first
+                    selected_indices.append(idx)
+                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sharpe: {test_res.loc[idx, 'sharpe']:.4f})")
+                else:
+                    # Check correlation with ALREADY SELECTED
+                    is_uncorrelated = True
+                    for selected_idx in selected_indices:
+                        rho = corr_matrix.loc[idx, selected_idx]
+                        if rho > 0.7:
+                            is_uncorrelated = False
+                            # print(f"     Skipping {test_res.loc[idx, 'id']} (Corr: {rho:.2f} with {test_res.loc[selected_idx, 'id']})")
+                            break
+                    
+                    if is_uncorrelated:
+                        selected_indices.append(idx)
+                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sharpe: {test_res.loc[idx, 'sharpe']:.4f})")
+            
+            # Subset results to selected
+            final_apex = [unique_hof[i] for i in selected_indices]
+            final_res = test_res.iloc[selected_indices]
+            
+            print("\nFinal Portfolio Stats:")
+            print(final_res[['id', 'sharpe', 'total_return', 'trades']])
             
             output = []
-            for i, s in enumerate(unique_hof):
-                output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.iloc[i]['sharpe']})
+            for idx in selected_indices:
+                s = unique_hof[idx]
+                output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.loc[idx, 'sharpe']})
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
