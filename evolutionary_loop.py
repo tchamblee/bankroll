@@ -31,19 +31,23 @@ class EvolutionaryAlphaFactory:
         # Strict Crossover: Maintain Regime (0) + Trigger (1) structure
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
         
-        # Long Leg: Pick Regime from one parent, Trigger from the other
-        l_regime = random.choice([p1.long_genes[0], p2.long_genes[0]])
-        l_trigger = random.choice([p1.long_genes[1], p2.long_genes[1]])
+        # Long Leg: Pick Regime from one parent, Trigger from the other (Deep Copy!)
+        l_regime = random.choice([p1.long_genes[0], p2.long_genes[0]]).copy()
+        l_trigger = random.choice([p1.long_genes[1], p2.long_genes[1]]).copy()
         child.long_genes = [l_regime, l_trigger]
         
-        # Short Leg
-        s_regime = random.choice([p1.short_genes[0], p2.short_genes[0]])
-        s_trigger = random.choice([p1.short_genes[1], p2.short_genes[1]])
+        # Short Leg (Deep Copy!)
+        s_regime = random.choice([p1.short_genes[0], p2.short_genes[0]]).copy()
+        s_trigger = random.choice([p1.short_genes[1], p2.short_genes[1]]).copy()
         child.short_genes = [s_regime, s_trigger]
         
         return child
 
     def evolve(self):
+        # Reproducibility
+        random.seed(42)
+        np.random.seed(42)
+        
         self.initialize_population()
         
         for gen in range(self.generations):

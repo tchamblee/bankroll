@@ -35,6 +35,10 @@ class Gene:
         if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
         if random.random() < 0.1: self.feature = random.choice(features_pool)
 
+    def copy(self):
+        """Returns a deep copy of the Gene."""
+        return Gene(self.feature, self.operator, self.threshold)
+
     def __repr__(self):
         return f"{self.feature} {self.operator} {self.threshold:.4f}"
 
