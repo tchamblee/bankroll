@@ -64,11 +64,6 @@ class EvolutionaryAlphaFactory:
         generations_without_improvement = 0
         global_best_fitness = -999.0
         
-        # --- FEATURE BLACKLIST ---
-        # Explicitly ban features known to cause OOS failure or Regime Overfitting
-        BLACKLIST = {'central_bank_tone', 'trend_strength_400'}
-        print(f"🚫 Blacklisted Features: {BLACKLIST}")
-        
         for gen in range(self.generations):
             start_time = time.time()
             
@@ -112,10 +107,9 @@ class EvolutionaryAlphaFactory:
                 # Complexity Penalty (Small Data = Simple Models)
                 complexity_penalty = n_genes * 0.05
                 
-                # Apply Dynamic Dominance Penalty AND Blacklist Check
+                # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.0
                 strat_features = set()
-                blacklisted_found = False
                 
                 for gene in strat.long_genes + strat.short_genes:
                     if hasattr(gene, 'feature'):
@@ -129,21 +123,13 @@ class EvolutionaryAlphaFactory:
                         strat_features.add(f"consecutive_{gene.direction}")
 
                 for f in strat_features:
-                    # KILL BLACKLISTED
-                    if f in BLACKLIST:
-                        blacklisted_found = True
-                        break
-                        
                     # Penalty scales with popularity: 50% usage -> 1.0 Penalty, 90% -> 1.8
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
                     if usage_ratio > 0.15:
                          dom_penalty += usage_ratio * 2.0
                 
-                if blacklisted_found:
-                    wfv_scores[i] = -999.0
-                else:
-                    total_penalty = complexity_penalty + dom_penalty
-                    wfv_scores[i] -= total_penalty
+                total_penalty = complexity_penalty + dom_penalty
+                wfv_scores[i] -= total_penalty
                 
                 strat.fitness = wfv_scores[i]
 
