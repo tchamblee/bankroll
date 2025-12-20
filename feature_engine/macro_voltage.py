@@ -96,6 +96,6 @@ def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
         
         # Divergence: Price Trend vs Voltage Trend
         # Correlation between EURUSD Returns and Voltage Changes
-        df[f'voltage_corr_{w}'] = df['log_ret'].rolling(w).corr(df['voltage_diff'].diff())
+        df[f'voltage_corr_{w}'] = df['log_ret'].rolling(w).corr(df['voltage_diff'].diff()).fillna(0)
 
     return df

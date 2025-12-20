@@ -61,7 +61,7 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     
     # Residual = Actual - Expected
     df[f'residual{suffix}'] = tmp['prim'] - expected_ret
-    df[f'beta{suffix}'] = beta
+    df[f'beta{suffix}'] = beta.fillna(0)
     
     # Fill NaNs (early window)
     df[f'residual{suffix}'] = df[f'residual{suffix}'].fillna(0)
