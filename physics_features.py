@@ -104,3 +104,153 @@ def get_shannon_entropy(series, window=100, bins=20):
 
     # Apply on rolling log-returns (or stationarized series)
     return series.rolling(window=window).apply(_calc_entropy, raw=True)
+
+def calc_yang_zhang_volatility(df, window=30):
+    """
+    Yang-Zhang Volatility Estimator.
+    Considers Open, Close, High, Low and Drift.
+    Minimum variance estimator among open-close estimators.
+    """
+    # Requires: open, close, high, low, time_start/prev_close
+    # We assume 'open' captures the jump from previous close if bars are continuous.
+    # In volume bars, O_t is usually C_{t-1}, but not always if gaps exist.
+    
+    # 1. Overnight Volatility (Close to Open)
+    # o = log(O_t / C_{t-1})
+    log_ho = np.log(df['high'] / df['open'])
+    log_lo = np.log(df['low'] / df['open'])
+    log_co = np.log(df['close'] / df['open'])
+    
+    # We need Close_{t-1}.
+    log_oc = np.log(df['open'] / df['close'].shift(1))
+    
+    # Rogers-Satchell Volatility
+    rs_var = (log_ho * (log_ho - log_co)) + (log_lo * (log_lo - log_co))
+    
+    # Open-Close Volatility
+    oc_var = log_oc ** 2
+    
+    # Close-Open Volatility (Drift)
+    co_var = log_co ** 2
+
+    # k constant for weighting. Yang-Zhang recommends k=0.34 / (1.34 + (n+1)/(n-1))
+    # Approximation: k = 0.34
+    k = 0.34
+    
+    # Rolling Variances
+    # We need rolling mean of variances
+    roll_rs = rs_var.rolling(window).mean()
+    roll_oc = oc_var.rolling(window).mean()
+    roll_co = co_var.rolling(window).mean()
+    
+    # YZ Variance = V_o + k*V_c + (1-k)*V_rs
+    # V_o ~ Variance of overnight (Open - PrevClose)
+    # V_c ~ Variance of open-to-close (Close - Open)
+    
+    # However, standard formula uses sample variances of the log returns.
+    # Let's use the definition:
+    # sigma^2 = sigma_o^2 + k * sigma_c^2 + (1-k) * sigma_rs^2
+    
+    # sigma_o^2: Variance of (Open - PrevClose)
+    # sigma_c^2: Variance of (Close - Open)
+    
+    sigma_o_sq = log_oc.rolling(window).var()
+    sigma_c_sq = log_co.rolling(window).var()
+    
+    yz_var = sigma_o_sq + k * sigma_c_sq + (1-k) * roll_rs
+    
+    return np.sqrt(yz_var)
+
+def calc_kyle_lambda(df, window=30):
+    """
+    Kyle's Lambda Proxy (Amihud Illiquidity adapted).
+    Measures price impact per unit of volume.
+    Lambda = |Return| / (Volume * Price)
+    
+    High Lambda = Low Liquidity (Price moves easily with volume)
+    Low Lambda = High Liquidity (Price absorbs volume)
+    """
+    # Absolute Log Return
+    abs_ret = np.abs(np.log(df['close'] / df['close'].shift(1)))
+    
+    # Dollar Volume = Volume * Price (Approx)
+    dollar_vol = df['volume'] * df['close']
+    
+    # Avoid div by zero
+    dollar_vol = dollar_vol.replace(0, np.nan)
+    
+    # Instantaneous Lambda
+    inst_lambda = abs_ret / dollar_vol
+    
+    # Rolling Average
+    return inst_lambda.rolling(window).mean()
+
+def calc_market_force(df, window=10):
+    """
+    Physics-inspired 'Force' metric.
+    Force = Mass * Acceleration
+    Mass = Volume
+    Velocity = Price Change / Time (or just Price Change per bar)
+    Acceleration = Change in Velocity
+    
+    Force = Volume * (Velocity_t - Velocity_{t-1})
+    """
+    # Velocity: Log Return (per bar)
+    velocity = np.log(df['close'] / df['close'].shift(1))
+    
+    # Acceleration: Change in Velocity
+    acceleration = velocity.diff()
+    
+    # Mass: Volume
+    mass = df['volume']
+    
+    # Force
+    force = mass * acceleration
+    
+    # We might want a rolling smoothed version or magnitude
+    return force.rolling(window).mean()
+
+def calc_fractal_dimension(series, window=30):
+    """
+    Fractal Dimension Index (FDI).
+    Uses the 'variogram' or 'box-counting' like approach approximation.
+    Here we use the simple path-length definition (Sevcik).
+    
+    FDI = 1 + (log(L) + log(2)) / log(2*n)
+    where L is total path length over window normalized to unit box.
+    """
+    # Need to normalize inputs to unit square [0,1]x[0,1] within the window
+    
+    def _fdi(x):
+        # x is price series
+        n = len(x)
+        if n < 2: return np.nan
+        
+        # Normalize Price to [0,1]
+        p_min = np.min(x)
+        p_max = np.max(x)
+        if p_max == p_min: return 1.0 # Flat line = dimension 1
+        
+        # Normalized Prices
+        p_norm = (x - p_min) / (p_max - p_min)
+        
+        # Normalized Time (0 to 1)
+        t_norm = np.linspace(0, 1, n)
+        
+        # Calculate Path Length
+        # Euclidean distance between successive points (dt, dp)
+        dt = t_norm[1] - t_norm[0] # Constant
+        dp = np.diff(p_norm)
+        
+        length = np.sum(np.sqrt(dp**2 + dt**2))
+        
+        # Sevcik's formula approximation or similar
+        # D = 1 + ln(L) / ln(2) # roughly
+        # A clearer one: D = log(N_boxes) / log(1/scale)
+        # Using a simpler metric often called 'Fractal Dimension' in trading:
+        # FDI = 1 + (log(L) + log(2)) / log(2 * (n-1))  <-- Sevcik
+        
+        if length <= 0: return 1.0
+        return 1 + (np.log(length) + np.log(2)) / np.log(2 * (n - 1))
+
+    return series.rolling(window=window).apply(_fdi, raw=True)

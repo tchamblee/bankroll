@@ -102,6 +102,9 @@ if __name__ == "__main__":
     
     # Add Microstructure Features
     engine.add_microstructure_features()
+
+    # Add Monster Features
+    engine.add_monster_features()
     
     # Add Delta Features (Flow) - Multiple Horizons
     engine.add_delta_features(lookback=10) 
@@ -121,7 +124,8 @@ if __name__ == "__main__":
         
         # 3. Analyze (Hunger Games)
         keywords = ['velocity', 'efficiency', 'volatility', 'autocorr', 'trend_strength', 
-                    'imbalance', 'frac_diff', 'hurst', 'residual', 'beta', 'delta']
+                    'imbalance', 'frac_diff', 'hurst', 'residual', 'beta', 'delta',
+                    'yang_zhang', 'lambda', 'market_force', 'fdi']
         feature_cols = [c for c in df.columns if any(x in c for x in keywords)]
         target_col = 'target_return'
         

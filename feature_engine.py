@@ -330,6 +330,27 @@ class FeatureEngine:
 
         self.bars = df
         
+    def add_monster_features(self, windows=[50, 100]):
+        if not hasattr(self, 'bars'): return
+        print("Calculating MONSTER Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
+        df = self.bars
+        
+        # Yang-Zhang Volatility (Best Open-Close Estimator)
+        for w in windows:
+            df[f'yang_zhang_vol_{w}'] = phys.calc_yang_zhang_volatility(df, window=w)
+            
+            # Kyle's Lambda (Liquidity Cost)
+            df[f'kyle_lambda_{w}'] = phys.calc_kyle_lambda(df, window=w)
+            
+            # Market Force (Physics)
+            # Force is instantaneous, but we smooth it
+            df[f'market_force_{w}'] = phys.calc_market_force(df, window=w)
+            
+            # Fractal Dimension Index (Roughness/Complexity)
+            df[f'fdi_{w}'] = phys.calc_fractal_dimension(df['close'], window=w)
+            
+        self.bars = df
+
     def add_delta_features(self, lookback=10):
         if not hasattr(self, 'bars'): return
         print(f"Calculating Delta Features (Lookback={lookback})...")
@@ -391,6 +412,7 @@ if __name__ == "__main__":
         engine.add_features_to_bars()
         engine.add_physics_features()
         engine.add_microstructure_features()
+        engine.add_monster_features()
         engine.add_delta_features()
         
         # Filter using the JSON config we just generated
