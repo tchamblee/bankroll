@@ -123,10 +123,12 @@ if __name__ == "__main__":
         df['target_return'] = triple_barrier_labels(df, lookahead=horizon, pt_sl_multiple=2.0)
         
         # 3. Analyze (Hunger Games)
-        keywords = ['velocity', 'efficiency', 'volatility', 'autocorr', 'trend_strength', 
-                    'imbalance', 'frac_diff', 'hurst', 'residual', 'beta', 'delta',
-                    'yang_zhang', 'lambda', 'market_force', 'fdi']
-        feature_cols = [c for c in df.columns if any(x in c for x in keywords)]
+        # Broader inclusion logic: Exclude metadata, keep everything else
+        exclude_cols = ['time_start', 'time_end', 'ts_event', 'open', 'high', 'low', 'close', 
+                        'volume', 'net_aggressor_vol', 'cum_vol', 'vol_proxy', 'bar_id', 
+                        'target_return', 'log_ret']
+        
+        feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype.kind in 'bifc']
         target_col = 'target_return'
         
         results = []
@@ -160,6 +162,16 @@ if __name__ == "__main__":
                 }).sort_values('Importance', ascending=False)
                 
                 print(importances.head(20))
+                
+                # Merge and Save Metrics
+                # Ensure index is reset for merge
+                if 'Feature' not in results_df.columns: results_df = results_df.reset_index()
+                
+                # Merge on Feature (IC + Importance)
+                merged_metrics = pd.merge(importances, results_df, on='Feature', how='outer')
+                metrics_path = os.path.join(config.DIRS['DATA_DIR'], f"feature_metrics_{horizon}.csv")
+                merged_metrics.to_csv(metrics_path, index=False)
+                print(f"\n💾 Saved Feature Metrics to {metrics_path}")
             else:
                 print("Not enough valid data for Random Forest check.")
         except Exception as e:
