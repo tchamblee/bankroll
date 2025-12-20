@@ -42,6 +42,11 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
         vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
         df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm
         
+        # Rate of Change (ROC) Features
+        df[f'volatility_roc_{w}'] = df[f'volatility_{w}'].pct_change()
+        df[f'skew_roc_{w}'] = df[f'skew_{w}'].diff()
+        df[f'trend_strength_roc_{w}'] = df[f'trend_strength_{w}'].diff()
+        
         # Drop redundant efficiency column (Survives only as trend_strength)
         df.drop(columns=[f'efficiency_{w}'], inplace=True)
 

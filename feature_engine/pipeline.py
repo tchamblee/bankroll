@@ -43,7 +43,8 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         engine.bars.drop(columns=[c for c in drop_residuals if c in engine.bars.columns], inplace=True)
             
     # 3. Standard Features
-    engine.add_features_to_bars(windows=[50, 100, 200, 400, 800, 1600])
+    windows_list = [25, 50, 100, 200, 400, 800, 1600, 3200]
+    engine.add_features_to_bars(windows=windows_list)
     
     # 4. Crypto Features
     engine.add_crypto_features("CLEAN_IBIT.parquet")
@@ -59,7 +60,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # 7. Physics & Microstructure
     engine.add_physics_features()
     engine.add_microstructure_features()
-    engine.add_advanced_physics_features(windows=[50, 100, 200])
+    engine.add_advanced_physics_features(windows=windows_list)
     
     # 8. Deltas (Flow)
     engine.add_delta_features(lookback=10)
