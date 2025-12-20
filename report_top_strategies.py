@@ -1,143 +1,202 @@
 import json
 import os
 import re
+import sys
 import pandas as pd
+import numpy as np
 import config
 from collections import Counter
+from backtest_engine import BacktestEngine
+from strategy_genome import Strategy, StaticGene, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
+from validate_features import triple_barrier_labels
+
+class MockEngine:
+    def __init__(self, df):
+        self.bars = df
+
+def parse_gene_string(gene_str):
+    match = re.match(r"(.+)\s+([<>=!]+)\s+(.+)", gene_str)
+    if not match: return None
+    left, op, right = match.groups()
+    left, op, right = left.strip(), op.strip(), right.strip()
+    
+    if left.startswith("Consecutive("):
+        direction = left.split("(")[1].split(")")[0]
+        return ConsecutiveGene(direction, op, int(re.sub(r"[^0-9]", "", right)))
+    if left.startswith("Time("):
+        mode = left.split("(")[1].split(")")[0]
+        return TimeGene(mode, op, int(re.sub(r"[^0-9]", "", right)))
+    if left.startswith("Z("):
+        try:
+            inner = left.split("Z(")[1].split(")")[0]
+            feature, window = [x.strip() for x in inner.split(",")]
+            if right.endswith('σ'): right = right[:-1]
+            return ZScoreGene(feature, op, float(right), int(window))
+        except: return None
+    if left.startswith("Delta("):
+        try:
+            inner = left.split("Delta(")[1].split(")")[0]
+            feature, lookback = [x.strip() for x in inner.split(",")]
+            return DeltaGene(feature, op, float(right), int(lookback))
+        except: return None
+    try:
+        threshold = float(right)
+        return StaticGene(left, op, threshold)
+    except ValueError:
+        return RelationalGene(left, op, right)
+
+def reconstruct_strategy(strat_dict):
+    logic = strat_dict['logic']
+    name = strat_dict['name']
+    try:
+        match = re.search(r"\]\[(.*?)\]", logic)
+        logic_type = match.group(1) if match else "AND"
+        min_con = int(logic_type.split("(")[1].split(")")[0]) if logic_type.startswith("VOTE(") else None
+        sep = f" {logic_type} "
+        parts = logic.split(" | ")
+        if len(parts) != 2: return None
+        long_block, short_block = parts[0], parts[1]
+        
+        def extract_content(block, tag):
+            if f"{tag}:(" in block:
+                start = block.find(f"{tag}:(") + len(tag) + 2
+                return block[start:block.rfind(")")]
+            return "None"
+
+        long_part = extract_content(long_block, "LONG")
+        short_part = extract_content(short_block, "SHORT")
+        
+        l_genes = [parse_gene_string(g) for g in long_part.split(sep) if g != "None"]
+        s_genes = [parse_gene_string(g) for g in short_part.split(sep) if g != "None"]
+        return Strategy(name=name, long_genes=[g for g in l_genes if g], short_genes=[g for g in s_genes if g], min_concordance=min_con)
+    except Exception as e:
+        print(f"Error parsing {name}: {e}")
+        return None
 
 def parse_genes_from_logic(logic_str):
-    """
-    Parses the string representation of a strategy to extract gene definitions.
-    Example Logic: [Strat_X] LONG:(volatility_25 > 0.001) | SHORT:(hurst_roc_100 < 0.0)
-    """
-    # Simple regex to capture text inside parentheses
-    # This might need refinement depending on exactly how genes are printed
-    # Current repr: "Feature > Threshold" or "Feature < Threshold" or "F1 > F2"
-    # The str(gene) in strategy_genome.py:
-    # Static: f"{self.feature} {self.operator} {self.threshold:.4f}"
-    # Relational: f"{self.feature_left} {self.operator} {self.feature_right}"
-    # Delta: f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.4f}"
-    # ZScore: f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.2f}σ"
-    
-    # We'll just look for the gene components inside the LONG:(...) and SHORT:(...) blocks.
-    # Actually, the 'logic' field in json is str(strategy), which is "[Name] LONG:(...) | SHORT:(...)"
-    
     genes = []
-    
-    # Extract LONG and SHORT parts
-    long_part_match = re.search(r"LONG:\((.*?)\)", logic_str)
-    short_part_match = re.search(r"SHORT:\((.*?)\)", logic_str)
-    
-    parts = []
-    if long_part_match: parts.append(long_part_match.group(1))
-    if short_part_match: parts.append(short_part_match.group(1))
-    
-    for part in parts:
-        # Genes are joined by " AND "
-        raw_genes = part.split(" AND ")
-        for g in raw_genes:
-            if g == "None": continue
-            # Attempt to identify the feature name
-            # Heuristic: The first word is usually the feature, unless it's Delta(...) or Z(...)
-            
-            # Handle Delta(...)
-            delta_match = re.match(r"Delta\((.*?),", g)
-            if delta_match:
-                genes.append(delta_match.group(1))
-                continue
-                
-            # Handle Z(...)
-            z_match = re.match(r"Z\((.*?),", g)
-            if z_match:
-                genes.append(z_match.group(1))
-                continue
-                
-            # Handle Standard/Relational
-            # Split by space and take the first token
-            tokens = g.split(' ')
-            if tokens:
-                genes.append(tokens[0])
-                # For relational (F1 > F2), the third token is also a feature
-                # We can try to detect if the 3rd token is a known feature, but let's stick to dominant "primary" feature for now
-                
+    try:
+        match = re.search(r"\]\[(.*?)\]", logic_str)
+        logic_type = match.group(1) if match else "AND"
+        sep = f" {logic_type} "
+        parts = logic_str.split(" | ")
+        if len(parts) < 2: return []
+        for block, tag in [(parts[0], "LONG"), (parts[1], "SHORT")]:
+            if f"{tag}:(" in block:
+                start = block.find(f"{tag}:(") + len(tag) + 2
+                content = block[start:block.rfind(")")]
+                if content != "None":
+                    for g in content.split(sep):
+                        m = re.match(r"Delta\[(.*?),", g) or re.match(r"Z\[(.*?),", g)
+                        if m: genes.append(m.group(1))
+                        else:
+                            tokens = g.split(' ')
+                            if tokens: genes.append(tokens[0])
+    except: pass
     return genes
 
 def main():
-    print("\n" + "="*80)
-    print("🏆 APEX STRATEGY REPORT 🏆")
-    print("="*80 + "\n")
+    print("\n" + "="*120)
+    print("🏆 APEX STRATEGY REPORT (ALIGNED WITH SEARCH) 🏆")
+    print("="*120 + "\n")
     
+    print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found.")
+        sys.exit(1)
+        
+    base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     horizons = config.PREDICTION_HORIZONS
-    
-    # Aggregate gene counts across all horizons
     global_gene_counts = Counter()
     
     for h in horizons:
         file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}.json")
-        
-        if not os.path.exists(file_path):
-            continue
+        if not os.path.exists(file_path): continue
             
-        print(f"--- Horizon: {h} Bars ---")
+        print(f"\n--- Horizon: {h} Bars ---")
         try:
-            with open(file_path, 'r') as f:
-                strategies = json.load(f)
-                
-            if not strategies:
-                print("  No strategies found.")
-                continue
-                
-            # Sort by Test Sharpe
-            strategies.sort(key=lambda x: x.get('test_sharpe', -999), reverse=True)
+            # 1. Prepare Labels for this Horizon
+            df = base_df.copy()
+            df['target_return'] = triple_barrier_labels(df, lookahead=h, pt_sl_multiple=2.0)
             
-            # Create DataFrame for display
+            # 2. Setup Aligned Backtester
+            backtester = BacktestEngine(df, cost_bps=0.5, target_col='target_return', annualization_factor=181440)
+            
+            with open(file_path, 'r') as f:
+                strategies_data = json.load(f)
+            
+            strategies = []
+            for d in strategies_data:
+                s = reconstruct_strategy(d)
+                if s:
+                    s.json_sortino = d.get('test_sortino', 0.0)
+                    strategies.append(s)
+            
+            if not strategies: continue
+
+            # 3. Evaluations
+            # Prediction Mode (Match search logic)
+            pred_results = backtester.evaluate_population(strategies, set_type='test', prediction_mode=True)
+            
+            # Trading Mode (Reality check)
+            # Switch backtester to log_ret for reality check
+            backtester.target_col = 'log_ret'
+            backtester.returns_vec = backtester.raw_data['log_ret'].values.reshape(-1, 1).astype(np.float32)
+            trade_results = backtester.evaluate_population(strategies, set_type='test', prediction_mode=False)
+            
+            # Full history trading
+            full_signals = backtester.generate_signal_matrix(strategies)
+            signals_shft = np.roll(full_signals, 1, axis=0); signals_shft[0,:]=0
+            full_rets = np.sum(signals_shft * backtester.returns_vec - np.abs(np.diff(full_signals, axis=0, prepend=0))*backtester.total_cost_pct, axis=0)
+            
+            # Trades Calculation
+            all_trades_matrix = np.abs(np.diff(full_signals, axis=0, prepend=0))
+            full_trades = np.sum(all_trades_matrix, axis=0)
+            
+            # Test Set Trades
+            test_start = backtester.val_idx
+            test_trades_vec = np.sum(all_trades_matrix[test_start:], axis=0)
+
             df_data = []
             horizon_genes = []
-            
-            for s in strategies:
-                name = s.get('name', 'Unknown')
-                sharpe = s.get('test_sharpe', 0.0)
-                logic = s.get('logic', '')
+            for i, strat in enumerate(strategies):
+                if full_trades[i] == 0: continue
                 
-                genes = parse_genes_from_logic(logic)
+                genes = parse_genes_from_logic(strategies_data[i]['logic'])
                 horizon_genes.extend(genes)
                 global_gene_counts.update(genes)
                 
-                # Format logic for display (truncate if too long)
-                display_logic = logic
-                if len(display_logic) > 100:
-                    display_logic = display_logic[:97] + "..."
+                ret_pred = pred_results.iloc[i]['total_return']
                 
                 df_data.append({
-                    'Name': name,
-                    'Sharpe': f"{sharpe:.4f}",
-                    'Dominant Genes': ", ".join(genes[:3]) + ("..." if len(genes)>3 else "") 
+                    'Name': strat.name,
+                    'Srt(Pred)': pred_results.iloc[i]['sortino'],
+                    'Ret(Pred)': ret_pred,
+                    'Trades': int(test_trades_vec[i]),
+                    'Status': 'PROFITABLE' if ret_pred > 0 else 'LOSS',
+                    'Genes': ", ".join(genes[:2]) + ("..." if len(genes)>2 else "")
                 })
             
-            df = pd.DataFrame(df_data)
-            print(df.to_string(index=False))
-            print("-" * 80)
+            if df_data:
+                df = pd.DataFrame(df_data).sort_values(by='Srt(Pred)', ascending=False)
+                for col in ['Srt(Pred)', 'Ret(Pred)']:
+                    df[col] = df[col].apply(lambda x: f"{x:.4f}")
+                print(df.to_string(index=False))
+            else:
+                print("  No active strategies found.")
             
-            # Horizon specific dominant genes
-            print(f"  Dominant Genes (Horizon {h}):")
-            common = Counter(horizon_genes).most_common(5)
-            for gene, count in common:
-                print(f"    - {gene}: {count}")
-            print("\n")
+            print("-" * 120)
+            print(f"  Dominant Genes (H{h}): " + ", ".join([f"{g}:{c}" for g,c in Counter(horizon_genes).most_common(5)]))
             
         except Exception as e:
-            print(f"  Error reading file: {e}")
+            print(f"  Error processing horizon {h}: {e}")
+            import traceback; traceback.print_exc()
 
-    print("="*80)
-    print("🧬 GLOBAL DOMINANT GENES (All Horizons) 🧬")
-    print("="*80)
-    
+    print("\n" + "="*120)
+    print("🧬 GLOBAL DOMINANT GENES 🧬")
     if global_gene_counts:
-        common = global_gene_counts.most_common(20)
-        for i, (gene, count) in enumerate(common, 1):
-            print(f"{i:2d}. {gene:<40} (Count: {count})")
-    else:
-        print("No genes found across strategies.")
+        for i, (g, c) in enumerate(global_gene_counts.most_common(20), 1):
+            print(f"{i:2d}. {g:<40} ({c})")
 
 if __name__ == "__main__":
     main()

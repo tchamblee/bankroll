@@ -4,8 +4,9 @@ import random
 import json
 import os
 
-VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
-VALID_ZSCORE_WINDOWS = [10, 20, 50, 100, 200]
+# Removed fixed lists to allow dynamic evolution
+# VALID_DELTA_LOOKBACKS = [1, 3, 5, 10, 20, 50]
+# VALID_ZSCORE_WINDOWS = [10, 20, 50, 100, 200]
 
 class StaticGene:
     """
@@ -28,7 +29,7 @@ class StaticGene:
         # Context is a dict of numpy arrays
         if self.feature not in context:
             # Fallback for safety, though precalc should handle this
-            res = np.zeros(context['__len__'], dtype=bool) if '__len__' in context else np.array([])
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
         else:
             data = context[self.feature]
             if self.operator == '>': res = data > self.threshold
@@ -115,18 +116,12 @@ class DeltaGene:
     'Momentum' Gene.
     Checks the change in a feature over time.
     Format: Delta(Feature, Lookback) <Operator> Threshold
-    Example: delta(volatility, 5) > 0.05 (Volatility Spiking)
     """
     def __init__(self, feature: str, operator: str, threshold: float, lookback: int):
         self.feature = feature
         self.operator = operator
         self.threshold = threshold
-        # Enforce valid lookback
-        if lookback not in VALID_DELTA_LOOKBACKS:
-             # Snap to nearest
-             self.lookback = min(VALID_DELTA_LOOKBACKS, key=lambda x:abs(x-lookback))
-        else:
-            self.lookback = lookback
+        self.lookback = lookback
         self.type = 'delta'
 
     def evaluate(self, context: dict, cache: dict = None) -> np.array:
@@ -136,7 +131,8 @@ class DeltaGene:
 
         ctx_key = f"delta_{self.feature}_{self.lookback}"
         if ctx_key not in context:
-            # Fallback if precalc missed it (shouldn't happen if engine is sync'd)
+            # Fallback/Lazy Compute if not in context
+            # NOTE: BacktestEngine must be updated to support Just-In-Time computation or population scanning
             res = np.zeros(context.get('__len__', 0), dtype=bool)
         else:
             data = context[ctx_key]
@@ -148,10 +144,10 @@ class DeltaGene:
         return res
 
     def mutate(self, features_pool):
-        # 1. Mutate Lookback
+        # 1. Mutate Lookback (Random Walk)
         if random.random() < 0.3:
-            # Pick a new random lookback from the valid list
-            self.lookback = random.choice(VALID_DELTA_LOOKBACKS)
+            change = random.randint(-5, 5)
+            self.lookback = max(1, self.lookback + change)
         
         # 2. Mutate Threshold
         if random.random() < 0.3:
@@ -176,21 +172,13 @@ class DeltaGene:
 
 class ZScoreGene:
     """
-    'Statistical' Gene (Prop Desk Favorite).
-    Checks if a feature is an outlier relative to its recent history (Bollinger-style logic).
-    Format: ZScore(Feature, Window) <Operator> Sigma
-    Example: zscore(close, 20) < -2.0 (Price 2 sigmas below 20d mean)
+    'Statistical' Gene.
     """
     def __init__(self, feature: str, operator: str, threshold: float, window: int):
         self.feature = feature
         self.operator = operator
         self.threshold = threshold # Sigma value
-        
-        if window not in VALID_ZSCORE_WINDOWS:
-            self.window = min(VALID_ZSCORE_WINDOWS, key=lambda x:abs(x-window))
-        else:
-            self.window = window
-            
+        self.window = window
         self.type = 'zscore'
 
     def evaluate(self, context: dict, cache: dict = None) -> np.array:
@@ -213,7 +201,8 @@ class ZScoreGene:
     def mutate(self, features_pool):
         # 1. Mutate Window
         if random.random() < 0.3:
-            self.window = random.choice(VALID_ZSCORE_WINDOWS)
+            change = random.randint(-10, 10)
+            self.window = max(5, self.window + change)
             
         # 2. Mutate Threshold (Sigma)
         if random.random() < 0.3:
@@ -232,6 +221,98 @@ class ZScoreGene:
 
     def __repr__(self):
         return f"Z({self.feature}, {self.window}) {self.operator} {self.threshold:.2f}σ"
+
+class TimeGene:
+    """
+    'Seasonality' Gene.
+    Filters by Hour of Day or Day of Week.
+    Type: 'hour' or 'weekday'
+    """
+    def __init__(self, mode: str, operator: str, value: int):
+        self.mode = mode # 'hour' or 'weekday'
+        self.operator = operator # '>' , '<', '==', '!='
+        self.value = value
+        self.type = 'time'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.mode, self.operator, self.value)
+            if key in cache: return cache[key]
+
+        ctx_key = f"time_{self.mode}"
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.value
+            elif self.operator == '<': res = data < self.value
+            elif self.operator == '==': res = data == self.value
+            elif self.operator == '!=': res = data != self.value
+            else: res = np.zeros(len(data), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool=None):
+        # 1. Mutate Value
+        if random.random() < 0.5:
+            if self.mode == 'hour':
+                self.value = (self.value + random.choice([-1, 1])) % 24
+            else: # weekday
+                self.value = (self.value + random.choice([-1, 1])) % 7
+        
+        # 2. Mutate Operator
+        if random.random() < 0.3:
+            self.operator = random.choice(['>', '<', '==', '!='])
+            
+    def copy(self):
+        return TimeGene(self.mode, self.operator, self.value)
+
+    def __repr__(self):
+        return f"Time({self.mode}) {self.operator} {self.value}"
+
+class ConsecutiveGene:
+    """
+    'Pattern' Gene.
+    Checks for consecutive bars of a certain type (Up/Down).
+    """
+    def __init__(self, direction: str, operator: str, count: int):
+        self.direction = direction # 'up' or 'down'
+        self.operator = operator # '>', '=='
+        self.count = count
+        self.type = 'consecutive'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.direction, self.operator, self.count)
+            if key in cache: return cache[key]
+
+        ctx_key = f"consecutive_{self.direction}"
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.count
+            elif self.operator == '==': res = data == self.count
+            else: res = np.zeros(len(data), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool=None):
+        # 1. Mutate Count
+        if random.random() < 0.5:
+            self.count = max(1, self.count + random.choice([-1, 1]))
+            
+        # 2. Mutate Direction
+        if random.random() < 0.2:
+            self.direction = 'up' if self.direction == 'down' else 'down'
+            
+    def copy(self):
+        return ConsecutiveGene(self.direction, self.operator, self.count)
+    
+    def __repr__(self):
+        return f"Consecutive({self.direction}) {self.operator} {self.count}"
 
 class Strategy:
     """
@@ -314,36 +395,45 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 20% Chance of Relational Gene (Context)
-        if rand_val < 0.20:
+        # 15% Time Gene
+        if rand_val < 0.15:
+            mode = random.choice(['hour', 'weekday'])
+            val = random.randint(0, 23) if mode == 'hour' else random.randint(0, 6)
+            op = random.choice(['>', '<', '==', '!='])
+            return TimeGene(mode, op, val)
+        
+        # 15% Consecutive Gene (Pattern)
+        elif rand_val < 0.30:
+            direction = random.choice(['up', 'down'])
+            op = random.choice(['>', '=='])
+            count = random.randint(2, 6)
+            return ConsecutiveGene(direction, op, count)
+
+        # 15% Chance of Relational Gene (Context)
+        elif rand_val < 0.45:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool) 
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
             
         # 20% Chance of Delta Gene (Momentum)
-        elif rand_val < 0.40:
+        elif rand_val < 0.65:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            # Delta threshold usually smaller than absolute values. 
-            # We'll start with small random fraction of std dev.
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.5, 0.5) * stats['std']
-            # Use valid lookback
-            lookback = random.choice(VALID_DELTA_LOOKBACKS)
+            lookback = random.randint(3, 100) # Dynamic Lookback
             return DeltaGene(feature, operator, threshold, lookback)
             
         # 20% Chance of ZScore Gene (Statistical Extreme)
-        elif rand_val < 0.60:
+        elif rand_val < 0.85:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            # Thresholds usually -2, -1, 1, 2 sigmas
             threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
-            # Use valid window
-            window = random.choice(VALID_ZSCORE_WINDOWS)
+            window = random.randint(10, 250) # Dynamic Window
             return ZScoreGene(feature, operator, threshold, window)
         
-        # 40% Chance of Static Gene (Classic)
+        # 15% Chance of Static Gene (Classic)
         else:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])

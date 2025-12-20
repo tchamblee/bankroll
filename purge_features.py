@@ -7,6 +7,8 @@ import config
 from feature_engine import FeatureEngine
 from validate_features import triple_barrier_labels
 
+import warnings
+
 def get_feature_correlation_matrix(df, features):
     return df[features].corr(method='spearman')
 
@@ -61,7 +63,11 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.01, p
     for i, fold_data in enumerate(folds):
         # Calculate Spearman correlation
         # corrwith matches pairwise deletion of NaNs (like the loop's dropna)
-        c = fold_data[survivors].corrwith(fold_data[target_col], method='spearman')
+        
+        # Suppress ConstantInputWarning (occurs when a feature is constant within a single fold)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            c = fold_data[survivors].corrwith(fold_data[target_col], method='spearman')
         
         # Enforce min_periods=20 rule
         # Count non-NaNs in features where target is also non-NaN

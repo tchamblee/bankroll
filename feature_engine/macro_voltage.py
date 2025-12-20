@@ -10,6 +10,8 @@ def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
     2. DE Policy: German 2-Year Yield (SCHATZ)
     3. Voltage: US2Y - SCHATZ (Differential)
     4. Curve Slopes: 10Y - 2Y for both.
+    
+    Updated to use merge_asof for precise alignment without resampling.
     """
     if df is None: return None
     print("Calculating Transatlantic Voltage Features (US2Y vs SCHATZ)...")
@@ -25,95 +27,75 @@ def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
         print("Skipping Voltage Features: Missing Macro Data.")
         return df
 
-    # 2. Resample all to 1-Minute Grid to align timestamps
-    # We use the time range of the primary DF
-    start_time = df['time_start'].min().floor('1min')
-    end_time = df['time_end'].max().ceil('1min')
+    # 2. Prepare Macro Data
+    # Merge all macro series into one "State" DataFrame first? 
+    # Or just merge them one by one into the main DF? 
+    # Merging one by one is safer with merge_asof if timestamps differ slightly between macro feeds.
     
-    # Create the grid
-    # freq='1min' is a safe enough approximation for macro shifts
-    time_grid = pd.date_range(start_time, end_time, freq='1min', tz='UTC')
-    macro_grid = pd.DataFrame(index=time_grid)
-    
-    def resample_ticker(ticker_df, name):
-        ticker_df['ts_event'] = pd.to_datetime(ticker_df['ts_event'])
-        # Sort and deduplicate
-        ticker_df = ticker_df.sort_values('ts_event')
-        # Resample to 1min, forward fill
-        resampled = ticker_df.set_index('ts_event')[['mid_price']].resample('1min').last().ffill()
-        resampled.columns = [name]
-        return resampled
+    def prepare_macro(macro_df, name):
+        # Ensure UTC
+        if macro_df['ts_event'].dt.tz is None:
+            macro_df['ts_event'] = macro_df['ts_event'].dt.tz_localize('UTC')
+        else:
+            macro_df['ts_event'] = macro_df['ts_event'].dt.tz_convert('UTC')
+            
+        macro_df = macro_df.sort_values('ts_event')
+        # Rename mid_price to the feature name
+        macro_df = macro_df[['ts_event', 'mid_price']].rename(columns={'mid_price': name})
+        return macro_df
 
-    # Resample all
-    us2y_s = resample_ticker(us2y_df, 'us2y')
-    schatz_s = resample_ticker(schatz_df, 'schatz')
-    tnx_s = resample_ticker(tnx_df, 'tnx')
-    bund_s = resample_ticker(bund_df, 'bund')
+    us2y_df = prepare_macro(us2y_df, 'us2y')
+    schatz_df = prepare_macro(schatz_df, 'schatz')
+    tnx_df = prepare_macro(tnx_df, 'tnx')
+    bund_df = prepare_macro(bund_df, 'bund')
     
-    # Merge into grid
-    macro_grid = macro_grid.join([us2y_s, schatz_s, tnx_s, bund_s], how='left')
+    # 3. Merge Asof
+    # Ensure main DF is sorted by time_end (the time we know the bar is complete)
+    # We use time_end to look back at the latest known macro price.
     
-    # Forward fill gaps (macro data is sparse/slower)
-    macro_grid = macro_grid.ffill().bfill()
+    # Ensure UTC for main DF
+    if df['time_end'].dt.tz is None:
+        df['time_end'] = df['time_end'].dt.tz_localize('UTC')
+    else:
+        df['time_end'] = df['time_end'].dt.tz_convert('UTC')
+        
+    df = df.sort_values('time_end')
     
-    # 3. Calculate Voltage Features on the Grid
-    # Note: Yields are often prices in futures. 
-    # US 2Y Futures (ZT): Price = 100 - Yield (roughly)? No, ZT trades as price.
-    # TNX (CBOE Index): Is Yield * 10.
-    # We assume 'mid_price' reflects the Yield or a proxy.
-    # IMPORTANT: If these are FUTURES PRICES, higher price = lower yield.
-    # Voltage = US Yield - DE Yield.
-    # If using Futures Price: Voltage ~ (DE Price - US Price)?
-    # Let's assume standard "Risk On/Off" correlation.
-    # We will just use the raw prices and let the model figure out the sign.
+    # Helper to merge
+    def merge_macro(base, macro, col_name):
+        return pd.merge_asof(
+            base,
+            macro,
+            left_on='time_end',
+            right_on='ts_event',
+            direction='backward'
+        ).drop(columns=['ts_event'])
+
+    df = merge_macro(df, us2y_df, 'us2y')
+    df = merge_macro(df, schatz_df, 'schatz')
+    df = merge_macro(df, tnx_df, 'tnx')
+    df = merge_macro(df, bund_df, 'bund')
     
+    # Fill NaNs (Forward fill equivalent is implicit in merge_asof, 
+    # but initial rows might be NaN if macro data starts later)
+    cols_to_fill = ['us2y', 'schatz', 'tnx', 'bund']
+    df[cols_to_fill] = df[cols_to_fill].ffill().bfill().fillna(0)
+    
+    # 4. Calculate Voltage Features
     # Raw Spreads (Price Differentials)
-    macro_grid['voltage_diff'] = macro_grid['us2y'] - macro_grid['schatz']
+    df['voltage_diff'] = df['us2y'] - df['schatz']
     
     # Curve Slopes (10Y - 2Y) -> Actually Price(10Y) - Price(2Y)
-    macro_grid['us_curve'] = macro_grid['tnx'] - macro_grid['us2y']
-    macro_grid['de_curve'] = macro_grid['bund'] - macro_grid['schatz']
+    df['us_curve'] = df['tnx'] - df['us2y']
+    df['de_curve'] = df['bund'] - df['schatz']
     
-    # 4. Merge back to Volume Bars
-    # Use merge_asof on time_end
-    macro_grid.index.name = 'timestamp'
-    macro_grid = macro_grid.reset_index()
-    
-    # Select cols
-    cols_to_add = ['timestamp', 'voltage_diff', 'us_curve', 'de_curve']
-    
-    df = df.sort_values('time_end')
-    macro_grid = macro_grid.sort_values('timestamp')
-    
-    merged = pd.merge_asof(
-        df,
-        macro_grid[cols_to_add],
-        left_on='time_end',
-        right_on='timestamp',
-        direction='backward'
-    )
-    
-    merged.drop(columns=['timestamp'], inplace=True)
-    
-    # Fill any remaining NaNs
-    merged[['voltage_diff', 'us_curve', 'de_curve']] = \
-        merged[['voltage_diff', 'us_curve', 'de_curve']].fillna(0)
-        
     # 5. Derived Features (Velocity of Voltage)
     for w in windows:
         # Change in Voltage
-        merged[f'voltage_vel_{w}'] = merged['voltage_diff'].diff(w)
+        df[f'voltage_vel_{w}'] = df['voltage_diff'].diff(w)
         
         # Divergence: Price Trend vs Voltage Trend
         # Correlation between EURUSD Returns and Voltage Changes
-        # If Voltage (US Rates UP relative to DE) goes UP, EURUSD should go DOWN.
-        # So correlation should be negative.
-        # If correlation breaks, it's a signal.
-        merged[f'voltage_corr_{w}'] = merged['log_ret'].rolling(w).corr(merged['voltage_diff'].diff())
-        
-        # Z-Score of Voltage (Regime) - REDUNDANT with Voltage Diff (Stationary-ish)
-        # vol_mean = merged['voltage_diff'].rolling(w * 10).mean() # Long baseline
-        # vol_std = merged['voltage_diff'].rolling(w * 10).std()
-        # merged[f'voltage_zscore_{w}'] = (merged['voltage_diff'] - vol_mean) / vol_std.replace(0, 1)
+        df[f'voltage_corr_{w}'] = df['log_ret'].rolling(w).corr(df['voltage_diff'].diff())
 
-    return merged
+    return df

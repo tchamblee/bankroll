@@ -72,23 +72,24 @@ class EvolutionaryAlphaFactory:
             # 1. Evaluate on TRAIN
             results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
             
-            # 2. Apply Trade Penalty
-            results.loc[results['trades'] < 5, 'sharpe'] = -1.0
+            # 2. Apply Trade Penalty (Statistical Significance Check)
+            # Prop Firm Standard: Need enough samples to validate alpha.
+            results.loc[results['trades'] < 30, 'sortino'] = -1.0
             
             # Capture Raw Metrics
-            raw_best_sharpe = results['sharpe'].max()
+            raw_best_sortino = results['sortino'].max()
             
             # 2.5 Apply Generational Decay (Alpha Decay Simulation)
             # Penalize later generations to force significant improvements
             decay_factor = self.decay_rate ** gen
-            results['sharpe'] = results['sharpe'] * decay_factor
+            results['sortino'] = results['sortino'] * decay_factor
             
-            best_sharpe = results['sharpe'].max()
-            print(f"\n--- Generation {gen} | Best [Train] Sharpe: {best_sharpe:.4f} (Raw: {raw_best_sharpe:.4f} | Decay: {decay_factor:.4f}) ---")
+            best_sortino = results['sortino'].max()
+            print(f"\n--- Generation {gen} | Best [Train] Sortino: {best_sortino:.4f} (Raw: {raw_best_sortino:.4f} | Decay: {decay_factor:.4f}) ---")
             
-            # Early Stopping Check (using Decayed Sharpe to force robustness)
-            if best_sharpe > global_best_sharpe:
-                global_best_sharpe = best_sharpe
+            # Early Stopping Check (using Decayed Sortino to force robustness)
+            if best_sortino > global_best_sharpe: # Reusing var name for logic, but content is sortino
+                global_best_sharpe = best_sortino
                 generations_without_improvement = 0
             else:
                 generations_without_improvement += 1
@@ -99,17 +100,17 @@ class EvolutionaryAlphaFactory:
             
             # 3. Selection
             num_elite = int(self.pop_size * 0.2)
-            elites_ids = results.sort_values('sharpe', ascending=False).head(num_elite).index.tolist()
+            elites_ids = results.sort_values('sortino', ascending=False).head(num_elite).index.tolist()
             elites = [self.population[idx] for idx in elites_ids]
             
             # 4. Cross-Validation Gating
             val_results = self.backtester.evaluate_population(elites, set_type='validation', prediction_mode=self.prediction_mode)
-            val_results.loc[val_results['trades'] < 3, 'sharpe'] = -1.0
+            val_results.loc[val_results['trades'] < 10, 'sortino'] = -1.0 # Loose check for val
             
             for i, elite in enumerate(elites):
-                val_sharpe = val_results.iloc[i]['sharpe']
-                if val_sharpe > 0.0:
-                    self.hall_of_fame.append((elite, val_sharpe))
+                val_score = val_results.iloc[i]['sortino']
+                if val_score > 0.0:
+                    self.hall_of_fame.append((elite, val_score))
             
             # 5. Create Next Gen
             new_population = elites[:20]
@@ -124,8 +125,8 @@ class EvolutionaryAlphaFactory:
                 child = self.crossover(p1, p2)
                 
                 # Structural Mutation
-                # Mutate aggressively if decaying best_sharpe is low
-                mut_rate = 0.25 if best_sharpe < 0.01 else 0.1
+                # Mutate aggressively if decaying best_sortino is low
+                mut_rate = 0.25 if best_sortino < 0.01 else 0.1
                 
                 # Long Genes
                 if random.random() < mut_rate: # Mutate Regime
@@ -170,8 +171,8 @@ class EvolutionaryAlphaFactory:
             # --- FIX: ORTHOGONALITY CHECK (Monoculture Prevention) ---
             # Greedy Selection: Pick Best, then pick next Best that is uncorrelated (< 0.7)
             
-            # 1. Sort by Sharpe
-            sorted_indices = test_res.sort_values('sharpe', ascending=False).index.tolist()
+            # 1. Sort by Sortino
+            sorted_indices = test_res.sort_values('sortino', ascending=False).index.tolist()
             
             # 2. Calculate Correlation Matrix of Strategies
             # (Strategies are columns in net_returns)
@@ -186,14 +187,14 @@ class EvolutionaryAlphaFactory:
                 if len(selected_indices) >= 5: break
                 
                 # Check for positive performance
-                current_sharpe = test_res.loc[idx, 'sharpe']
-                if current_sharpe <= 0:
+                current_score = test_res.loc[idx, 'sortino']
+                if current_score <= 0:
                     continue
                 
                 if not selected_indices:
                     # Always pick the absolute best first
                     selected_indices.append(idx)
-                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sharpe: {current_sharpe:.4f})")
+                    print(f"  1. [Best] {test_res.loc[idx, 'id']} (Sortino: {current_score:.4f})")
                 else:
                     # Check correlation with ALREADY SELECTED
                     is_uncorrelated = True
@@ -206,19 +207,19 @@ class EvolutionaryAlphaFactory:
                     
                     if is_uncorrelated:
                         selected_indices.append(idx)
-                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sharpe: {current_sharpe:.4f})")
+                        print(f"  {len(selected_indices)}. [Add ] {test_res.loc[idx, 'id']} (Sortino: {current_score:.4f})")
             
             # Subset results to selected
             final_apex = [unique_hof[i] for i in selected_indices]
             final_res = test_res.iloc[selected_indices]
             
             print("\nFinal Portfolio Stats:")
-            print(final_res[['id', 'sharpe', 'total_return', 'trades']])
+            print(final_res[['id', 'sortino', 'sharpe', 'total_return', 'trades']])
             
             output = []
             for idx in selected_indices:
                 s = unique_hof[idx]
-                output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.loc[idx, 'sharpe']})
+                output.append({'name': s.name, 'logic': str(s), 'test_sortino': test_res.loc[idx, 'sortino']})
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
@@ -231,7 +232,7 @@ class EvolutionaryAlphaFactory:
         # or just use the last results.
         print("\nSaving Population Snapshot for DNA Analysis...")
         pop_results = self.backtester.evaluate_population(self.population, set_type='train', prediction_mode=self.prediction_mode)
-        top_100_idx = pop_results.sort_values('sharpe', ascending=False).head(100).index
+        top_100_idx = pop_results.sort_values('sortino', ascending=False).head(100).index
         
         dna_dump = []
         for idx in top_100_idx:
@@ -247,19 +248,24 @@ class EvolutionaryAlphaFactory:
                         return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'window': g.window, 'type': type_lbl, 'mode': 'zscore'}
                     elif g.type == 'relational':
                         return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
+                    elif g.type == 'time':
+                        return {'feature': g.mode, 'op': g.operator, 'threshold': g.value, 'type': type_lbl, 'mode': 'time'}
+                    elif g.type == 'consecutive':
+                        return {'feature': g.direction, 'op': g.operator, 'threshold': g.count, 'type': type_lbl, 'mode': 'consecutive'}
                     
                 # Fallback for Static or unknown
-                if hasattr(g, 'threshold'): 
+                if hasattr(g, 'threshold') and hasattr(g, 'feature'): 
                     return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': type_lbl, 'mode': 'static'}
                 else: 
-                    return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
+                    # Last resort fallback to avoid crash
+                    return {'feature': 'unknown', 'op': '?', 'threshold': 0, 'type': type_lbl, 'mode': 'unknown'}
 
             for g in strat.long_genes: genes.append(extract_gene_data(g, 'long'))
             for g in strat.short_genes: genes.append(extract_gene_data(g, 'short'))
             
             dna_dump.append({
                 'name': strat.name,
-                'sharpe': pop_results.loc[idx, 'sharpe'],
+                'sortino': pop_results.loc[idx, 'sortino'],
                 'genes': genes
             })
             
