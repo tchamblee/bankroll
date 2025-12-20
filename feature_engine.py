@@ -227,50 +227,97 @@ class FeatureEngine:
         raw_df['date'] = pd.to_datetime(raw_df['date_str'], format='%Y%m%d', errors='coerce').dt.tz_localize('UTC')
         raw_df = raw_df.dropna(subset=['date'])
         
-        # Parse Tone (First value in comma-separated string)
-        # Fast vector string op
-        raw_df['tone'] = raw_df['tone_raw'].astype(str).str.split(',', expand=True)[0].astype(float)
+        # Parse Tone and Polarity
+        # Tone Raw: Tone, Pos, Neg, Polarity, ARD, SGRD
+        tone_data = raw_df['tone_raw'].astype(str).str.split(',', expand=True)
+        raw_df['tone'] = tone_data[0].astype(float)
+        raw_df['polarity'] = tone_data[3].astype(float)
         
         # Define Keywords
         eur_locs = ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro']
         usd_locs = ['United States', 'US', 'Washington', 'New York', 'America', 'Fed']
         
-        # Simple string matching (Case insensitive)
-        # We'll use a simplified approach for speed
+        # Optimized String Matching
         raw_df['loc_str'] = raw_df['LOCATIONS'].fillna("").astype(str).str.upper()
+        raw_df['theme_str'] = raw_df['THEMES'].fillna("").astype(str)
         
-        # Create boolean masks
-        # Using regex for OR condition is faster than looping
+        # Location Masks
         eur_mask = raw_df['loc_str'].str.contains('|'.join([x.upper() for x in eur_locs]))
         usd_mask = raw_df['loc_str'].str.contains('|'.join([x.upper() for x in usd_locs]))
+        de_mask = raw_df['loc_str'].str.contains('GERMANY|BERLIN|DE') # Specific for EPU comparison
         
         # Aggregation by Date
         agg_data = []
         
         for date, group in raw_df.groupby('date'):
-            # EUR Stats
+            # 1. Base Stats
             eur_group = group[eur_mask[group.index]]
-            eur_vol = len(eur_group)
-            eur_tone = eur_group['tone'].mean() if eur_vol > 0 else 0
-            
-            # USD Stats
             usd_group = group[usd_mask[group.index]]
-            usd_vol = len(usd_group)
-            usd_tone = usd_group['tone'].mean() if usd_vol > 0 else 0
             
-            # Global Instability (Theme 'CRISIS')
-            crisis_vol = group['THEMES'].fillna("").str.contains('CRISIS|EPU|UNREST').sum()
+            eur_vol = len(eur_group)
+            usd_vol = len(usd_group)
+            
+            # 2. Panic Index
+            # Global Tone/Polarity
+            global_tone = group['tone'].mean()
+            global_polarity = group['polarity'].mean()
+            
+            # Conflict Intensity
+            conflict_mask = group['theme_str'].str.contains('ARMEDCONFLICT|CRISISLEX|UNREST')
+            conflict_intensity = conflict_mask.sum()
+            
+            # 3. EPU (Economic Policy Uncertainty)
+            epu_mask = group['theme_str'].str.contains('EPU')
+            epu_all = epu_mask.sum()
+            epu_usd = (epu_mask & usd_mask[group.index]).sum()
+            epu_eur = (epu_mask & de_mask[group.index]).sum() # Using Germany as proxy for EUR Policy Core
+            
+            # 4. Inflation/Yields
+            inflation_mask = group['theme_str'].str.contains('ECON_INFLATION|TAX_FNCACT')
+            inflation_chatter = inflation_mask.sum()
+            
+            cb_mask = group['theme_str'].str.contains('CENTRAL_BANK')
+            cb_tone = group.loc[cb_mask, 'tone'].mean() if cb_mask.any() else 0
+            
+            # 5. Asset Specific
+            # Energy Crisis in Europe
+            energy_mask = group['theme_str'].str.contains('ENV_OIL|ECON_ENERGY_PRICES')
+            energy_crisis_eur = (energy_mask & eur_mask[group.index]).sum()
             
             agg_data.append({
                 'date': date,
                 'news_vol_eur': eur_vol,
-                'news_tone_eur': eur_tone,
+                'news_tone_eur': eur_group['tone'].mean() if eur_vol > 0 else 0,
                 'news_vol_usd': usd_vol,
-                'news_tone_usd': usd_tone,
-                'news_crisis_vol': crisis_vol
+                'news_tone_usd': usd_group['tone'].mean() if usd_vol > 0 else 0,
+                
+                # New Features
+                'panic_score': (global_polarity * -1) if global_tone < -5 else 0, # Synthetic Panic Signal
+                'global_tone': global_tone,
+                'global_polarity': global_polarity,
+                'conflict_intensity': conflict_intensity,
+                
+                'epu_total': epu_all,
+                'epu_usd': epu_usd,
+                'epu_eur': epu_eur, # Germany
+                'epu_diff': epu_usd - epu_eur, # Policy Premium
+                
+                'inflation_vol': inflation_chatter,
+                'central_bank_tone': cb_tone,
+                
+                'energy_crisis_eur': energy_crisis_eur
             })
             
         gdelt_daily = pd.DataFrame(agg_data).sort_values('date').set_index('date')
+        
+        # 6. Volume Anomalies (Z-Score) - Time Series Calculation
+        # We need a rolling window (e.g., 30 days)
+        # Total Volume
+        gdelt_daily['total_vol'] = gdelt_daily['news_vol_eur'] + gdelt_daily['news_vol_usd'] # Proxy
+        roll_mean = gdelt_daily['total_vol'].rolling(30, min_periods=5).mean()
+        roll_std = gdelt_daily['total_vol'].rolling(30, min_periods=5).std()
+        gdelt_daily['news_vol_zscore'] = (gdelt_daily['total_vol'] - roll_mean) / roll_std.replace(0, 1)
+        
         print(f"Processed GDELT data: {len(gdelt_daily)} days.")
         return gdelt_daily
 
@@ -311,8 +358,14 @@ class FeatureEngine:
         
         # Fill NaNs (e.g. weekends or missing days) with 0 or forward fill?
         # Forward fill is better for sentiment persistence
-        cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 'news_crisis_vol']
-        merged[cols_to_fill] = merged[cols_to_fill].fillna(method='ffill').fillna(0)
+        cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 
+                        'global_tone', 'global_polarity', 'conflict_intensity', 
+                        'epu_total', 'epu_usd', 'epu_eur', 'epu_diff',
+                        'inflation_vol', 'central_bank_tone', 'energy_crisis_eur', 'news_vol_zscore']
+        
+        # Only fill columns that exist (in case we run old logic)
+        existing_cols = [c for c in cols_to_fill if c in merged.columns]
+        merged[existing_cols] = merged[existing_cols].ffill().fillna(0)
         
         # Derived Physics Features
         # 1. Sentiment Divergence (Force Differential)
@@ -326,8 +379,8 @@ class FeatureEngine:
         merged['news_velocity_eur'] = merged['news_vol_eur'].diff().fillna(0)
         merged['news_velocity_usd'] = merged['news_vol_usd'].diff().fillna(0)
         
-        # 4. Crisis Regime
-        merged['news_instability'] = merged['news_crisis_vol']
+        # 4. Regime/Panic Features
+        # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
         
         # Drop temp date column
         merged.drop(columns=['date'], inplace=True)
