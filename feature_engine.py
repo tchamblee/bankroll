@@ -225,6 +225,13 @@ class FeatureEngine:
             # 3. Skewness (Tail Asymmetry) - 3rd Moment
             df[f'skew_{w}'] = df['log_ret'].rolling(w).skew()
             
+            # 4. Price Z-Score (Mean Reversion / Deviation)
+            # Distance from moving average, normalized by GK volatility
+            ma = df['close'].rolling(w).mean()
+            # GK Volatility is percentage-based (e.g. 0.001 for 0.1%). 
+            # To normalize a price difference ($), we need price * vol ($).
+            df[f'price_zscore_{w}'] = (df['close'] - ma) / (df[f'volatility_{w}'] * df['close']).replace(0, 1) 
+            
             vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
             df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm
 
@@ -313,6 +320,13 @@ class FeatureEngine:
                 # Normalize spread by price to match log-return volatility units
                 spread_pct = df['avg_spread'] / df['close']
                 df[f'spread_intensity_{w}'] = spread_pct / df[f'volatility_{w}'].replace(0, 1e-6)
+
+            # 8. Order Book Alignment (Flow * Pressure)
+            # Do buyers have support? Or are they hitting walls?
+            if 'pres_imbalance' in df.columns:
+                # Instantaneous alignment
+                alignment = df['ticket_imbalance'] * df['pres_imbalance']
+                df[f'order_book_alignment_{w}'] = alignment.rolling(w).mean()
 
         self.bars = df
         
