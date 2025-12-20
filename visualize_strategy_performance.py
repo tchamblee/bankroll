@@ -6,16 +6,28 @@ import os
 import sys
 import re
 from feature_engine import FeatureEngine
-from strategy_genome import Strategy, Gene
+from strategy_genome import Strategy, StaticGene, RelationalGene
 from backtest_engine import BacktestEngine
 import config
 
 def parse_gene_string(gene_str):
-    # Format: feature operator threshold
-    # e.g., "frac_diff_02 > 0.45"
-    match = re.match(r"(.+)\s+([<>=]+)\s+([-\d\.]+)", gene_str)
+    # Regex to capture: Left OP Right
+    # Right can be a float (Static) or a string (Relational)
+    match = re.match(r"(.+)\s+([<>=]+)\s+(.+)", gene_str)
     if match:
-        return Gene(match.group(1), match.group(2), float(match.group(3)))
+        left, op, right = match.groups()
+        left = left.strip()
+        op = op.strip()
+        right = right.strip()
+        
+        # Try to parse right as float
+        try:
+            threshold = float(right)
+            return StaticGene(left, op, threshold)
+        except ValueError:
+            # It's a feature name -> Relational
+            return RelationalGene(left, op, right)
+            
     return None
 
 def reconstruct_strategy(strat_dict):

@@ -4,9 +4,9 @@ import random
 import json
 import os
 
-class Gene:
+class StaticGene:
     """
-    Represents a single trading rule (The Atom of the Strategy).
+    Classic 'Magic Number' Gene.
     Format: Feature <Operator> Threshold
     Example: frac_diff_02 > 0.45
     """
@@ -14,6 +14,7 @@ class Gene:
         self.feature = feature
         self.operator = operator
         self.threshold = threshold
+        self.type = 'static'
 
     def evaluate(self, df: pd.DataFrame) -> np.array:
         if self.feature not in df.columns:
@@ -23,24 +24,72 @@ class Gene:
         
         if self.operator == '>': return data > self.threshold
         elif self.operator == '<': return data < self.threshold
-        elif self.operator == '>=': return data >= self.threshold
-        elif self.operator == '<=': return data <= self.threshold
         else: return np.zeros(len(df), dtype=bool)
 
     def mutate(self, features_pool):
+        # 1. Mutate Threshold
         if random.random() < 0.5:
             change = self.threshold * 0.1 * (1 if random.random() > 0.5 else -1)
-            if abs(self.threshold) < 0.001: change = 0.001 * (1 if random.random() > 0.5 else -1)
+            # Handle near-zero thresholds
+            if abs(self.threshold) < 0.001: 
+                change = 0.001 * (1 if random.random() > 0.5 else -1)
             self.threshold += change
-        if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
-        if random.random() < 0.1: self.feature = random.choice(features_pool)
+            
+        # 2. Mutate Operator
+        if random.random() < 0.2: 
+            self.operator = '>' if self.operator == '<' else '<'
+            
+        # 3. Mutate Feature
+        if random.random() < 0.1: 
+            self.feature = random.choice(features_pool)
 
     def copy(self):
-        """Returns a deep copy of the Gene."""
-        return Gene(self.feature, self.operator, self.threshold)
+        return StaticGene(self.feature, self.operator, self.threshold)
 
     def __repr__(self):
         return f"{self.feature} {self.operator} {self.threshold:.4f}"
+
+class RelationalGene:
+    """
+    Sophisticated 'Context' Gene.
+    Format: Feature_A <Operator> Feature_B
+    Example: volatility_50 > volatility_200 (Volatility Expansion)
+    """
+    def __init__(self, feature_left: str, operator: str, feature_right: str):
+        self.feature_left = feature_left
+        self.operator = operator
+        self.feature_right = feature_right
+        self.type = 'relational'
+
+    def evaluate(self, df: pd.DataFrame) -> np.array:
+        if self.feature_left not in df.columns or self.feature_right not in df.columns:
+            return np.zeros(len(df), dtype=bool)
+            
+        left_data = df[self.feature_left].values
+        right_data = df[self.feature_right].values
+        
+        if self.operator == '>': return left_data > right_data
+        elif self.operator == '<': return left_data < right_data
+        else: return np.zeros(len(df), dtype=bool)
+
+    def mutate(self, features_pool):
+        # 1. Mutate Operator
+        if random.random() < 0.3: 
+            self.operator = '>' if self.operator == '<' else '<'
+            
+        # 2. Mutate Left Feature
+        if random.random() < 0.3: 
+            self.feature_left = random.choice(features_pool)
+            
+        # 3. Mutate Right Feature
+        if random.random() < 0.3: 
+            self.feature_right = random.choice(features_pool)
+
+    def copy(self):
+        return RelationalGene(self.feature_left, self.operator, self.feature_right)
+
+    def __repr__(self):
+        return f"{self.feature_left} {self.operator} {self.feature_right}"
 
 class Strategy:
     """
@@ -93,11 +142,21 @@ class GenomeFactory:
 
     def create_gene_from_pool(self, pool):
         if not pool: return self.create_random_gene() # Fallback
-        feature = random.choice(pool)
-        operator = random.choice(['>', '<'])
-        stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-        threshold = stats['mean'] + random.uniform(-1.5, 1.5) * stats['std']
-        return Gene(feature, operator, threshold)
+        
+        # 30% Chance of Relational Gene (Sophisticated)
+        if random.random() < 0.3:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool) # Compare against same category
+            operator = random.choice(['>', '<'])
+            return RelationalGene(feature_left, operator, feature_right)
+        
+        # 70% Chance of Static Gene (Classic)
+        else:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = stats['mean'] + random.uniform(-1.5, 1.5) * stats['std']
+            return StaticGene(feature, operator, threshold)
 
     def create_random_gene(self):
         # Legacy fallback
@@ -105,7 +164,7 @@ class GenomeFactory:
         operator = random.choice(['>', '<'])
         stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
         threshold = stats['mean'] + random.uniform(-2, 2) * stats['std']
-        return Gene(feature, operator, threshold)
+        return StaticGene(feature, operator, threshold)
 
     def create_strategy(self, num_genes_range=(2, 2)):
         # Force Structure: 1 Regime Gene + 1 Trigger Gene

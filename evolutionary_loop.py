@@ -6,7 +6,7 @@ import random
 import time
 import config
 from feature_engine import FeatureEngine
-from strategy_genome import GenomeFactory, Strategy, Gene
+from strategy_genome import GenomeFactory, Strategy
 from backtest_engine import BacktestEngine
 
 class EvolutionaryAlphaFactory:
@@ -213,8 +213,15 @@ class EvolutionaryAlphaFactory:
             strat = self.population[idx]
             # Extract raw genes
             genes = []
-            for g in strat.long_genes: genes.append({'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': 'long'})
-            for g in strat.short_genes: genes.append({'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': 'short'})
+            
+            def extract_gene_data(g, type_lbl):
+                if hasattr(g, 'threshold'): # Static
+                    return {'feature': g.feature, 'op': g.operator, 'threshold': g.threshold, 'type': type_lbl, 'mode': 'static'}
+                else: # Relational
+                    return {'feature': g.feature_left, 'op': g.operator, 'threshold': g.feature_right, 'type': type_lbl, 'mode': 'relational'}
+
+            for g in strat.long_genes: genes.append(extract_gene_data(g, 'long'))
+            for g in strat.short_genes: genes.append(extract_gene_data(g, 'short'))
             
             dna_dump.append({
                 'name': strat.name,
