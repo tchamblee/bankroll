@@ -22,7 +22,7 @@
 - [x] Ensure execution speed allows for thousands of iterations per minute (Achieved ~50k/min).
 
 ## Phase 4: The Evolutionary Loop - **COMPLETE ✅**
-- [x] Implement **Population Initialization** (Generate 1,000 random strategies).
+- [x] Implement **Population Initialization** (Generate 20,000 random strategies).
 - [x] Implement **Fitness Function** (Run backtest, calculate score).
 - [x] Implement **Selection** (Tournament selection or Roulette wheel to pick parents).
 - [x] Implement **Crossover** (Combine logic of two parents).

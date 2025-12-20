@@ -11,7 +11,7 @@ from backtest_engine import BacktestEngine
 from validate_features import triple_barrier_labels
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=10000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
+    def __init__(self, data, survivors_file, population_size=20000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
         self.data = data
         self.pop_size = population_size
         self.generations = generations
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
     parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
-    parser.add_argument("--pop_size", type=int, default=10000, help="Population Size")
+    parser.add_argument("--pop_size", type=int, default=20000, help="Population Size")
     parser.add_argument("--gens", type=int, default=100, help="Number of Generations")
     parser.add_argument("--decay", type=float, default=0.99, help="Generational Sharpe Decay Rate")
     args = parser.parse_args()
