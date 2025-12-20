@@ -606,9 +606,9 @@ class FeatureEngine:
             
         self.bars = merged
 
-    def add_monster_features(self, windows=[50, 100]):
+    def add_advanced_physics_features(self, windows=[50, 100]):
         if not hasattr(self, 'bars'): return
-        print("Calculating MONSTER Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
+        print("Calculating Advanced Physics Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
         df = self.bars
         
         # Yang-Zhang Volatility (Best Open-Close Estimator)
@@ -700,7 +700,7 @@ if __name__ == "__main__":
             
         engine.add_physics_features()
         engine.add_microstructure_features()
-        engine.add_monster_features()
+        engine.add_advanced_physics_features()
         engine.add_delta_features()
         
         # Filter using the JSON config we just generated

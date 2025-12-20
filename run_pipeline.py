@@ -2,14 +2,20 @@ import subprocess
 import sys
 import os
 import time
+import shlex
+import config
 
-def run_step(script_path, description):
+def run_step(script_command, description):
     print(f"\n{'='*60}")
     print(f"🚀 STEP: {description}")
-    print(f"📄 Script: {script_path}")
+    print(f"📄 Command: {script_command}")
     print(f"{ '='*60}\n")
     
     start = time.time()
+    
+    # Split command into script and args
+    args = shlex.split(script_command)
+    script_path = args[0]
     
     # Check if script exists
     if not os.path.exists(script_path):
@@ -18,7 +24,9 @@ def run_step(script_path, description):
         
     try:
         # Run script and stream output
-        result = subprocess.run([sys.executable, script_path], check=True)
+        # Prefix with python executable
+        full_command = [sys.executable] + args
+        result = subprocess.run(full_command, check=True)
         duration = time.time() - start
         print(f"\n✅ {description} Completed in {duration:.2f}s")
         
@@ -44,7 +52,10 @@ def main():
     run_step("verification/top5_audit/visualize_top5_signals.py", "Top 5 Visualization")
     
     # 4. Strategy Evolution (The Brain)
-    run_step("evolutionary_loop.py", "Evolutionary Strategy Discovery")
+    for horizon in config.PREDICTION_HORIZONS:
+        survivors_file = os.path.join("data", f"survivors_{horizon}.json")
+        run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon}", 
+                 f"Evolutionary Strategy Discovery (Horizon: {horizon})")
     
     # 5. Analysis & Visualization
     run_step("visualize_strategy_performance.py", "Strategy Performance Visualization (OOS)")

@@ -79,7 +79,8 @@ class GenomeFactory:
         
         # Categorize Features for Gated Logic
         self.regime_keywords = ['hurst', 'volatility', 'efficiency', 'entropy', 'skew', 'trend_strength', 
-                               'yang_zhang', 'lambda', 'force', 'fdi']
+                               'yang_zhang', 'lambda', 'force', 'fdi',
+                               'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol']
         self.regime_pool = [f for f in self.features if any(k in f for k in self.regime_keywords)]
         self.trigger_pool = [f for f in self.features if f not in self.regime_pool]
         

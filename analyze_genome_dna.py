@@ -51,20 +51,5 @@ def analyze_dna():
     print("\n--- Top 20 Dominant Features ---")
     print(features_df.sort_values('count', ascending=False).head(20))
 
-    # Monster Feature Check
-    monsters = ['yang_zhang', 'lambda', 'force', 'fdi']
-    print("\n--- Monster Feature Penetration ---")
-    found_any = False
-    for m in monsters:
-        # Check for partial matches (windows/deltas)
-        matches = {k: v for k, v in feature_counts.items() if m in k}
-        if matches:
-            found_any = True
-            for k, v in matches.items():
-                print(f"  👹 {k}: {v} occurrences")
-    
-    if not found_any:
-        print("  No Monster features have yet evolved into the elite population.")
-
 if __name__ == "__main__":
     analyze_dna()

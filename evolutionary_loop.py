@@ -43,7 +43,7 @@ class EvolutionaryAlphaFactory:
         
         return child
 
-    def evolve(self):
+    def evolve(self, horizon=60):
         # Reproducibility
         random.seed(42)
         np.random.seed(42)
@@ -139,8 +139,10 @@ class EvolutionaryAlphaFactory:
             output = []
             for i, s in enumerate(unique_hof):
                 output.append({'name': s.name, 'logic': str(s), 'test_sharpe': test_res.iloc[i]['sharpe']})
-            with open("data/apex_strategies.json", "w") as f: json.dump(output, f, indent=4)
-            print(f"\n💾 Saved {len(output)} Apex Strategies to data/apex_strategies.json")
+            
+            out_path = f"data/apex_strategies_{horizon}.json"
+            with open(out_path, "w") as f: json.dump(output, f, indent=4)
+            print(f"\n💾 Saved {len(output)} Apex Strategies to {out_path}")
         else:
             print("No strategies survived validation.")
             
@@ -169,17 +171,36 @@ class EvolutionaryAlphaFactory:
             json.dump(dna_dump, f, indent=4)
         print(f"💾 Saved Top 100 Population Genomes to data/final_population.json")
 
+import argparse
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
+    parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
+    args = parser.parse_args()
+
     engine = FeatureEngine(config.DIRS['DATA_RAW_TICKS'])
-    survivors_file = os.path.join(config.DIRS['DATA_DIR'], "survivors_60.json")
+    survivors_file = args.survivors
+    
+    print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
+    print(f"📂 Using Survivors: {survivors_file}")
+
     df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
     engine.create_volume_bars(df, volume_threshold=250)
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
+    
+    # --- CRYPTO & GDELT INTEGRATION ---
+    engine.add_crypto_features("CLEAN_IBIT.parquet")
+    
+    gdelt_df = engine.load_gdelt_data()
+    if gdelt_df is not None:
+        engine.add_gdelt_features(gdelt_df)
+
     engine.add_physics_features()
     engine.add_microstructure_features()
-    engine.add_monster_features()
+    engine.add_advanced_physics_features()
     engine.add_delta_features(lookback=10)
     engine.add_delta_features(lookback=50)
     
     factory = EvolutionaryAlphaFactory(engine.bars, survivors_file)
-    factory.evolve()
+    factory.evolve(horizon=args.horizon)
