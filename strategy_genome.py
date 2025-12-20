@@ -486,7 +486,11 @@ class GenomeFactory:
         # 20% Chance of Relational Gene (Context)
         elif rand_val < 0.40:
             feature_left = random.choice(pool)
-            feature_right = random.choice(pool) 
+            feature_right = random.choice(pool)
+            # Prevent self-comparison
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+                
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
             
@@ -503,7 +507,8 @@ class GenomeFactory:
         elif rand_val < 1.00:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-3.0, -2.0, -1.5, 1.5, 2.0, 3.0])
+            # Added lower thresholds (-1.0, 1.0) to encourage more activity
+            threshold = random.choice([-3.0, -2.0, -1.5, -1.0, 1.0, 1.5, 2.0, 3.0])
             window = random.choice(VALID_ZSCORE_WINDOWS) # Strict Grid
             return ZScoreGene(feature, operator, threshold, window)
         
