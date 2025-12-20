@@ -249,6 +249,9 @@ class EvolutionaryAlphaFactory:
             # Sort by TEST Sortino (Real Performance)
             output.sort(key=lambda x: x['test_sortino'], reverse=True)
             
+            # Limit to Top 100 as requested
+            output = output[:100]
+            
             # Print Top 5
             print("\nTop 5 OOS Performers:")
             for s in output[:5]:
@@ -256,7 +259,7 @@ class EvolutionaryAlphaFactory:
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
-            print(f"\n💾 Saved {len(output)} Profitable Strategies from All Generations to {out_path}")
+            print(f"\n💾 Saved Top {len(output)} Profitable Strategies from All Generations to {out_path}")
         else:
             print("No strategies survived robustness filter.")
 

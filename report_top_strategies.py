@@ -201,13 +201,39 @@ def main():
             # Sort by Robust Return (Min of 3)
             df = df.sort_values(by='Robust%', ascending=False)
             
-            # Formatting
+            # Prune to Top 10 as requested
+            top_10_df = df.head(10).copy()
+            
+            # Formatting for Display
+            display_df = top_10_df.copy()
             for col in ['Ret%(Val)', 'Ret%(Test)', 'Ret%(Full)', 'Robust%', 'Sortino(OOS)']:
-                df[col] = df[col].apply(lambda x: f"{x:.2f}")
+                display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
                 
-            print(df.head(15).to_string(index=False))
-            if len(df) > 15:
-                print(f"... and {len(df)-15} more strategies.")
+            print(display_df.to_string(index=False))
+            
+            # Save Top 10 to JSON
+            top_10_names = set(top_10_df['Name'].values)
+            top_10_strategies = []
+            for res in all_horizon_results:
+                if res['Strategy'].name in top_10_names:
+                    s_dict = res['Strategy'].to_dict()
+                    # Add computed metrics for reference
+                    s_dict['metrics'] = {
+                        'robust_return': res['Robust_Ret'],
+                        'val_return': res['Ret_Val'],
+                        'test_return': res['Ret_Test'],
+                        'full_return': res['Ret_Full'],
+                        'sortino_oos': res['Sortino_OOS']
+                    }
+                    top_10_strategies.append(s_dict)
+            
+            # Sort JSON list to match the DataFrame order
+            top_10_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
+            
+            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top10.json")
+            with open(out_path, "w") as f:
+                json.dump(top_10_strategies, f, indent=4)
+            print(f"  💾 Pruned to Top 10. Saved to: {out_path}")
                 
         except Exception as e:
             print(f"  Error processing horizon {h}: {e}")
