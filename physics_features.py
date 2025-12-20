@@ -117,12 +117,13 @@ def calc_yang_zhang_volatility(df, window=30):
     
     # 1. Overnight Volatility (Close to Open)
     # o = log(O_t / C_{t-1})
-    log_ho = np.log(df['high'] / df['open'])
-    log_lo = np.log(df['low'] / df['open'])
-    log_co = np.log(df['close'] / df['open'])
+    # Protect against div by zero or log(0)
+    log_ho = np.log(np.maximum(df['high'], 1e-9) / np.maximum(df['open'], 1e-9))
+    log_lo = np.log(np.maximum(df['low'], 1e-9) / np.maximum(df['open'], 1e-9))
+    log_co = np.log(np.maximum(df['close'], 1e-9) / np.maximum(df['open'], 1e-9))
     
     # We need Close_{t-1}.
-    log_oc = np.log(df['open'] / df['close'].shift(1))
+    log_oc = np.log(np.maximum(df['open'], 1e-9) / np.maximum(df['close'].shift(1), 1e-9))
     
     # Rogers-Satchell Volatility
     rs_var = (log_ho * (log_ho - log_co)) + (log_lo * (log_lo - log_co))
