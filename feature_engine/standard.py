@@ -32,12 +32,12 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400]):
         # 3. Skewness (Tail Asymmetry) - 3rd Moment
         df[f'skew_{w}'] = df['log_ret'].rolling(w).skew()
         
-        # 4. Price Z-Score (Mean Reversion / Deviation)
+        # 4. Price Z-Score (Mean Reversion / Deviation) - REDUNDANT with Velocity
         # Distance from moving average, normalized by GK volatility
-        ma = df['close'].rolling(w).mean()
+        # ma = df['close'].rolling(w).mean()
         # GK Volatility is percentage-based (e.g. 0.001 for 0.1%). 
         # To normalize a price difference ($), we need price * vol ($).
-        df[f'price_zscore_{w}'] = (df['close'] - ma) / (df[f'volatility_{w}'] * df['close']).replace(0, 1) 
+        # df[f'price_zscore_{w}'] = (df['close'] - ma) / (df[f'volatility_{w}'] * df['close']).replace(0, 1) 
         
         vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
         df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm

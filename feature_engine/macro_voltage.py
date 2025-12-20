@@ -111,9 +111,9 @@ def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
         # If correlation breaks, it's a signal.
         merged[f'voltage_corr_{w}'] = merged['log_ret'].rolling(w).corr(merged['voltage_diff'].diff())
         
-        # Z-Score of Voltage (Regime)
-        vol_mean = merged['voltage_diff'].rolling(w * 10).mean() # Long baseline
-        vol_std = merged['voltage_diff'].rolling(w * 10).std()
-        merged[f'voltage_zscore_{w}'] = (merged['voltage_diff'] - vol_mean) / vol_std.replace(0, 1)
+        # Z-Score of Voltage (Regime) - REDUNDANT with Voltage Diff (Stationary-ish)
+        # vol_mean = merged['voltage_diff'].rolling(w * 10).mean() # Long baseline
+        # vol_std = merged['voltage_diff'].rolling(w * 10).std()
+        # merged[f'voltage_zscore_{w}'] = (merged['voltage_diff'] - vol_mean) / vol_std.replace(0, 1)
 
     return merged

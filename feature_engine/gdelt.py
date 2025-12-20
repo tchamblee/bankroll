@@ -38,9 +38,9 @@ def add_gdelt_features(df, gdelt_df):
     # Fill NaNs (e.g. weekends or missing days) with 0 or forward fill?
     # Forward fill is better for sentiment persistence
     cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 
-                    'global_tone', 'global_polarity', 'conflict_intensity', 
-                    'epu_total', 'epu_usd', 'epu_eur', 'epu_diff',
-                    'inflation_vol', 'central_bank_tone', 'energy_crisis_eur', 'news_vol_zscore']
+                    'news_vol_zscore', 'global_polarity', 
+                    'epu_total', 'epu_usd', 'epu_eur',
+                    'central_bank_tone', 'energy_crisis_eur']
     
     # Only fill columns that exist (in case we run old logic)
     existing_cols = [c for c in cols_to_fill if c in merged.columns]
@@ -61,7 +61,8 @@ def add_gdelt_features(df, gdelt_df):
     # 4. Regime/Panic Features
     # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
     
-    # Drop temp date column
-    merged.drop(columns=['date'], inplace=True)
+    # Drop temp date column and Redundant Features
+    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 'news_vol_usd', 'epu_usd', 'news_vol_eur']
+    merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     
     return merged
