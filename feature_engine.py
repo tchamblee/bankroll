@@ -194,6 +194,146 @@ class FeatureEngine:
         # Fill NaNs (early window)
         self.bars[f'residual{suffix}'] = self.bars[f'residual{suffix}'].fillna(0)
 
+    def load_gdelt_data(self, pattern="GDELT_GKG_*.parquet"):
+        """
+        Loads GDELT GKG data and aggregates it to Daily resolution.
+        Extracts Sentiment (Tone) and Attention (Volume) for EUR vs USD.
+        """
+        search_dir = os.path.join(os.path.dirname(self.data_dir), "gdelt")
+        if not os.path.exists(search_dir):
+            # Try raw dir
+            search_dir = os.path.join(self.data_dir, "gdelt")
+            
+        files = glob.glob(os.path.join(search_dir, pattern))
+        if not files:
+            print(f"No GDELT files found in {search_dir}")
+            return None
+            
+        print(f"Loading {len(files)} GDELT files...")
+        dfs = []
+        for f in files:
+            try:
+                # Read only necessary columns
+                dfs.append(pd.read_parquet(f, columns=['date_str', 'tone_raw', 'LOCATIONS', 'THEMES']))
+            except Exception as e:
+                print(f"Error reading {f}: {e}")
+                
+        if not dfs: return None
+        
+        raw_df = pd.concat(dfs, ignore_index=True)
+        
+        # Parse Date
+        # Assuming date_str is YYYYMMDD
+        raw_df['date'] = pd.to_datetime(raw_df['date_str'], format='%Y%m%d', errors='coerce').dt.tz_localize('UTC')
+        raw_df = raw_df.dropna(subset=['date'])
+        
+        # Parse Tone (First value in comma-separated string)
+        # Fast vector string op
+        raw_df['tone'] = raw_df['tone_raw'].astype(str).str.split(',', expand=True)[0].astype(float)
+        
+        # Define Keywords
+        eur_locs = ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro']
+        usd_locs = ['United States', 'US', 'Washington', 'New York', 'America', 'Fed']
+        
+        # Simple string matching (Case insensitive)
+        # We'll use a simplified approach for speed
+        raw_df['loc_str'] = raw_df['LOCATIONS'].fillna("").astype(str).str.upper()
+        
+        # Create boolean masks
+        # Using regex for OR condition is faster than looping
+        eur_mask = raw_df['loc_str'].str.contains('|'.join([x.upper() for x in eur_locs]))
+        usd_mask = raw_df['loc_str'].str.contains('|'.join([x.upper() for x in usd_locs]))
+        
+        # Aggregation by Date
+        agg_data = []
+        
+        for date, group in raw_df.groupby('date'):
+            # EUR Stats
+            eur_group = group[eur_mask[group.index]]
+            eur_vol = len(eur_group)
+            eur_tone = eur_group['tone'].mean() if eur_vol > 0 else 0
+            
+            # USD Stats
+            usd_group = group[usd_mask[group.index]]
+            usd_vol = len(usd_group)
+            usd_tone = usd_group['tone'].mean() if usd_vol > 0 else 0
+            
+            # Global Instability (Theme 'CRISIS')
+            crisis_vol = group['THEMES'].fillna("").str.contains('CRISIS|EPU|UNREST').sum()
+            
+            agg_data.append({
+                'date': date,
+                'news_vol_eur': eur_vol,
+                'news_tone_eur': eur_tone,
+                'news_vol_usd': usd_vol,
+                'news_tone_usd': usd_tone,
+                'news_crisis_vol': crisis_vol
+            })
+            
+        gdelt_daily = pd.DataFrame(agg_data).sort_values('date').set_index('date')
+        print(f"Processed GDELT data: {len(gdelt_daily)} days.")
+        return gdelt_daily
+
+    def add_gdelt_features(self, gdelt_df):
+        """
+        Merges Daily GDELT features into Intraday Bars.
+        CRITICAL: Uses LAG 1 (Yesterday's News) to avoid Lookahead Bias.
+        """
+        if not hasattr(self, 'bars') or gdelt_df is None: return
+        print("Merging GDELT Features (Lag 1 Day)...")
+        
+        df = self.bars.copy()
+        
+        # Extract Date from Bar Start Time
+        df['date'] = df['time_start'].dt.normalize()
+        
+        # Shift GDELT by 1 Day to represent "Yesterday"
+        # Since gdelt_df is indexed by date, we can shift the index or the data.
+        # Ideally, for date T, we want GDELT from T-1.
+        # So we shift GDELT index forward by 1 day? 
+        # No, if we want T's features to be T-1's data, we merge T with T-1.
+        # Easier: Shift GDELT dataframe forward by 1 day.
+        
+        gdelt_shifted = gdelt_df.shift(1) # Row 1 becomes Row 2. Date index stays? No, shift moves data.
+        # shift(1) on a DF moves values down.
+        # 2025-12-01: Data_A
+        # 2025-12-02: Data_B
+        # after shift(1):
+        # 2025-12-01: NaN
+        # 2025-12-02: Data_A
+        # This is exactly what we want. On Dec 2nd, we see Dec 1st data.
+        
+        # Merge
+        # We reset index to make 'date' a column
+        gdelt_shifted = gdelt_shifted.reset_index()
+        
+        merged = pd.merge(df, gdelt_shifted, on='date', how='left')
+        
+        # Fill NaNs (e.g. weekends or missing days) with 0 or forward fill?
+        # Forward fill is better for sentiment persistence
+        cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 'news_crisis_vol']
+        merged[cols_to_fill] = merged[cols_to_fill].fillna(method='ffill').fillna(0)
+        
+        # Derived Physics Features
+        # 1. Sentiment Divergence (Force Differential)
+        merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
+        
+        # 2. Attention Divergence (Mass Differential)
+        merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
+        
+        # 3. News Velocity (Rate of Change of Attention)
+        # This is essentially Delta of Volume
+        merged['news_velocity_eur'] = merged['news_vol_eur'].diff().fillna(0)
+        merged['news_velocity_usd'] = merged['news_vol_usd'].diff().fillna(0)
+        
+        # 4. Crisis Regime
+        merged['news_instability'] = merged['news_crisis_vol']
+        
+        # Drop temp date column
+        merged.drop(columns=['date'], inplace=True)
+        
+        self.bars = merged
+
     def add_features_to_bars(self, windows=[50, 100, 200, 400]):
         if not hasattr(self, 'bars'): return
         df = self.bars
@@ -413,6 +553,12 @@ if __name__ == "__main__":
             engine.add_correlator_residual(tnx_df, suffix="_tnx")
         
         engine.add_features_to_bars()
+        
+        # GDELT Integration
+        gdelt_df = engine.load_gdelt_data()
+        if gdelt_df is not None:
+            engine.add_gdelt_features(gdelt_df)
+            
         engine.add_physics_features()
         engine.add_microstructure_features()
         engine.add_monster_features()

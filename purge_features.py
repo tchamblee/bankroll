@@ -205,6 +205,12 @@ if __name__ == "__main__":
             engine.add_correlator_residual(corr_df, suffix=suffix)
             
     engine.add_features_to_bars(windows=[50, 100, 200, 400]) 
+    
+    # --- GDELT INTEGRATION ---
+    gdelt_df = engine.load_gdelt_data()
+    if gdelt_df is not None:
+        engine.add_gdelt_features(gdelt_df)
+        
     engine.add_physics_features()
     engine.add_microstructure_features()
     engine.add_monster_features()
