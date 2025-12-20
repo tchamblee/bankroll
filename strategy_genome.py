@@ -19,17 +19,24 @@ class StaticGene:
         self.threshold = threshold
         self.type = 'static'
 
-    def evaluate(self, context: dict) -> np.array:
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        # Cache Key
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold)
+            if key in cache: return cache[key]
+
         # Context is a dict of numpy arrays
         if self.feature not in context:
             # Fallback for safety, though precalc should handle this
-            return np.zeros(context['__len__'], dtype=bool) if '__len__' in context else np.array([])
+            res = np.zeros(context['__len__'], dtype=bool) if '__len__' in context else np.array([])
+        else:
+            data = context[self.feature]
+            if self.operator == '>': res = data > self.threshold
+            elif self.operator == '<': res = data < self.threshold
+            else: res = np.zeros(len(data), dtype=bool)
             
-        data = context[self.feature]
-        
-        if self.operator == '>': return data > self.threshold
-        elif self.operator == '<': return data < self.threshold
-        else: return np.zeros(len(data), dtype=bool)
+        if cache is not None: cache[key] = res
+        return res
 
     def mutate(self, features_pool):
         # 1. Mutate Threshold
@@ -66,16 +73,23 @@ class RelationalGene:
         self.feature_right = feature_right
         self.type = 'relational'
 
-    def evaluate(self, context: dict) -> np.array:
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature_left, self.operator, self.feature_right)
+            if key in cache: return cache[key]
+
         if self.feature_left not in context or self.feature_right not in context:
-            return np.zeros(context.get('__len__', 0), dtype=bool)
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            left_data = context[self.feature_left]
+            right_data = context[self.feature_right]
             
-        left_data = context[self.feature_left]
-        right_data = context[self.feature_right]
-        
-        if self.operator == '>': return left_data > right_data
-        elif self.operator == '<': return left_data < right_data
-        else: return np.zeros(len(left_data), dtype=bool)
+            if self.operator == '>': res = left_data > right_data
+            elif self.operator == '<': res = left_data < right_data
+            else: res = np.zeros(len(left_data), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
 
     def mutate(self, features_pool):
         # 1. Mutate Operator
@@ -115,17 +129,23 @@ class DeltaGene:
             self.lookback = lookback
         self.type = 'delta'
 
-    def evaluate(self, context: dict) -> np.array:
-        key = f"delta_{self.feature}_{self.lookback}"
-        if key not in context:
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.lookback)
+            if key in cache: return cache[key]
+
+        ctx_key = f"delta_{self.feature}_{self.lookback}"
+        if ctx_key not in context:
             # Fallback if precalc missed it (shouldn't happen if engine is sync'd)
-            return np.zeros(context.get('__len__', 0), dtype=bool)
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.threshold
+            elif self.operator == '<': res = data < self.threshold
+            else: res = np.zeros(len(data), dtype=bool)
         
-        data = context[key]
-        
-        if self.operator == '>': return data > self.threshold
-        elif self.operator == '<': return data < self.threshold
-        else: return np.zeros(len(data), dtype=bool)
+        if cache is not None: cache[key] = res
+        return res
 
     def mutate(self, features_pool):
         # 1. Mutate Lookback
@@ -173,16 +193,22 @@ class ZScoreGene:
             
         self.type = 'zscore'
 
-    def evaluate(self, context: dict) -> np.array:
-        key = f"zscore_{self.feature}_{self.window}"
-        if key not in context:
-            return np.zeros(context.get('__len__', 0), dtype=bool)
-        
-        z_score = context[key]
-        
-        if self.operator == '>': return z_score > self.threshold
-        elif self.operator == '<': return z_score < self.threshold
-        else: return np.zeros(len(z_score), dtype=bool)
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.window)
+            if key in cache: return cache[key]
+
+        ctx_key = f"zscore_{self.feature}_{self.window}"
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            z_score = context[ctx_key]
+            if self.operator == '>': res = z_score > self.threshold
+            elif self.operator == '<': res = z_score < self.threshold
+            else: res = np.zeros(len(z_score), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
 
     def mutate(self, features_pool):
         # 1. Mutate Window
@@ -211,32 +237,57 @@ class Strategy:
     """
     Represents a Bidirectional Trading Strategy.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
+        self.min_concordance = min_concordance # None = ALL (AND), 1 = OR, etc.
         self.fitness = 0.0
         
-    def generate_signal(self, context: dict) -> np.array:
+    def generate_signal(self, context: dict, cache: dict = None) -> np.array:
+        # Fix: len(context) returns key count for dict, but we want data rows.
+        # BacktestEngine inserts '__len__' into the context.
         n_rows = context.get('__len__', 0)
         
-        # Long Signal (AND logic)
-        l_mask = np.ones(n_rows, dtype=bool) if self.long_genes else np.zeros(n_rows, dtype=bool)
-        for gene in self.long_genes:
-            l_mask &= gene.evaluate(context)
+        # Fallback for safety (e.g. if context is raw dict without metadata)
+        if n_rows == 0 and len(context) > 0:
+            # Try to get length from first array value
+            for val in context.values():
+                 if hasattr(val, 'shape'):
+                     n_rows = val.shape[0]
+                     break
+        
+        # Helper for Voting/AND Logic
+        def evaluate_leg(genes, threshold):
+            if not genes: return np.zeros(n_rows, dtype=bool)
             
-        # Short Signal (AND logic)
-        s_mask = np.ones(n_rows, dtype=bool) if self.short_genes else np.zeros(n_rows, dtype=bool)
-        for gene in self.short_genes:
-            s_mask &= gene.evaluate(context)
+            # Optimization: If strict AND (threshold is None or len(genes)), use fast bitwise
+            eff_threshold = threshold if threshold is not None else len(genes)
+            
+            if eff_threshold == len(genes):
+                # Strict AND
+                mask = np.ones(n_rows, dtype=bool)
+                for gene in genes:
+                    mask &= gene.evaluate(context, cache)
+                return mask
+            else:
+                # Voting Logic
+                votes = np.zeros(n_rows, dtype=int)
+                for gene in genes:
+                    votes += gene.evaluate(context, cache).astype(int)
+                return votes >= eff_threshold
+
+        l_mask = evaluate_leg(self.long_genes, self.min_concordance)
+        s_mask = evaluate_leg(self.short_genes, self.min_concordance)
             
         # Final: +1, -1, or 0 (Short priority or cancellation if both True)
         return l_mask.astype(int) - s_mask.astype(int)
 
     def __repr__(self):
-        l_str = " AND ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
-        s_str = " AND ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str})"
+        logic_str = "AND" if self.min_concordance is None else f"VOTE({self.min_concordance})"
+        l_str = f" {logic_str} ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
+        s_str = f" {logic_str} ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
+        return f"[{self.name}][{logic_str}] LONG:({l_str}) | SHORT:({s_str})"
 
 class GenomeFactory:
     def __init__(self, survivors_file):

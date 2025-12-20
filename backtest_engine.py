@@ -7,27 +7,31 @@ class BacktestEngine:
     High-Performance Vectorized Backtester.
     Capable of evaluating thousands of strategies simultaneously via Matrix operations.
     """
-    def __init__(self, data: pd.DataFrame, cost_bps=0.5, target_col='log_ret'):
+    def __init__(self, data: pd.DataFrame, cost_bps=0.5, target_col='log_ret', annualization_factor=1.0):
         self.raw_data = data
         self.cost_pct = cost_bps / 10000.0
         self.target_col = target_col
+        self.annualization_factor = annualization_factor
         self.context = {}
         
         # Pre-calculate log returns for the vectorizer if standard mode
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
             self.raw_data['log_ret'] = np.log(self.raw_data['close'] / self.raw_data['close'].shift(1))
             
-        # Clean Nans
-        # Note: If using custom labels (Triple Barrier), they might have NaNs at the end. 
-        # We fill them with 0 to preserve shape.
+        # Clean Data
+        # Audit Fix: Drop NaNs instead of filling with 0 to prevent training on artifacts.
         if target_col in self.raw_data.columns:
-            self.raw_data[target_col] = self.raw_data[target_col].fillna(0)
+            original_len = len(self.raw_data)
+            self.raw_data = self.raw_data.dropna(subset=[target_col])
+            # Check if we dropped too much
+            if len(self.raw_data) < original_len * 0.9:
+                print(f"⚠️ Warning: Dropped {original_len - len(self.raw_data)} rows due to NaNs in {target_col}")
             
-        self.raw_data = self.raw_data.dropna().reset_index(drop=True)
+        self.raw_data = self.raw_data.reset_index(drop=True)
         
         # Prepare Data Matrices (Numpy is faster than Pandas for Dot Products)
-        self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1)
-        self.close_vec = self.raw_data['close'].values
+        self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1).astype(np.float32)
+        self.close_vec = self.raw_data['close'].values.astype(np.float32)
         
         # Split Indices (60% Train, 20% Val, 20% Test)
         n = len(self.raw_data)
@@ -44,78 +48,69 @@ class BacktestEngine:
         """
         Generates a dictionary of Numpy arrays for all raw and potential derived features.
         This enables O(1) feature lookup inside the tight strategy loop.
+        Optimization: Uses float32 to reduce memory footprint.
         """
-        print("⚡ Pre-computing Derived Features (Deltas/ZScores)...")
+        print("⚡ Pre-computing Derived Features (Deltas/ZScores) [float32]...")
         # 1. Base Features
         # Filter for numeric columns only to avoid errors
         numeric_cols = self.raw_data.select_dtypes(include=[np.number]).columns
         
         # Store base arrays
         for col in numeric_cols:
-            self.context[col] = self.raw_data[col].values
+            self.context[col] = self.raw_data[col].values.astype(np.float32)
             
         self.context['__len__'] = len(self.raw_data)
         
         # 2. Derived Features
         # We pre-calculate ALL valid mutations so Genes can just look them up.
-        # This is memory intensive but massive speedup for CPU.
-        
-        # Optimization: Only compute for relevant features? 
-        # For now, compute all numeric to support full mutation space.
         
         # A. Deltas
         for w in VALID_DELTA_LOOKBACKS:
-            # Vectorized diff for all columns at once? No, easy enough to loop.
             for col in numeric_cols:
                 key = f"delta_{col}_{w}"
-                # Numpy diff is slightly different, use pandas for consistency then values
-                # or just straightforward numpy slicing
                 arr = self.context[col]
                 # Diff: arr[i] - arr[i-w]
-                # Pad with zeros
                 diff = np.zeros_like(arr)
                 diff[w:] = arr[w:] - arr[:-w]
-                self.context[key] = diff
+                self.context[key] = diff # Already float32 from base
                 
         # B. ZScores
         for w in VALID_ZSCORE_WINDOWS:
             # Need pandas rolling for efficiency/correctness of std
-            # We can do this in blocks if needed, but per-column is fine.
             print(f"   > Computing ZScores (w={w})...")
+            # We can't use the float32 array in pandas easily, so use raw_data
             for col in numeric_cols:
                 key = f"zscore_{col}_{w}"
-                series = self.raw_data[col] # Use pandas series for rolling
+                series = self.raw_data[col] 
                 
-                # Rolling Mean/Std
-                # Optimization: Rolling operations are slow. 
-                # If we have 500 cols * 5 windows = 2500 rolling ops.
-                # This might take 10-20 seconds at startup but saves hours in loop.
                 r_mean = series.rolling(w).mean()
                 r_std = series.rolling(w).std()
                 
                 z = (series - r_mean) / (r_std + 1e-9)
-                self.context[key] = z.fillna(0).values
+                self.context[key] = z.fillna(0).values.astype(np.float32)
         
         print(f"⚡ Context Ready. Total Feature Arrays: {len(self.context)}")
 
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         """
         Converts a population of Strategy objects into a Boolean Signal Matrix (Time x Strategies).
+        Optimized with Gene Caching.
         """
-        # We need to evaluate each strategy. 
-        # Ideally, this is the slowest part. 
-        # Future Optimization: Compile genes to numba or eval string.
-        # For now, standard python loop is fine for < 5000 strategies.
-        
         num_strats = len(population)
         num_bars = len(self.raw_data)
         
-        # Pre-allocate matrix (Bool)
-        signal_matrix = np.zeros((num_bars, num_strats), dtype=int)
+        # Pre-allocate matrix (int8 to save memory)
+        signal_matrix = np.zeros((num_bars, num_strats), dtype=np.int8)
+        
+        # Gene Cache (Memoization)
+        # Shared across all strategies in this generation.
+        # Key: (GeneType, Feature, Op, Threshold...)
+        # Value: Boolean Mask (np.array)
+        gene_cache = {}
         
         for i, strat in enumerate(population):
-            # Pass the pre-computed Context (Dict of Numpy Arrays)
-            signal_matrix[:, i] = strat.generate_signal(self.context)
+            # Pass the pre-computed Context AND the Cache
+            signal_matrix[:, i] = strat.generate_signal(self.context, cache=gene_cache)
             
         return signal_matrix
 
@@ -183,11 +178,9 @@ class BacktestEngine:
         stdev = np.std(net_returns, axis=0) + 1e-9
         
         # Sharpe (Simple: Mean / Std)
-        # Scaling factor: sqrt(bars_per_year). 
-        # If 2 mins/bar -> 720 bars/day -> 180,000 bars/year? 
-        # Let's stick to simple Sharpe per bar for relative fitness.
+        # Scaled by square root of annualization factor
         avg_ret = np.mean(net_returns, axis=0)
-        sharpe = avg_ret / stdev
+        sharpe = (avg_ret / stdev) * np.sqrt(self.annualization_factor)
         
         # Drawdown
         # peaks = np.maximum.accumulate(equity_curves, axis=0)

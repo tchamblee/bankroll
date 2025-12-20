@@ -21,7 +21,14 @@ class EvolutionaryAlphaFactory:
         
         self.factory = GenomeFactory(survivors_file)
         self.factory.set_stats(data)
-        self.backtester = BacktestEngine(data, cost_bps=0.2, target_col=target_col) # Lower costs for easier discovery
+        # Assuming ~2 min bars -> ~181,440 bars/year. 
+        # Standardizing cost to 0.5 bps.
+        self.backtester = BacktestEngine(
+            data, 
+            cost_bps=0.5, 
+            target_col=target_col,
+            annualization_factor=181440
+        )
         
         self.population = []
         self.hall_of_fame = []
@@ -43,6 +50,9 @@ class EvolutionaryAlphaFactory:
         s_regime = random.choice([p1.short_genes[0], p2.short_genes[0]]).copy()
         s_trigger = random.choice([p1.short_genes[1], p2.short_genes[1]]).copy()
         child.short_genes = [s_regime, s_trigger]
+        
+        # Inherit Logic Mode
+        child.min_concordance = random.choice([p1.min_concordance, p2.min_concordance])
         
         return child
 
@@ -83,8 +93,8 @@ class EvolutionaryAlphaFactory:
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 10: # Relaxed slightly for decay
-                print(f"🛑 Early Stopping Triggered: No improvement for 10 generations (Best: {global_best_sharpe:.4f})")
+            if generations_without_improvement >= 5: # Relaxed slightly for decay
+                print(f"🛑 Early Stopping Triggered: No improvement for 5 generations (Best: {global_best_sharpe:.4f})")
                 break
             
             # 3. Selection
@@ -128,6 +138,14 @@ class EvolutionaryAlphaFactory:
                     child.short_genes[0].mutate(self.factory.regime_pool)
                 if random.random() < mut_rate:
                     child.short_genes[1].mutate(self.factory.trigger_pool)
+                    
+                # Logic Mutation (New Feature)
+                if random.random() < 0.05:
+                    # Toggle between Strict (None) and OR (1)
+                    if child.min_concordance is None:
+                        child.min_concordance = 1
+                    else:
+                        child.min_concordance = None
                 
                 new_population.append(child)
                 
@@ -257,7 +275,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
     parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
-    parser.add_argument("--pop_size", type=int, default=20000, help="Population Size")
+    parser.add_argument("--pop_size", type=int, default=2000, help="Population Size")
     parser.add_argument("--gens", type=int, default=100, help="Number of Generations")
     parser.add_argument("--decay", type=float, default=0.99, help="Generational Sharpe Decay Rate")
     args = parser.parse_args()
@@ -279,8 +297,6 @@ if __name__ == "__main__":
     print(f"🎯 calculating Triple Barrier Labels (Horizon: {args.horizon})...")
     bars_df['target_return'] = triple_barrier_labels(bars_df, lookahead=args.horizon, pt_sl_multiple=2.0)
     
-    # Fill NaNs in target (usually at the end of the series) with 0 to prevent crashes
-    bars_df['target_return'] = bars_df['target_return'].fillna(0.0)
     # -----------------------------------------
 
     print(f"👥 Population: {args.pop_size} | 🧬 Generations: {args.gens} | 📉 Decay: {args.decay}")
