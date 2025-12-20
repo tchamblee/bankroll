@@ -76,6 +76,7 @@ if __name__ == "__main__":
         
     engine.add_features_to_bars(windows=[50, 100, 200, 400])
     engine.add_physics_features()
+    engine.add_monster_features()
     engine.add_delta_features(lookback=10)
     engine.add_delta_features(lookback=50)
     
