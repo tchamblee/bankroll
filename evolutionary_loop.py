@@ -10,10 +10,11 @@ from strategy_genome import GenomeFactory, Strategy, Gene
 from backtest_engine import BacktestEngine
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=10000, generations=100):
+    def __init__(self, data, survivors_file, population_size=10000, generations=100, decay_rate=0.99):
         self.data = data
         self.pop_size = population_size
         self.generations = generations
+        self.decay_rate = decay_rate # Penalty for later generations to prevent overfitting
         self.survivors_file = survivors_file
         
         self.factory = GenomeFactory(survivors_file)
@@ -62,18 +63,26 @@ class EvolutionaryAlphaFactory:
             # 2. Apply Trade Penalty
             results.loc[results['trades'] < 5, 'sharpe'] = -1.0
             
-            best_sharpe = results['sharpe'].max()
-            print(f"\n--- Generation {gen} | Best [Train] Sharpe: {best_sharpe:.4f} ---")
+            # Capture Raw Metrics
+            raw_best_sharpe = results['sharpe'].max()
             
-            # Early Stopping Check
+            # 2.5 Apply Generational Decay (Alpha Decay Simulation)
+            # Penalize later generations to force significant improvements
+            decay_factor = self.decay_rate ** gen
+            results['sharpe'] = results['sharpe'] * decay_factor
+            
+            best_sharpe = results['sharpe'].max()
+            print(f"\n--- Generation {gen} | Best [Train] Sharpe: {best_sharpe:.4f} (Raw: {raw_best_sharpe:.4f} | Decay: {decay_factor:.4f}) ---")
+            
+            # Early Stopping Check (using Decayed Sharpe to force robustness)
             if best_sharpe > global_best_sharpe:
                 global_best_sharpe = best_sharpe
                 generations_without_improvement = 0
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 5:
-                print(f"🛑 Early Stopping Triggered: No improvement for 5 generations (Best: {global_best_sharpe:.4f})")
+            if generations_without_improvement >= 10: # Relaxed slightly for decay
+                print(f"🛑 Early Stopping Triggered: No improvement for 10 generations (Best: {global_best_sharpe:.4f})")
                 break
             
             # 3. Selection
@@ -103,6 +112,7 @@ class EvolutionaryAlphaFactory:
                 child = self.crossover(p1, p2)
                 
                 # Structural Mutation
+                # Mutate aggressively if decaying best_sharpe is low
                 mut_rate = 0.25 if best_sharpe < 0.01 else 0.1
                 
                 # Long Genes
@@ -179,6 +189,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True, help="Path to survivors JSON file")
     parser.add_argument("--horizon", type=int, default=60, help="Target prediction horizon")
+    parser.add_argument("--pop_size", type=int, default=10000, help="Population Size")
+    parser.add_argument("--gens", type=int, default=100, help="Number of Generations")
+    parser.add_argument("--decay", type=float, default=0.99, help="Generational Sharpe Decay Rate")
     args = parser.parse_args()
 
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
@@ -191,6 +204,13 @@ if __name__ == "__main__":
     
     print(f"\n🚀 Starting Evolution for Horizon: {args.horizon}")
     print(f"📂 Using Survivors: {survivors_file}")
+    print(f"👥 Population: {args.pop_size} | 🧬 Generations: {args.gens} | 📉 Decay: {args.decay}")
     
-    factory = EvolutionaryAlphaFactory(bars_df, survivors_file)
+    factory = EvolutionaryAlphaFactory(
+        bars_df, 
+        survivors_file, 
+        population_size=args.pop_size, 
+        generations=args.gens,
+        decay_rate=args.decay
+    )
     factory.evolve(horizon=args.horizon)
