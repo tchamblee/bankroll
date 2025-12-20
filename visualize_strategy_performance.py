@@ -152,6 +152,52 @@ class MockEngine:
     def __init__(self, df):
         self.bars = df
 
+def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
+    print(f"\n🔍 Filtering Top {top_n} Strategies from {len(strategies)} candidates...")
+    print(f"   Batch Size: {chunk_size}")
+    
+    # Setup Backtester for Evaluation
+    backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
+    
+    all_results = []
+    
+    # Chunk Processing
+    total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
+    for i in range(0, len(strategies), chunk_size):
+        chunk = strategies[i:i+chunk_size]
+        print(f"   > Processing Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} strats)...")
+        
+        try:
+            # Evaluate on Test Set (OOS) for selection
+            # using 'test' set (last 20%) to pick best OOS performers
+            results_df = backtester.evaluate_population(chunk, set_type='test')
+            
+            # Store essential metrics
+            for idx, row in results_df.iterrows():
+                all_results.append({
+                    'strategy': chunk[idx],
+                    'sortino': row['sortino'],
+                    'sharpe': row['sharpe'],
+                    'total_return': row['total_return']
+                })
+        except Exception as e:
+            print(f"     ⚠️ Error in batch: {e}")
+        
+        # Cleanup Memory
+        backtester.reset_jit_context()
+        
+    # Sort and Select
+    print("   > Sorting and selecting top candidates...")
+    sorted_results = sorted(all_results, key=lambda x: x['sortino'], reverse=True)
+    top_performers = [x['strategy'] for x in sorted_results[:top_n]]
+    
+    print(f"✅ Selected {len(top_performers)} strategies.")
+    if len(top_performers) > 0:
+        best = sorted_results[0]
+        print(f"   Best Strat: {best['strategy'].name} (Sortino: {best['sortino']:.2f})")
+        
+    return top_performers
+
 if __name__ == "__main__":
     print(f"Loading Feature Matrix...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -164,13 +210,16 @@ if __name__ == "__main__":
     import glob
     apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
     all_strategies_data = []
+    print(f"Loading Strategies from {len(apex_files)} files...")
     for fpath in apex_files:
         try:
             with open(fpath, "r") as f:
-                all_strategies_data.extend(json.load(f))
+                data = json.load(f)
+                all_strategies_data.extend(data)
         except Exception as e:
             print(f"Error loading {fpath}: {e}")
             
+    print(f"Hydrating {len(all_strategies_data)} strategies...")
     strategies = []
     seen = set()
     for d in all_strategies_data:
@@ -182,5 +231,11 @@ if __name__ == "__main__":
     if not strategies:
         print("No strategies found.")
         sys.exit(0)
-            
-    plot_performance(engine, strategies)
+    
+    # Optimize: Filter Top N before Plotting
+    top_strategies = filter_top_strategies(engine, strategies, top_n=20)
+    
+    if top_strategies:
+        plot_performance(engine, top_strategies)
+    else:
+        print("No viable strategies found after filtering.")

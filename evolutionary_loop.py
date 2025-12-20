@@ -177,6 +177,10 @@ class EvolutionaryAlphaFactory:
             # We keep unique strategies that have > 0.1 Robust Score
             for elite in elites:
                 if elite.fitness > 0.1:
+                    # Tag with generation found
+                    if not hasattr(elite, 'generation_found'):
+                        elite.generation_found = gen
+                        
                     # Check for duplicates in HOF (simple name check or gene hash ideally)
                     self.hall_of_fame.append((elite, elite.fitness))
             
@@ -198,60 +202,61 @@ class EvolutionaryAlphaFactory:
             print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
         # 6. Final Selection
-        print("\n--- 🛡️ FINAL SELECTION (TEST PHASE) ---")
+        print(f"\n--- 🛡️ FINAL SELECTION (TEST PHASE: All Generations) ---")
         unique_hof = []
         seen = set()
-        # sort HOF by Robust Score
+        
+        # Sort HOF by Robust Score (Validation) initially
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
             s_str = str(s)
             if s_str not in seen:
                 unique_hof.append(s)
                 seen.add(s_str)
-            if len(unique_hof) >= 50: break
-
-        selected_indices = []
-        final_strategies = []
         
+        print(f"Testing {len(unique_hof)} unique robust strategies collected across all generations...")
+
         if unique_hof:
-            # We already know they are robust (min(train, val) > 0.1).
-            # Now we check correlation on Validation returns to diversify.
-            val_res, val_returns = self.backtester.evaluate_population(unique_hof, set_type='validation', return_series=True, prediction_mode=False)
-            
-            returns_df = pd.DataFrame(val_returns)
-            corr_matrix = returns_df.corr().abs()
-            
-            # Select top 5 uncorrelated
-            # They are already sorted by robustness from HOF extraction
-            for i in range(len(unique_hof)):
-                if len(selected_indices) >= 5: break
-                
-                if not selected_indices:
-                    selected_indices.append(i)
-                else:
-                    rho = corr_matrix.loc[i, selected_indices].max()
-                    if rho < 0.7: selected_indices.append(i)
-            
-            final_strategies = [unique_hof[i] for i in selected_indices]
-            
-            # 7. OOS Reporting (Test Phase)
+            # 7. OOS Reporting (Test Phase) on EVERYTHING
             print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
-            test_res, _ = self.backtester.evaluate_population(final_strategies, set_type='test', return_series=True, prediction_mode=False)
             
-            print("\nFinal Account Performance Stats (OOS):")
-            if not test_res.empty:
-                print(test_res[['id', 'sortino', 'total_return', 'trades']])
+            # Evaluate entire history on Test Set
+            test_res, _ = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False)
+            
+            # Filter for OOS Profitability
+            profitable_indices = test_res[test_res['sortino'] > 0.0].index.tolist()
             
             output = []
-            for i, idx in enumerate(selected_indices):
-                s = final_strategies[i]
+            
+            # If no profitable strategies, save top 5 by Sortino anyway for debugging
+            if not profitable_indices:
+                print("No profitable OOS strategies found. Saving top 10 losers for analysis.")
+                profitable_indices = test_res.sort_values('sortino', ascending=False).head(10).index.tolist()
+            
+            # Collect results
+            for i in profitable_indices:
+                s = unique_hof[i]
                 strat_data = s.to_dict()
-                strat_data['test_sortino'] = test_res.iloc[i]['sortino'] if not test_res.empty else 0.0
-                strat_data['robust_score'] = s.fitness
+                
+                # Add Metadata
+                strat_data['generation'] = getattr(s, 'generation_found', -1)
+                strat_data['test_sortino'] = float(test_res.iloc[i]['sortino'])
+                strat_data['test_return'] = float(test_res.iloc[i]['total_return'])
+                strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
+                strat_data['robust_score'] = float(s.fitness)
+                
                 output.append(strat_data)
+            
+            # Sort by TEST Sortino (Real Performance)
+            output.sort(key=lambda x: x['test_sortino'], reverse=True)
+            
+            # Print Top 5
+            print("\nTop 5 OOS Performers:")
+            for s in output[:5]:
+                print(f"  Gen {s['generation']:<2} | Sortino: {s['test_sortino']:.2f} | Ret: {s['test_return']*100:.2f}% | ID: {s['name']}")
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
-            print(f"\n💾 Saved {len(output)} Apex Strategies to {out_path}")
+            print(f"\n💾 Saved {len(output)} Profitable Strategies from All Generations to {out_path}")
         else:
             print("No strategies survived robustness filter.")
 

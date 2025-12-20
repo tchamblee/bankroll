@@ -96,7 +96,17 @@ class BacktestEngine:
 
         self.context['consecutive_up'] = get_streak(up_mask)
         self.context['consecutive_down'] = get_streak(~up_mask & (close < np.roll(close, 1)))
+        
+        # Track base keys to allow resetting JIT features
+        self.base_keys = set(self.context.keys())
         print(f"⚡ Base Context Ready. Total Arrays: {len(self.context)}")
+
+    def reset_jit_context(self):
+        """Removes any JIT-computed features to free memory."""
+        keys_to_remove = [k for k in self.context.keys() if k not in self.base_keys]
+        for k in keys_to_remove:
+            del self.context[k]
+        # print(f"🧹 JIT Context Cleared. Removed {len(keys_to_remove)} features.")
 
     def ensure_context(self, population: list[Strategy]):
         needed = set()

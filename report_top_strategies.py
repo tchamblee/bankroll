@@ -32,10 +32,96 @@ def get_gene_description(gene):
         return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
     return "Unknown"
 
+import json
+import os
+import re
+import sys
+import pandas as pd
+import numpy as np
+import config
+from collections import Counter
+from backtest_engine import BacktestEngine
+from strategy_genome import Strategy
+
+class MockEngine:
+    def __init__(self, df):
+        self.bars = df
+
+def get_gene_description(gene):
+    if gene.type == 'delta':
+        return f"Delta({gene.feature}, {gene.lookback})"
+    elif gene.type == 'zscore':
+        return f"Z({gene.feature}, {gene.window})"
+    elif gene.type == 'relational':
+        return f"Rel({gene.feature_left}, {gene.feature_right})"
+    elif gene.type == 'static':
+        return gene.feature
+    elif gene.type == 'consecutive':
+        return f"Consecutive({gene.direction})"
+    elif gene.type == 'time':
+        return f"Time({gene.mode})"
+    elif gene.type == 'cross':
+        return f"{gene.feature_left} CROSS {gene.direction.upper()} {gene.feature_right}"
+    elif gene.type == 'persistence':
+        return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
+    return "Unknown"
+
+def evaluate_batch(backtester, batch):
+    """Evaluates a batch on Val, Test, and Full sets, returning a list of result dicts."""
+    # 1. Validation Set (60-80%)
+    res_val = backtester.evaluate_population(batch, set_type='validation')
+    # 2. Test Set (80-100%)
+    res_test = backtester.evaluate_population(batch, set_type='test')
+    
+    # 3. Full Set (Custom manual calc for efficiency/custom range)
+    full_signals = backtester.generate_signal_matrix(batch)
+    prices = backtester.close_vec
+    rets = backtester.returns_vec
+    
+    sigs_shft = np.roll(full_signals, 1, axis=0); sigs_shft[0,:]=0
+    prcs_shft = np.roll(prices, 1, axis=0); prcs_shft[0]=prices[0]
+    
+    pos_notional = sigs_shft * backtester.standard_lot * prcs_shft
+    gross_pnl = pos_notional * rets
+    
+    lot_change = np.abs(np.diff(full_signals, axis=0, prepend=0))
+    costs = lot_change * backtester.standard_lot * prices * backtester.total_cost_pct
+    
+    full_net_returns = (gross_pnl - costs) / backtester.account_size
+    full_rets_pct = np.sum(full_net_returns, axis=0)
+    full_trades = np.sum(lot_change, axis=0)
+
+    results = []
+    for i, strat in enumerate(batch):
+        # Basic filtering: Must have traded
+        if full_trades[i] == 0: continue
+            
+        ret_val = res_val.iloc[i]['total_return']
+        ret_test = res_test.iloc[i]['total_return']
+        ret_full = full_rets_pct[i]
+        
+        # Robustness Metric: Min Return across all 3 periods
+        # This penalizes strategies that failed in any single period.
+        robust_ret = min(ret_val, ret_test, ret_full)
+        
+        results.append({
+            'Strategy': strat,
+            'Ret_Val': ret_val,
+            'Ret_Test': ret_test,
+            'Ret_Full': ret_full,
+            'Robust_Ret': robust_ret,
+            'Sortino_OOS': res_test.iloc[i]['sortino'],
+            'Trades': full_trades[i],
+            'Gen': getattr(strat, 'generation_found', '?')
+        })
+        
+    return results
+
 def main():
     print("\n" + "="*120)
-    print("🏆 APEX STRATEGY REPORT (REAL-MONEY TRADING MODE) 🏆")
+    print("🏆 APEX STRATEGY REPORT (ROBUSTNESS CHECK) 🏆")
     print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: 0.5 bps + Spread")
+    print("Sorting by 'Robust Return' = min(Val, Test, Full)")
     print("="*120 + "\n")
     
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -61,67 +147,71 @@ def main():
             for d in strategies_data:
                 try:
                     s = Strategy.from_dict(d)
+                    s.generation_found = d.get('generation', '?')
                     strategies.append(s)
-                except Exception as e:
-                    print(f"  Warning: Could not load strategy {d.get('name', 'Unknown')}: {e}")
+                except: pass
             
             if not strategies: continue
 
-            # Evaluate on Test Set
-            res_df = backtester.evaluate_population(strategies, set_type='test')
+            # Batch Processing
+            chunk_size = 1000
+            all_horizon_results = []
             
-            # Evaluate on Full History for context
-            full_signals = backtester.generate_signal_matrix(strategies)
-            prices = backtester.close_vec
-            rets = backtester.returns_vec
+            total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
+            print(f"  Evaluating {len(strategies)} strategies in {total_chunks} batches...")
             
-            sigs_shft = np.roll(full_signals, 1, axis=0); sigs_shft[0,:]=0
-            prcs_shft = np.roll(prices, 1, axis=0); prcs_shft[0]=prices[0]
-            
-            pos_notional = sigs_shft * backtester.standard_lot * prcs_shft
-            gross_pnl = pos_notional * rets
-            
-            lot_change = np.abs(np.diff(full_signals, axis=0, prepend=0))
-            costs = lot_change * backtester.standard_lot * prices * backtester.total_cost_pct
-            
-            full_net_returns = (gross_pnl - costs) / backtester.account_size
-            full_rets_pct = np.sum(full_net_returns, axis=0)
-
-            df_data = []
-            horizon_genes = []
-            for i, strat in enumerate(strategies):
-                row = res_df.iloc[i]
-                if row['trades'] == 0 and full_rets_pct[i] == 0: continue
+            for i in range(0, len(strategies), chunk_size):
+                batch = strategies[i:i+chunk_size]
+                batch_results = evaluate_batch(backtester, batch)
+                all_horizon_results.extend(batch_results)
+                backtester.reset_jit_context()
+                sys.stdout.write(f"\r    Batch {i//chunk_size + 1}/{total_chunks} done.")
+                sys.stdout.flush()
                 
+            print("\n")
+            
+            if not all_horizon_results:
+                print("  No active strategies found.")
+                continue
+
+            # Convert to DataFrame
+            df_rows = []
+            horizon_genes = []
+            
+            for res in all_horizon_results:
+                strat = res['Strategy']
                 strat_genes = [get_gene_description(g) for g in strat.long_genes + strat.short_genes]
                 horizon_genes.extend(strat_genes)
-                global_gene_counts.update(strat_genes)
                 
-                df_data.append({
+                df_rows.append({
+                    'Gen': res['Gen'],
                     'Name': strat.name,
-                    'Sortino(OOS)': row['sortino'],
-                    'Ret%(OOS)': row['total_return'] * 100,
-                    'Ret%(Full)': full_rets_pct[i] * 100,
-                    'Trades(OOS)': int(row['trades']),
-                    'Stability': row['stability'],
-                    'Status': 'PROFITABLE' if row['total_return'] > 0 else 'LOSS',
+                    'Ret%(Val)': res['Ret_Val'] * 100,
+                    'Ret%(Test)': res['Ret_Test'] * 100,
+                    'Ret%(Full)': res['Ret_Full'] * 100,
+                    'Robust%': res['Robust_Ret'] * 100,
+                    'Sortino(OOS)': res['Sortino_OOS'],
+                    'Trades': int(res['Trades']),
                     'Genes': ", ".join(strat_genes[:2]) + ("..." if len(strat_genes)>2 else "")
                 })
+                
+            global_gene_counts.update(horizon_genes)
             
-            if df_data:
-                df = pd.DataFrame(df_data).sort_values(by='Sortino(OOS)', ascending=False)
-                for col in ['Sortino(OOS)', 'Ret%(OOS)', 'Ret%(Full)', 'Stability']:
-                    df[col] = df[col].apply(lambda x: f"{x:.2f}")
-                print(df.to_string(index=False))
-            else:
-                print("  No active strategies found.")
+            df = pd.DataFrame(df_rows)
+            # Sort by Robust Return (Min of 3)
+            df = df.sort_values(by='Robust%', ascending=False)
             
-            print("-" * 120)
-            print(f"  Dominant Genes (H{h}): " + ", ".join([f"{g}:{c}" for g,c in Counter(horizon_genes).most_common(5)]))
-            
+            # Formatting
+            for col in ['Ret%(Val)', 'Ret%(Test)', 'Ret%(Full)', 'Robust%', 'Sortino(OOS)']:
+                df[col] = df[col].apply(lambda x: f"{x:.2f}")
+                
+            print(df.head(15).to_string(index=False))
+            if len(df) > 15:
+                print(f"... and {len(df)-15} more strategies.")
+                
         except Exception as e:
             print(f"  Error processing horizon {h}: {e}")
-            import traceback; traceback.print_exc()
+            # import traceback; traceback.print_exc()
 
     print("\n" + "="*120)
     print("🧬 GLOBAL DOMINANT GENES 🧬")
