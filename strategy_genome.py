@@ -23,7 +23,152 @@ def gene_from_dict(d):
         return TimeGene(d['mode'], d['operator'], d['value'])
     elif d['type'] == 'consecutive':
         return ConsecutiveGene(d['direction'], d['operator'], d['count'])
+    elif d['type'] == 'cross':
+        return CrossGene(d['feature_left'], d['direction'], d['feature_right'])
+    elif d['type'] == 'persistence':
+        return PersistenceGene(d['feature'], d['operator'], d['threshold'], d['window'])
     return None
+
+class CrossGene:
+    """
+    'Event' Gene.
+    Detects when Feature A crosses Feature B.
+    Direction: 'above', 'below'
+    """
+    def __init__(self, feature_left: str, direction: str, feature_right: str):
+        self.feature_left = feature_left
+        self.direction = direction
+        self.feature_right = feature_right
+        self.type = 'cross'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature_left, self.direction, self.feature_right)
+            if key in cache: return cache[key]
+
+        if self.feature_left not in context or self.feature_right not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            s1 = context[self.feature_left]
+            s2 = context[self.feature_right]
+            
+            # Current diff and Previous diff
+            diff = s1 - s2
+            prev_diff = np.roll(diff, 1)
+            prev_diff[0] = 0 # Prevent wrap-around noise
+            
+            if self.direction == 'above':
+                # Cross Above: Now > 0 AND Prev <= 0
+                res = (diff > 0) & (prev_diff <= 0)
+            elif self.direction == 'below':
+                # Cross Below: Now < 0 AND Prev >= 0
+                res = (diff < 0) & (prev_diff >= 0)
+            else:
+                res = np.zeros(len(s1), dtype=bool)
+                
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.direction = 'below' if self.direction == 'above' else 'above'
+        if random.random() < 0.3:
+            self.feature_left = random.choice(features_pool)
+        if random.random() < 0.3:
+            self.feature_right = random.choice(features_pool)
+
+    def copy(self):
+        return CrossGene(self.feature_left, self.direction, self.feature_right)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature_left': self.feature_left,
+            'direction': self.direction,
+            'feature_right': self.feature_right
+        }
+
+    def __repr__(self):
+        return f"{self.feature_left} CROSS {self.direction.upper()} {self.feature_right}"
+
+class PersistenceGene:
+    """
+    'Filter' Gene.
+    Checks if a condition has been True for N consecutive bars.
+    Format: (Feature > Threshold) for Window bars
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, window: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold
+        self.window = window
+        self.type = 'persistence'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.window)
+            if key in cache: return cache[key]
+
+        if self.feature not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[self.feature]
+            # 1. Generate Boolean Mask
+            if self.operator == '>': mask = data > self.threshold
+            elif self.operator == '<': mask = data < self.threshold
+            else: mask = np.zeros(len(data), dtype=bool)
+            
+            # 2. Check Persistence (Rolling Sum of Booleans == Window)
+            # Use pandas for easy rolling, or convolution for speed?
+            # Convolution is faster for pure numpy:
+            # If we convolve mask with a kernel of ones=[1,1,...], output >= window means true
+            
+            # Standard conv approach for moving sum
+            kernel = np.ones(self.window)
+            # mode='full' then slice, or manual padding. 
+            # Simple manual loop is slow. Let's use cumsum trick.
+            
+            # Cumsum trick: Sum[i] - Sum[i-w]. If diff == w, then all 1s.
+            mask_int = mask.astype(int)
+            csum = np.cumsum(mask_int)
+            csum = np.insert(csum, 0, 0) # Pad start
+            
+            # diff[i] = csum[i+1] - csum[i+1-w]
+            # We want res[i] corresponding to data[i]
+            # rolling sum at i includes i, i-1 ... i-w+1
+            
+            rolling_sum = np.zeros(len(data), dtype=int)
+            w = self.window
+            if len(data) >= w:
+                rolling_sum[w-1:] = csum[w:] - csum[:-w]
+                
+            res = rolling_sum == w
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.window = max(2, self.window + random.choice([-1, 1, 2]))
+        if random.random() < 0.3:
+            self.threshold += random.uniform(-0.5, 0.5)
+        if random.random() < 0.1:
+            self.feature = random.choice(features_pool)
+
+    def copy(self):
+        return PersistenceGene(self.feature, self.operator, self.threshold, self.window)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'window': self.window
+        }
+
+    def __repr__(self):
+        return f"({self.feature} {self.operator} {self.threshold:.2f}) FOR {self.window} BARS"
 
 class StaticGene:
     """
@@ -473,48 +618,56 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 0% Time Gene (DISABLED to prevent overfitting)
-        # if rand_val < 0.15: ...
-        
-        # 20% Consecutive Gene (Pattern)
-        if rand_val < 0.20:
+        # 15% Consecutive Gene (Pattern)
+        if rand_val < 0.15:
             direction = random.choice(['up', 'down'])
             op = random.choice(['>', '=='])
             count = random.randint(2, 6)
             return ConsecutiveGene(direction, op, count)
+            
+        # 15% Persistence Gene (New Filter)
+        elif rand_val < 0.30:
+            feature = random.choice(pool)
+            op = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
+            window = random.randint(3, 10)
+            return PersistenceGene(feature, op, threshold, window)
 
-        # 20% Chance of Relational Gene (Context)
-        elif rand_val < 0.40:
+        # 15% Relational Gene (Context)
+        elif rand_val < 0.45:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
-            # Prevent self-comparison
             while feature_right == feature_left and len(pool) > 1:
                 feature_right = random.choice(pool)
-                
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
             
-        # 30% Chance of Delta Gene (Momentum)
-        elif rand_val < 0.70:
+        # 15% Cross Gene (Event)
+        elif rand_val < 0.60:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+            direction = random.choice(['above', 'below'])
+            return CrossGene(feature_left, direction, feature_right)
+            
+        # 20% Delta Gene (Momentum)
+        elif rand_val < 0.80:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.5, 0.5) * stats['std']
-            lookback = random.choice(VALID_DELTA_LOOKBACKS) # Strict Grid
+            lookback = random.choice(VALID_DELTA_LOOKBACKS) 
             return DeltaGene(feature, operator, threshold, lookback)
             
-        # 30% Chance of ZScore Gene (Statistical Extreme)
-        elif rand_val < 1.00:
+        # 20% ZScore Gene (Statistical Extreme)
+        else:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            # Added lower thresholds (-1.0, 1.0) to encourage more activity
             threshold = random.choice([-3.0, -2.0, -1.5, -1.0, 1.0, 1.5, 2.0, 3.0])
-            window = random.choice(VALID_ZSCORE_WINDOWS) # Strict Grid
+            window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
-        
-        # Fallback (should not be reached with current probs)
-        else:
-            return self.create_random_gene()
 
     def create_random_gene(self):
         # Legacy fallback
