@@ -668,13 +668,23 @@ class Strategy:
         l_votes = get_votes(self.long_genes)
         s_votes = get_votes(self.short_genes)
         
-        # Net Vote
-        net_votes = l_votes - s_votes
+        # Concordance Logic (Require Consensus)
+        # Default to ALL (AND) if not specified
+        l_thresh = self.min_concordance if self.min_concordance else len(self.long_genes)
+        s_thresh = self.min_concordance if self.min_concordance else len(self.short_genes)
         
-        # "All-In" Logic (User Request)
-        # Prevent thrashing (e.g. 2->3->2 lots) which racks up costs.
-        # If we have ANY signal, we go MAX_LOTS.
-        signal = np.sign(net_votes) * config.MAX_LOTS
+        # Ensure threshold is at least 1 (if genes exist)
+        if self.long_genes: l_thresh = max(1, min(l_thresh, len(self.long_genes)))
+        if self.short_genes: s_thresh = max(1, min(s_thresh, len(self.short_genes)))
+        
+        # Binary Signals
+        go_long = l_votes >= l_thresh if self.long_genes else np.zeros(n_rows, dtype=bool)
+        go_short = s_votes >= s_thresh if self.short_genes else np.zeros(n_rows, dtype=bool)
+        
+        net_signal = go_long.astype(int) - go_short.astype(int)
+        
+        # "All-In" Logic
+        signal = net_signal * config.MAX_LOTS
         
         return signal
 
@@ -818,8 +828,15 @@ class GenomeFactory:
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
             short_genes.append(self.create_gene_from_pool(pool))
         
+        # Concordance: For complex strategies, allow 1 outlier (Robustness)
+        concordance = None
+        if num_genes > 2:
+            # Require ~70% agreement (Super-Majority)
+            concordance = int(max(2, num_genes * 0.7))
+
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
             long_genes=long_genes,
-            short_genes=short_genes
+            short_genes=short_genes,
+            min_concordance=concordance
         )
