@@ -151,7 +151,7 @@ def run_mutex_backtest():
     
     # 2. Selection
     candidates = load_all_candidates()
-    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.5)
+    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.4)
     
     if not unique_strats:
         print("❌ No unique strategies found.")
@@ -167,7 +167,7 @@ def run_mutex_backtest():
 
     # 4. Calculate PnL (Using TradeSimulator)
     # Apply standard barriers (120 bars default, SL 0.5%)
-    net_rets, trades_count = simulator.simulate_fast(final_pos, stop_loss_pct=0.005, time_limit_bars=120)
+    net_rets, trades_count = simulator.simulate_fast(final_pos, take_profit_pct=0.015, time_limit_bars=120)
     
     # --- Comparative Analysis ---
     results = []
@@ -210,7 +210,7 @@ def run_mutex_backtest():
         
         # Calculate PnL for this specific strategy using Simulator
         # Use specific horizon for time limit
-        s_net_rets, s_trades = simulator.simulate_fast(sig, stop_loss_pct=0.005, time_limit_bars=strat.horizon)
+        s_net_rets, s_trades = simulator.simulate_fast(sig, take_profit_pct=0.015, time_limit_bars=strat.horizon)
         
         # Metrics
         s_valid_ret = s_net_rets[warmup:]
