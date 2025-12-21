@@ -121,7 +121,7 @@ def plot_performance(engine, strategies):
         
         print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
         
-        label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})")
+        label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})"
         plt.plot(cumulative[:, i], label=label)
         
     # Plot Buy & Hold

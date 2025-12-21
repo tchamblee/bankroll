@@ -8,22 +8,34 @@ from collections import Counter
 import config
 
 def analyze_dna():
-    # print("Analyzing Genome DNA...")
+    print("Analyzing Genome DNA...")
     
-    # 1. Load DNA
-    path = os.path.join(config.DIRS['OUTPUT_DIR'], "final_population.json")
-    if not os.path.exists(path):
-        # print(f"❌ Error: {path} not found. Run evolution first.")
+    # 1. Load DNA from all apex files
+    dna_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
+    if not dna_files:
+        print(f"❌ Error: No apex strategies found in {config.DIRS['STRATEGIES_DIR']}. Run evolution first.")
         return
         
-    with open(path, "r") as f:
-        population = json.load(f)
-        
-    # Extract Feature Counts
+    all_strategies = []
+    for fpath in dna_files:
+        with open(fpath, "r") as f:
+            all_strategies.extend(json.load(f))
+            
+    # Extract Feature Counts from long_genes and short_genes
     feature_counts = Counter()
-    for strat in population:
-        for gene in strat['genes']:
-            feature_counts[gene['feature']] += 1
+    for strat in all_strategies:
+        genes = strat.get('long_genes', []) + strat.get('short_genes', [])
+        for gene in genes:
+            # Handle different gene types
+            if 'feature' in gene:
+                feature_counts[gene['feature']] += 1
+            elif 'feature_left' in gene:
+                feature_counts[gene['feature_left']] += 1
+                feature_counts[gene['feature_right']] += 1
+            
+    if not feature_counts:
+        print("❌ No features found in DNA.")
+        return
             
     dna_features = list(feature_counts.keys())
     

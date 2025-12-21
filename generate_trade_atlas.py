@@ -203,12 +203,14 @@ def main():
             shutil.rmtree(h_dir)
             os.makedirs(h_dir)
         
-        for i, trade in enumerate(valid_trades):
+        # Limit to first 100 trades to prevent excessive rendering
+        plot_limit = 100
+        for i, trade in enumerate(valid_trades[:plot_limit]):
             plot_trade(trade, backtester.close_vec.flatten(), times, h_dir, i+1, h)
             if (i+1) % 50 == 0:
-                print(f"    ... Plotted {i+1}/{len(valid_trades)} trades")
+                print(f"    ... Plotted {i+1}/{min(len(valid_trades), plot_limit)} trades")
                 
-        print(f"  ✅ Saved {len(valid_trades)} plots to {h_dir}")
+        print(f"  ✅ Saved {min(len(valid_trades), plot_limit)} plots to {h_dir}")
 
 if __name__ == "__main__":
     main()
