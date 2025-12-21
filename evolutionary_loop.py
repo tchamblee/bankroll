@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import shutil
 import json
 import random
 import time
@@ -106,9 +107,9 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
-                # Complexity Penalty (Aggressive: 0.2 per gene)
-                # This strongly favors 1-gene strategies over 2-gene strategies.
-                complexity_penalty = n_genes * 0.2
+                # Complexity Penalty (Extremely Aggressive: 0.5 per gene)
+                # This makes multi-gene strategies extremely expensive unless they provide massive alpha.
+                complexity_penalty = n_genes * 0.5
                 
                 # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.0
@@ -126,12 +127,12 @@ class EvolutionaryAlphaFactory:
                         strat_features.add(f"consecutive_{gene.direction}")
 
                 for f in strat_features:
-                    # Penalty scales with popularity: Aggressive Diversification
-                    # >10% usage triggers massive penalty (usage_ratio * 10.0)
-                    # e.g. 20% usage -> 2.0 penalty (kills Sortino)
+                    # Penalty scales with popularity: Ruthless Diversification
+                    # >5% usage triggers massive penalty (usage_ratio * 25.0)
+                    # e.g. 10% usage -> 2.5 penalty (kills most strategies)
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > 0.10:
-                         dom_penalty += usage_ratio * 10.0
+                    if usage_ratio > 0.05:
+                         dom_penalty += usage_ratio * 25.0
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
@@ -287,3 +288,7 @@ if __name__ == "__main__":
         prediction_mode=False
     )
     factory.evolve(horizon=args.horizon)
+    
+    # Cleanup Temp Dir
+    if hasattr(factory.backtester, 'temp_dir') and os.path.exists(factory.backtester.temp_dir):
+        shutil.rmtree(factory.backtester.temp_dir)

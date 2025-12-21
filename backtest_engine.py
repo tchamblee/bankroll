@@ -1,15 +1,22 @@
 import pandas as pd
 import numpy as np
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, dump, load
 from strategy_genome import Strategy
 from trade_simulator import TradeSimulator
 import config
+import os
+import shutil
+import tempfile
 
-def _worker_generate_signals(strategies, context):
+def _worker_generate_signals(strategies, context_path):
     """
     Worker function to generate signals for a chunk of strategies.
     Executed in parallel processes.
     """
+    # Load context from memmapped file (Shared Memory, Zero Copy)
+    # mmap_mode='r' ensures we don't copy data to RAM, just page it.
+    context = load(context_path, mmap_mode='r')
+    
     n_rows = context.get('__len__', 0)
     # Fallback if __len__ missing but arrays present
     if n_rows == 0 and len(context) > 0:
@@ -66,6 +73,10 @@ class BacktestEngine:
         self.annualization_factor = annualization_factor
         self.context = {}
         
+        # Temp dir for memmap
+        self.temp_dir = tempfile.mkdtemp(prefix="backtest_memmap_")
+        self.context_path = os.path.join(self.temp_dir, "context.joblib")
+        
         # --- CONFIGURATION ---
         self.account_size = account_size if account_size else config.ACCOUNT_SIZE
         self.standard_lot = config.STANDARD_LOT_SIZE
@@ -116,6 +127,14 @@ class BacktestEngine:
         self.train_idx = int(n * 0.6)
         self.val_idx = int(n * 0.8)
         
+        # Initial sync
+        self._sync_context()
+
+    def __del__(self):
+        # Cleanup temp dir
+        if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
     def precompute_context(self):
         numeric_cols = self.raw_data.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
@@ -147,6 +166,7 @@ class BacktestEngine:
         keys_to_remove = [k for k in self.context.keys() if k not in self.base_keys]
         for k in keys_to_remove:
             del self.context[k]
+        self._sync_context() # Sync deletions
 
     def ensure_context(self, population: list[Strategy]):
         needed = set()
@@ -155,10 +175,13 @@ class BacktestEngine:
             for gene in all_genes:
                 if gene.type == 'delta': needed.add(('delta', gene.feature, gene.lookback))
                 elif gene.type == 'zscore': needed.add(('zscore', gene.feature, gene.window))
-                    
+        
+        modified = False
         for type_, feature, param in needed:
             key = f"{type_}_{feature}_{param}"
             if key in self.context: continue
+            
+            modified = True
             if type_ == 'delta':
                 arr = self.context.get(feature)
                 if arr is not None:
@@ -170,6 +193,13 @@ class BacktestEngine:
                 series = self.raw_data[feature]
                 z = (series - series.rolling(param).mean()) / (series.rolling(param).std() + 1e-9)
                 self.context[key] = z.fillna(0).values.astype(np.float32)
+        
+        if modified:
+            self._sync_context()
+
+    def _sync_context(self):
+        """Dump context to disk for shared memory access by workers."""
+        dump(self.context, self.context_path)
 
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         self.ensure_context(population)
@@ -185,9 +215,10 @@ class BacktestEngine:
         # Split population into chunks
         chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
         
-        # Run in parallel
-        results = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(_worker_generate_signals)(chunk, self.context) for chunk in chunks
+        # Run in parallel using Process backend (default) but reading from Shared Memmap
+        # Removed prefer="threads" to use processes for GIL bypass
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_worker_generate_signals)(chunk, self.context_path) for chunk in chunks
         )
         
         # Concatenate results
@@ -213,7 +244,14 @@ class BacktestEngine:
         # signals_matrix[:, i:i+batch_size]
         chunks = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
         
-        results = Parallel(n_jobs=n_jobs, prefer="threads")(
+        # Run in parallel using threads for Numba JIT (which releases GIL)
+        # We can keep threading here because Numba bypasses GIL efficiently
+        # But to be consistent and safe, we can use processes too if needed. 
+        # However, passing signals_matrix (numpy) to processes is cheap if not too huge.
+        # Let's use Threads for simulation as it was intended and confirmed to be GIL-free by Numba.
+        # Wait, user said "CPU not utilized". Threading might not be scaling. 
+        # Let's switch simulation to processes too, just to be sure. 
+        results = Parallel(n_jobs=n_jobs)(
             delayed(_worker_simulate)(
                 chunk, 
                 prices, 
