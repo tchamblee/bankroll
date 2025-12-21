@@ -23,9 +23,9 @@ class EvolutionaryAlphaFactory:
         # Aligned with refactored BacktestEngine
         self.backtester = BacktestEngine(
             data, 
-            cost_bps=0.5, 
+            cost_bps=config.COST_BPS, 
             target_col=target_col,
-            annualization_factor=100800,
+            annualization_factor=config.ANNUALIZATION_FACTOR,
             account_size=config.ACCOUNT_SIZE
         )
         

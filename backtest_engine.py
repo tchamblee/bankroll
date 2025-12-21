@@ -73,10 +73,10 @@ class BacktestEngine:
     High-Performance Backtester using Centralized Trade Simulator.
     Ensures 100% consistency in trade logic (Barriers, Costs) across all system components.
     """
-    def __init__(self, data: pd.DataFrame, cost_bps=0.2, fixed_cost=2.0, spread_bps=1.0, account_size=None, target_col='log_ret', annualization_factor=1.0):
+    def __init__(self, data: pd.DataFrame, cost_bps=None, fixed_cost=2.0, spread_bps=None, account_size=None, target_col='log_ret', annualization_factor=None):
         self.raw_data = data
         self.target_col = target_col
-        self.annualization_factor = annualization_factor
+        self.annualization_factor = annualization_factor if annualization_factor else config.ANNUALIZATION_FACTOR
         self.context = {}
         
         # Temp dir for memmap
@@ -89,18 +89,16 @@ class BacktestEngine:
         
         # --- COST MODELING ---
         # Stored for passed to TradeSimulator
-        self.cost_bps = cost_bps
-        # self.fixed_cost = fixed_cost # Simulator currently uses bps, might need update if fixed cost crucial
-        # Using effective cost bps passed to simulator
+        self.cost_bps = cost_bps if cost_bps is not None else config.COST_BPS
+        self.spread_bps = spread_bps if spread_bps is not None else config.SPREAD_BPS
         
         # Variable Commission: 0.2 bps (0.00002)
-        var_comm_pct = cost_bps / 10000.0
+        var_comm_pct = self.cost_bps / 10000.0
         # Fixed Commission approximation
         fixed_comm_pct = fixed_cost / 100000.0 
         effective_comm_pct = max(var_comm_pct, fixed_comm_pct)
         
         self.effective_cost_bps = effective_comm_pct * 10000.0
-        self.spread_bps = spread_bps
         
         # Pre-calculate log returns if needed (mostly for reference now)
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
@@ -272,11 +270,11 @@ class BacktestEngine:
             weekdays = dt_idx.dayofweek.values.astype(np.int8)
 
         # 2. Lookahead Entry Filter
-        # Prevent entry if we are too close to 22:00 or Friday Close
+        # Prevent entry if we are too close to Market Close
         if time_limit:
             # Estimate: 2 mins per bar (Conservative)
             est_duration_hours = (time_limit * 2.0) / 60.0
-            cutoff_hour = 22.0 - est_duration_hours
+            cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
             
             # Entry Mask: (Hour < Cutoff) AND (Weekday < 5)
             # This masks out new entries that would likely be forced closed prematurely.
@@ -289,7 +287,7 @@ class BacktestEngine:
         n_jobs = -1
         batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
-        params_list = [{'sl': getattr(s, 'stop_loss_pct', 0.005), 'tp': getattr(s, 'take_profit_pct', 0.015)} for s in strategies]
+        params_list = [{'sl': getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS), 'tp': getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)} for s in strategies]
         
         # Split signals matrix into chunks along columns (strategies)
         # signals_matrix[:, i:i+batch_size]

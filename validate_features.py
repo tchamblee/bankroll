@@ -8,9 +8,10 @@ import config
 from numba import jit
 
 @jit(nopython=True)
-def _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple):
+def _jit_triple_barrier(closes, highs, lows, lookahead, tp_pct, sl_pct):
     """
     Numba-optimized core logic for Triple Barrier labeling.
+    Uses fixed percentages to align with TradeSimulator logic.
     """
     n = len(closes)
     outcomes = np.empty(n)
@@ -18,17 +19,12 @@ def _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple):
     
     for i in range(n - lookahead):
         current_price = closes[i]
-        vol = vols[i]
         
-        if np.isnan(vol) or vol == 0:
-            continue
-            
-        # Dynamic Barriers
-        upper_barrier = current_price * (1 + vol * pt_sl_multiple)
-        lower_barrier = current_price * (1 - vol * pt_sl_multiple)
+        # Fixed Percentage Barriers
+        upper_barrier = current_price * (1.0 + tp_pct)
+        lower_barrier = current_price * (1.0 - sl_pct)
         
         # Path analysis
-        # We manually check the future window
         first_upper = -1
         first_lower = -1
         
@@ -46,35 +42,31 @@ def _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple):
                 first_lower = k
                 break
         
-        # Logic to determine return based on which barrier was hit first
+        # Outcome Logic
         if first_upper == -1 and first_lower == -1:
-            # Vertical barrier (time limit)
+            # Vertical barrier (time limit) - Return at Horizon
             outcomes[i] = (closes[i + lookahead] - current_price) / current_price
         elif first_upper != -1 and (first_lower == -1 or first_upper < first_lower):
-            # Hit upper barrier
-            outcomes[i] = (upper_barrier - current_price) / current_price
+            # Hit Upper Barrier (TP)
+            outcomes[i] = tp_pct
         else:
-            # Hit lower barrier
-            outcomes[i] = (lower_barrier - current_price) / current_price
+            # Hit Lower Barrier (SL)
+            outcomes[i] = -sl_pct
             
     return outcomes
 
-def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100):
+def triple_barrier_labels(df, lookahead=120, tp_pct=0.015, sl_pct=0.005):
     """
     Implements Triple-Barrier Method for labeling.
     Uses Numba for high performance.
     """
     if df is None or len(df) == 0: return pd.Series(dtype=np.float64)
     
-    # Estimate daily volatility (simple close-to-close std dev)
-    daily_vol = df['close'].pct_change().rolling(vol_window).std()
-    
     closes = df['close'].values.astype(np.float64)
     highs = df['high'].values.astype(np.float64)
     lows = df['low'].values.astype(np.float64)
-    vols = daily_vol.values.astype(np.float64)
     
-    res = _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple)
+    res = _jit_triple_barrier(closes, highs, lows, lookahead, tp_pct, sl_pct)
     
     return pd.Series(res, index=df.index)
 
@@ -95,7 +87,8 @@ if __name__ == "__main__":
         df = base_df.copy()
         
         # 2. Generate Labels (Triple Barrier)
-        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, pt_sl_multiple=2.0)
+        # Using default TP=1.5% SL=0.5% as a standard baseline
+        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_pct=0.015, sl_pct=0.005)
         
         # 3. Analyze (Hunger Games)
         # Broader inclusion logic: Exclude metadata, keep everything else

@@ -68,7 +68,7 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     
     return df
 
-def add_crypto_features(df, data_dir, ibit_pattern="CLEAN_IBIT.parquet"):
+def add_crypto_features(df, ibit_df):
     """
     Adds Crypto-Lead features using IBIT data.
     1. Resamples EURUSD (df) and IBIT to 1-min fixed intervals.
@@ -77,8 +77,6 @@ def add_crypto_features(df, data_dir, ibit_pattern="CLEAN_IBIT.parquet"):
     """
     if df is None: return None
     
-    # Load IBIT
-    ibit_df = load_ticker_data(data_dir, ibit_pattern)
     if ibit_df is None:
         print("Skipping Crypto Features (IBIT not found).")
         return df

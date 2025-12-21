@@ -3,6 +3,7 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from numba import jit
+import config
 
 @jit(nopython=True)
 def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
@@ -168,7 +169,7 @@ class TradeSimulator:
 
     def simulate(self, 
                  signals: np.ndarray, 
-                 stop_loss_pct: float = 0.0035, 
+                 stop_loss_pct: float = config.DEFAULT_STOP_LOSS, 
                  take_profit_pct: Optional[float] = None,
                  time_limit_bars: Optional[int] = None) -> Tuple[List[Trade], np.ndarray]:
         """
@@ -265,7 +266,7 @@ class TradeSimulator:
             
         return trades, equity_curve
 
-    def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = 0.0035, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None,
+    def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = config.DEFAULT_STOP_LOSS, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None,
                       hours: Optional[np.ndarray] = None, weekdays: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.

@@ -157,8 +157,8 @@ def main():
     simulator = TradeSimulator(
         prices=backtester.close_vec.flatten(),
         times=times,
-        spread_bps=1.0, # Default per backtester config
-        cost_bps=0.5
+        spread_bps=config.SPREAD_BPS, 
+        cost_bps=config.COST_BPS
     )
 
     # Output Root
@@ -188,10 +188,11 @@ def main():
         signals = backtester.generate_signal_matrix([top_strat]).flatten()
         
         # 3. Simulate Trades
-        # Barriers: Time = Horizon, SL = 0.5%
-        sl_pct = getattr(top_strat, 'stop_loss_pct', 0.0035)
-        print(f"  Simulating with TimeLimit={h}, SL={sl_pct*100:.2f}%...")
-        trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, time_limit_bars=h)
+        # Barriers: Time = Horizon, SL = Default or Strategy
+        sl_pct = getattr(top_strat, 'stop_loss_pct', config.DEFAULT_STOP_LOSS)
+        tp_pct = getattr(top_strat, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+        print(f"  Simulating with TimeLimit={h}, SL={sl_pct*100:.2f}%, TP={tp_pct*100:.2f}%...")
+        trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, take_profit_pct=tp_pct, time_limit_bars=h)
         
         warmup = 3200
         valid_trades = [t for t in trades if t.entry_idx >= warmup]

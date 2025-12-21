@@ -144,7 +144,7 @@ def evaluate_batch(backtester, batch, horizon):
 def main():
     print("\n" + "="*120)
     print("🏆 APEX STRATEGY REPORT (ROBUSTNESS CHECK) 🏆")
-    print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: 0.5 bps + Spread")
+    print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: {config.COST_BPS} bps + Spread")
     print("Sorting by 'Robust Return' = mean(Val, Test, Full)")
     print("="*120 + "\n")
     
@@ -153,7 +153,7 @@ def main():
         sys.exit(1)
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    backtester = BacktestEngine(base_df, cost_bps=0.5, annualization_factor=100800)
+    backtester = BacktestEngine(base_df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
     horizons = config.PREDICTION_HORIZONS
     global_gene_counts = Counter()

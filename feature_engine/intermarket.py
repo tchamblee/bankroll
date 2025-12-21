@@ -2,43 +2,28 @@ import pandas as pd
 import numpy as np
 from .loader import load_ticker_data
 
-def add_intermarket_features(primary_df, data_dir, correlators=None):
+def add_intermarket_features(primary_df, correlator_dfs):
     """
     Adds robust Intermarket relationships using ES (Equities), ZN (Rates), and 6E (FX).
     
     Args:
         primary_df (pd.DataFrame): The main strategy dataframe (Volume Clock).
-        data_dir (str): Path to data directory.
-        correlators (list): List of tuples (filename_pattern, suffix). 
-                            Default includes ES, ZN, 6E.
+        correlator_dfs (dict): Dictionary of {suffix: DataFrame} for ES, ZN, 6E.
     
     Returns:
         pd.DataFrame: Enriched dataframe.
     """
     if primary_df is None: return None
     
-    # Default set if not provided
-    if correlators is None:
-        correlators = [
-            ("RAW_TICKS_ES_*.parquet", "_es"),  # S&P 500
-            ("RAW_TICKS_ZN_*.parquet", "_zn"),  # 10Y Treasury
-            ("RAW_TICKS_6E_*.parquet", "_6e")   # Euro Futures
-        ]
-        
     print(f"Calculating Intermarket Features (ES, ZN, 6E)...")
     df = primary_df.copy()
     
     # We need to create a unified time index to align these assets
     # Since primary_df is Volume Bars, we use 'time_end' as the sync point.
     
-    for pattern, suffix in correlators:
-        # Load Correlator Data
-        # Note: These files are likely minute bars (based on inspection).
-        # We need to handle them carefully.
-        corr_df = load_ticker_data(data_dir, pattern)
-        
+    for suffix, corr_df in correlator_dfs.items():
         if corr_df is None or corr_df.empty:
-            print(f"  Warning: Could not load {pattern}. Skipping.")
+            print(f"  Warning: Data for {suffix} is empty or None. Skipping.")
             continue
             
         print(f"  Processing {suffix}...")

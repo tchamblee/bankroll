@@ -56,17 +56,17 @@ class FeatureEngine:
     def add_microstructure_features(self, windows=[50, 100]):
         self.bars = microstructure.add_microstructure_features(self.bars, windows)
 
-    def add_crypto_features(self, ibit_pattern="CLEAN_IBIT.parquet"):
+    def add_crypto_features(self, ibit_df):
         """
         Adds Crypto-Lead features using IBIT data.
         """
-        self.bars = correlations.add_crypto_features(self.bars, self.data_dir, ibit_pattern)
+        self.bars = correlations.add_crypto_features(self.bars, ibit_df)
 
-    def add_macro_voltage_features(self, windows=[50, 100]):
+    def add_macro_voltage_features(self, us2y_df, schatz_df, tnx_df, bund_df, windows=[50, 100]):
         """
         Adds Transatlantic Voltage features (US2Y vs SCHATZ).
         """
-        self.bars = macro_voltage.add_macro_voltage_features(self.bars, self.data_dir, windows)
+        self.bars = macro_voltage.add_macro_voltage_features(self.bars, us2y_df, schatz_df, tnx_df, bund_df, windows)
 
     def add_advanced_physics_features(self, windows=[50, 100]):
         self.bars = physics.add_advanced_physics_features(self.bars, windows)
@@ -74,8 +74,8 @@ class FeatureEngine:
     def add_delta_features(self, lookback=10):
         self.bars = delta.add_delta_features(self.bars, lookback)
 
-    def add_intermarket_features(self, correlators=None):
-        self.bars = intermarket.add_intermarket_features(self.bars, self.data_dir, correlators)
+    def add_intermarket_features(self, correlator_dfs):
+        self.bars = intermarket.add_intermarket_features(self.bars, correlator_dfs)
 
     def filter_survivors(self, config_path="data/survivors.json"):
         """

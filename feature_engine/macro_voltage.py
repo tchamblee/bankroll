@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from .loader import load_ticker_data
 
-def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
+def add_macro_voltage_features(df, us2y_df, schatz_df, tnx_df, bund_df, windows=[50, 100]):
     """
     Adds Transatlantic Voltage features (US vs DE Policy Spreads).
     
@@ -14,12 +14,6 @@ def add_macro_voltage_features(df, data_dir, windows=[50, 100]):
     if df is None: return None
     print("Calculating Transatlantic Voltage Features (US2Y vs SCHATZ)...")
     df = df.copy()
-    
-    # 1. Load Macro Tickers - Updated Patterns
-    us2y_df = load_ticker_data(data_dir, "RAW_TICKS_US2Y*.parquet")
-    schatz_df = load_ticker_data(data_dir, "RAW_TICKS_SCHATZ*.parquet")
-    tnx_df = load_ticker_data(data_dir, "RAW_TICKS_TNX*.parquet")
-    bund_df = load_ticker_data(data_dir, "RAW_TICKS_BUND*.parquet")
     
     if us2y_df is None or schatz_df is None or tnx_df is None or bund_df is None:
         print("Skipping Voltage Features: Missing Macro Data.")

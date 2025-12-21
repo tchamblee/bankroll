@@ -32,6 +32,11 @@ ACCOUNT_SIZE = 30000.0  # USD
 STANDARD_LOT_SIZE = 100000.0 # Units of EUR/USD
 MIN_LOTS = 1
 MAX_LOTS = 3
+COST_BPS = 0.5
+SPREAD_BPS = 1.0
+ANNUALIZATION_FACTOR = 100800 # 5 min bars? No, volume bars. Approx bars per year.
+DEFAULT_STOP_LOSS = 0.005 # 0.5%
+DEFAULT_TAKE_PROFIT = 0.015 # 1.5%
 
 # --- TIME FILTERS ---
 # London Open (08:00 UTC) to NY Close (17:00 EST -> ~22:00 UTC)
