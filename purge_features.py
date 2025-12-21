@@ -361,32 +361,41 @@ if __name__ == "__main__":
     
     if useless_features:
         print(f"\n🗑️  TRULY USELESS FEATURES (To be purged):")
-        # Sort by name
-        sorted_useless = sorted(list(useless_features))
         
-        # Print with a summarized reason
-        for f in sorted_useless:
-            # Pick the most common reason or just the first one
-            reasons = global_kill_reasons.get(f, ["Unknown"])
-            # Simplistic summary: Just show the reason for H30 (or first available)
-            # Check if dead anywhere (usually dead everywhere)
+        # Categorize
+        dead_list = []
+        redundant_list = []
+        weak_list = []
+        
+        for f in useless_features:
+            reasons = global_kill_reasons.get(f, [])
             is_dead = any("Zero Variance" in r for r in reasons)
             is_redundant = any("Redundant" in r for r in reasons)
             
             if is_dead:
-                print(f"   - {f} (DEAD: Zero Variance)")
+                dead_list.append(f)
             elif is_redundant:
-                # Find who it was redundant with
-                # Extract killer from first redundant message
-                killer = "Unknown"
-                for r in reasons:
-                    if "Redundant" in r:
-                         import re
-                         match = re.search(r'Redundant with (.+) \(', r)
-                         if match: killer = match.group(1)
-                         break
-                print(f"   - {f} (REDUNDANT with {killer} etc.)")
+                redundant_list.append(f)
             else:
-                print(f"   - {f} (WEAK/UNSTABLE in all horizons)")
+                weak_list.append(f)
+                
+        # Print Groups
+        if dead_list:
+            print(f"\n❌ DEAD (Zero Variance) [{len(dead_list)}]:")
+            print(f"   {', '.join(sorted(dead_list))}")
+            
+        if redundant_list:
+            print(f"\n👯 REDUNDANT (Collinear) [{len(redundant_list)}]:")
+            # For redundancy, maybe listing simple names is enough, 
+            # as the specific partner changes per horizon.
+            print(f"   {', '.join(sorted(redundant_list))}")
+            
+        if weak_list:
+            print(f"\n📉 LOW SIGNAL (Weak/Unstable) [{len(weak_list)}]:")
+            # Wrap text for readability if list is long
+            import textwrap
+            wrapped_list = textwrap.fill(', '.join(sorted(weak_list)), width=80, initial_indent='   ', subsequent_indent='   ')
+            print(wrapped_list)
+            
     else:
         print("\n✅ Clean Feature Set! No completely useless features found.")
