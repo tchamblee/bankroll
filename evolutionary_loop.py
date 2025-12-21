@@ -25,7 +25,7 @@ class EvolutionaryAlphaFactory:
             data, 
             cost_bps=0.5, 
             target_col=target_col,
-            annualization_factor=181440,
+            annualization_factor=100800,
             account_size=config.ACCOUNT_SIZE
         )
         
@@ -40,7 +40,7 @@ class EvolutionaryAlphaFactory:
     def initialize_population(self):
         # print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
         # strategies will now have 1-2 genes to allow up/downsizing
-        self.population = [self.factory.create_strategy((2, 5)) for _ in range(self.pop_size)]
+        self.population = [self.factory.create_strategy((1, 2)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
@@ -184,7 +184,7 @@ class EvolutionaryAlphaFactory:
             # This prevents the gene pool from stagnating around the initial population's limits.
             n_immigrants = int(self.pop_size * 0.20)
             for _ in range(n_immigrants):
-                new_population.append(self.factory.create_strategy((2, 5)))
+                new_population.append(self.factory.create_strategy((1, 2)))
             
             # Fill the rest with Children of Elites (Crossover)
             while len(new_population) < self.pop_size:

@@ -81,8 +81,7 @@ def reconstruct_strategy(strat_dict):
         return None
 
 def plot_performance(engine, strategies):
-    # Setup Aligned Backtester
-    backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
+    backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=100800)
     
     # 1. Generate Full Signal Matrix
     full_signal_matrix = backtester.generate_signal_matrix(strategies)
@@ -93,6 +92,7 @@ def plot_performance(engine, strategies):
     print("Running Full Simulation for Plotting (SL=0.5%, TimeLimit=120)")
     net_returns, trades_count = backtester.run_simulation_batch(
         full_signal_matrix, 
+        strategies,
         prices, 
         times, 
         time_limit=120
@@ -117,7 +117,7 @@ def plot_performance(engine, strategies):
         test_rets = net_returns[test_start:, i]
         avg = np.mean(test_rets)
         downside = np.std(np.minimum(test_rets, 0)) + 1e-9
-        sortino = (avg / downside) * np.sqrt(181440)
+        sortino = (avg / downside) * np.sqrt(100800)
         
         print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
         

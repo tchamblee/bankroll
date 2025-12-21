@@ -189,8 +189,9 @@ def main():
         
         # 3. Simulate Trades
         # Barriers: Time = Horizon, SL = 0.5%
-        print(f"  Simulating with TimeLimit={h}, SL=0.5%...")
-        trades, _ = simulator.simulate(signals, stop_loss_pct=0.005, time_limit_bars=h)
+        sl_pct = getattr(top_strat, 'stop_loss_pct', 0.005)
+        print(f"  Simulating with TimeLimit={h}, SL={sl_pct*100:.2f}%...")
+        trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, time_limit_bars=h)
         
         warmup = 3200
         valid_trades = [t for t in trades if t.entry_idx >= warmup]

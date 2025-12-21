@@ -9,9 +9,7 @@ def generate_feature_matrix():
     print("==============================================")
     
     # 1. Create Engine (Expensive Step)
-    # Note: We pass the RAW_TICKS dir because the loader looks for "RAW_..." files 
-    # but internally redirects to "processed_data/clean_ticks" if they exist.
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'])
+    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'], volume_threshold=1000)
     
     if engine is None or engine.bars is None or len(engine.bars) == 0:
         print("❌ Error: Feature Engine failed to generate data.")

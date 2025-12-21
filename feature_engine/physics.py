@@ -331,11 +331,6 @@ def add_physics_features(df):
     df['entropy_roc_100'] = df['entropy_100'].diff()
     df['entropy_roc_200'] = df['entropy_200'].diff()
     
-    # Market Force (Mass * Acceleration)
-    df['market_force_10'] = calc_market_force(df, window=10)
-    df['market_force_50'] = calc_market_force(df, window=50)
-    df['market_force_100'] = calc_market_force(df, window=100)
-    
     return df
 
 def _calc_physics_window_features(w, df_minimal):

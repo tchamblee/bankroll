@@ -34,7 +34,7 @@ def _worker_generate_signals(strategies, context_path):
         
     return chunk_matrix
 
-def _worker_simulate(signals_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit):
+def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit):
     """
     Worker function to simulate a chunk of strategy signals.
     """
@@ -52,9 +52,11 @@ def _worker_simulate(signals_chunk, prices, times, spread_bps, effective_cost_bp
     trades_count = np.zeros(n_strats, dtype=int)
     
     for i in range(n_strats):
+        sl = params_chunk[i].get('sl', 0.005)
+        
         net_rets, t_count = simulator.simulate_fast(
             signals_chunk[:, i], 
-            stop_loss_pct=0.005, 
+            stop_loss_pct=sl, 
             time_limit_bars=time_limit
         )
         net_returns[:, i] = net_rets
@@ -242,7 +244,7 @@ class BacktestEngine:
         
         return signal_matrix
 
-    def run_simulation_batch(self, signals_matrix, prices, times, time_limit=None):
+    def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None):
         """
         Runs TradeSimulator for each strategy in the batch.
         Returns: net_returns matrix (Bars x Strats), trades_count array
@@ -255,20 +257,18 @@ class BacktestEngine:
         n_jobs = -1
         batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
+        params_list = [{'sl': getattr(s, 'stop_loss_pct', 0.005)} for s in strategies]
+        
         # Split signals matrix into chunks along columns (strategies)
         # signals_matrix[:, i:i+batch_size]
-        chunks = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
+        chunks_sig = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
+        chunks_params = [params_list[i:i + batch_size] for i in range(0, n_strats, batch_size)]
         
         # Run in parallel using threads for Numba JIT (which releases GIL)
-        # We can keep threading here because Numba bypasses GIL efficiently
-        # But to be consistent and safe, we can use processes too if needed. 
-        # However, passing signals_matrix (numpy) to processes is cheap if not too huge.
-        # Let's use Threads for simulation as it was intended and confirmed to be GIL-free by Numba.
-        # Wait, user said "CPU not utilized". Threading might not be scaling. 
-        # Let's switch simulation to processes too, just to be sure. 
         results = Parallel(n_jobs=n_jobs)(
             delayed(_worker_simulate)(
-                chunk, 
+                chunk_s,
+                chunk_p,
                 prices, 
                 times, 
                 self.spread_bps, 
@@ -276,7 +276,7 @@ class BacktestEngine:
                 self.standard_lot, 
                 self.account_size,
                 time_limit
-            ) for chunk in chunks
+            ) for chunk_s, chunk_p in zip(chunks_sig, chunks_params)
         )
         
         # Reassemble results
@@ -313,7 +313,7 @@ class BacktestEngine:
             # Use passed time_limit or default 120
             limit = time_limit if time_limit else 120
             
-            net_returns, trades_count = self.run_simulation_batch(signals, prices, times, time_limit=limit)
+            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit)
         
         # --- METRICS ---
         total_ret = np.sum(net_returns, axis=0)
@@ -375,27 +375,21 @@ class BacktestEngine:
             times = self.times_vec.iloc[train_end:test_end] if hasattr(self.times_vec, 'iloc') else self.times_vec[train_end:test_end]
             
             # Use Simulator
-            net_returns, trades_count = self.run_simulation_batch(signals, prices, times, time_limit=limit)
+            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit)
             
             avg = np.mean(net_returns, axis=0)
             downside = np.std(np.minimum(net_returns, 0), axis=0) + 1e-9
             sortino = (avg / downside) * np.sqrt(self.annualization_factor)
             
-            sortino[trades_count < 8] = -5.0
+            sortino[trades_count < 8] = -1.0
             fold_scores[:, f] = sortino
             
         avg_sortino = np.mean(fold_scores, axis=1)
         min_sortino = np.min(fold_scores, axis=1)
         fold_std = np.std(fold_scores, axis=1)
         
-        # Stricter Robustness: High penalty for variance
-        robust_score = avg_sortino - (fold_std * 1.0)
-        
-        # Hard Kill for blowing up in any fold
-        # If any fold has Sortino < -0.5, massive penalty
-        for i in range(len(robust_score)):
-            if min_sortino[i] < -1.5:
-                robust_score[i] -= 10.0
+        # Moderate Robustness
+        robust_score = avg_sortino - (fold_std * 0.5)
         
         results = []
         for i, strat in enumerate(population):

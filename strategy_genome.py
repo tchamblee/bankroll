@@ -641,17 +641,12 @@ class Strategy:
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
-        self.min_concordance = min_concordance # None = ALL (AND), 1 = OR, etc.
+        self.min_concordance = min_concordance
         self.fitness = 0.0
         
     def generate_signal(self, context: dict, cache: dict = None) -> np.array:
-        # Fix: len(context) returns key count for dict, but we want data rows.
-        # BacktestEngine inserts '__len__' into the context.
         n_rows = context.get('__len__', 0)
-        
-        # Fallback for safety (e.g. if context is raw dict without metadata)
         if n_rows == 0 and len(context) > 0:
-            # Try to get length from first array value
             for val in context.values():
                  if hasattr(val, 'shape'):
                      n_rows = val.shape[0]
@@ -668,25 +663,18 @@ class Strategy:
         l_votes = get_votes(self.long_genes)
         s_votes = get_votes(self.short_genes)
         
-        # Concordance Logic (Require Consensus)
-        # Default to ALL (AND) if not specified
+        # Concordance Logic
         l_thresh = self.min_concordance if self.min_concordance else len(self.long_genes)
         s_thresh = self.min_concordance if self.min_concordance else len(self.short_genes)
         
-        # Ensure threshold is at least 1 (if genes exist)
         if self.long_genes: l_thresh = max(1, min(l_thresh, len(self.long_genes)))
         if self.short_genes: s_thresh = max(1, min(s_thresh, len(self.short_genes)))
         
-        # Binary Signals
         go_long = l_votes >= l_thresh if self.long_genes else np.zeros(n_rows, dtype=bool)
         go_short = s_votes >= s_thresh if self.short_genes else np.zeros(n_rows, dtype=bool)
         
         net_signal = go_long.astype(int) - go_short.astype(int)
-        
-        # "All-In" Logic
-        signal = net_signal * config.MAX_LOTS
-        
-        return signal
+        return net_signal * config.MAX_LOTS
 
     def to_dict(self):
         return {
@@ -709,10 +697,9 @@ class Strategy:
         return s
 
     def __repr__(self):
-        logic_str = "VOTE"
         l_str = f" + ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
         s_str = f" + ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}][{logic_str}] LONG:({l_str}) | SHORT:({s_str})"
+        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str})"
 
 class GenomeFactory:
     def __init__(self, survivors_file):

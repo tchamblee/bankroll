@@ -48,6 +48,7 @@ def evaluate_batch(backtester, batch):
     # Use standardized simulator for Full set metrics
     net_returns_full, trades_count_full = backtester.run_simulation_batch(
         full_signals, 
+        batch,
         prices, 
         times, 
         time_limit=120
@@ -107,7 +108,7 @@ def main():
         sys.exit(1)
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    backtester = BacktestEngine(base_df, cost_bps=0.5, annualization_factor=181440)
+    backtester = BacktestEngine(base_df, cost_bps=0.5, annualization_factor=100800)
     
     horizons = config.PREDICTION_HORIZONS
     global_gene_counts = Counter()
