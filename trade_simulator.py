@@ -25,8 +25,9 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     # Iterate all bars
     for i in range(n):
         # --- FORCE CLOSE / FLATTEN (EOD/Weekend) ---
-        # 22:00 is NY Close. 
-        # Weekends: Close before Fri end.
+        # 22:00 is NY Close (UTC). 
+        # Weekends: Sat/Sun (5, 6).
+        # We check current bar's time
         force_close = False
         if hours[i] >= 22 or weekdays[i] >= 5:
             force_close = True
@@ -64,10 +65,14 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                             realized_signals[i] = 0.0
         
         # Prevent Entry if Force Close condition is active
+        # Also ensure realized signal tracks the exit if we just closed
         if force_close:
             realized_signals[i] = 0.0
-        
-        target_pos = realized_signals[i] # Use realized signal
+        elif position == 0.0 and realized_signals[i] != 0.0:
+            # We are entering a new trade
+            position = realized_signals[i]
+            entry_price = prices[i]
+            entry_idx = i
         
     # Re-implementation of Event-Interval Logic (Cost Calculation Phase)
     current_sig_val = realized_signals[0]
@@ -217,8 +222,13 @@ class TradeSimulator:
                         exit_reason = "TP"
             
             target_pos = signals[i]
-            if exit_signal or force_close:
+            if force_close:
                 target_pos = 0 
+                if position != 0:
+                    exit_signal = True
+                    exit_reason = "EOD"
+            elif exit_signal:
+                target_pos = 0
             
             if target_pos != position:
                 change = target_pos - position

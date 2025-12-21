@@ -77,12 +77,12 @@ def get_gene_description(gene_dict):
         return f"{gene_dict['min_val']:.6g} < {f} < {gene_dict['max_val']:.6g}"
     return "Unknown"
 
-def evaluate_batch(backtester, batch):
+def evaluate_batch(backtester, batch, horizon):
     """Evaluates a batch on Val, Test, and Full sets, returning a list of result dicts."""
     # 1. Validation Set (60-80%)
-    res_val = backtester.evaluate_population(batch, set_type='validation')
+    res_val = backtester.evaluate_population(batch, set_type='validation', time_limit=horizon)
     # 2. Test Set (80-100%)
-    res_test = backtester.evaluate_population(batch, set_type='test')
+    res_test = backtester.evaluate_population(batch, set_type='test', time_limit=horizon)
     
     # 3. Full Set (Simulation)
     # Generate full signals first
@@ -96,7 +96,7 @@ def evaluate_batch(backtester, batch):
         batch,
         prices, 
         times, 
-        time_limit=120
+        time_limit=horizon
     )
     
     # Exclude Warmup (3200 bars)
@@ -185,7 +185,7 @@ def main():
             
             for i in range(0, len(strategies), chunk_size):
                 batch = strategies[i:i+chunk_size]
-                batch_results = evaluate_batch(backtester, batch)
+                batch_results = evaluate_batch(backtester, batch, horizon=h)
                 all_horizon_results.extend(batch_results)
                 backtester.reset_jit_context()
                 
