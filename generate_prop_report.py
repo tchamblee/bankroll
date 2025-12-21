@@ -7,6 +7,55 @@ from strategy_genome import Strategy
 from backtest_engine import BacktestEngine
 import glob
 
+def load_and_rank_strategies(horizon):
+    """
+    Consolidated Strategy Loading Logic.
+    Matches the logic in generate_trade_atlas.py to ensure the same 'Champion' is selected.
+    """
+    # Prefer the Top 5 Unique file which contains pre-calculated metrics from report_top_strategies.py
+    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
+    if not os.path.exists(file_path):
+        # Fallback to Top 10 if Top 5 Unique doesn't exist (legacy support)
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
+    
+    if not os.path.exists(file_path):
+        # Final Fallback to raw file (metrics might be missing/defaulted to -999)
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+        
+    if not os.path.exists(file_path):
+        return []
+    
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    
+    strategies = []
+    # Preserve original dictionary data for reporting logic
+    strategy_dicts = []
+    
+    for d in data:
+        try:
+            strat = Strategy.from_dict(d)
+            # Hydrate metrics if available, or assume they are in the dict
+            metrics = d.get('metrics', {})
+            # Use metrics dict if available, otherwise check root
+            strat.robust_return = metrics.get('robust_return', d.get('robust_return', -999))
+            strat.full_return = metrics.get('full_return', d.get('full_return', -999))
+            
+            strategies.append(strat)
+            strategy_dicts.append(d)
+        except Exception as e:
+            pass
+            
+    # Sort: Primary = Robust%, Secondary = Ret%(Full)
+    # We zip them to sort both lists in sync
+    combined = list(zip(strategies, strategy_dicts))
+    combined.sort(key=lambda x: (x[0].robust_return, x[0].full_return), reverse=True)
+    
+    if not combined:
+        return [], []
+        
+    return zip(*combined)
+
 class GeneTranslator:
     """Translates Strategy Genes into Trader-Speak."""
     
@@ -92,6 +141,18 @@ class GeneTranslator:
             thresh = f"{gene_dict['threshold']:.4f}"
             win = gene_dict['window']
             return f"{f} has been {op} {thresh} for {win} consecutive bars"
+
+        elif g_type == 'squeeze':
+            f_short = GeneTranslator.translate_feature(gene_dict['feature_short'])
+            f_long = GeneTranslator.translate_feature(gene_dict['feature_long'])
+            mult = f"{gene_dict['multiplier']:.2f}"
+            return f"{f_short} is squeezed (< {mult}x) relative to {f_long}"
+
+        elif g_type == 'range':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            min_v = gene_dict['min_val']
+            max_v = gene_dict['max_val']
+            return f"{f} is inside range [{min_v:.4f}, {max_v:.4f}]"
             
         return "Unknown Rule"
 
@@ -142,21 +203,16 @@ class GeneTranslator:
         return "\n".join(narrative)
 
 def generate_report(horizon):
-    json_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
-    if not os.path.exists(json_path):
-        print(f"Skipping Horizon {horizon}: No strategy file found.")
+    # Use standard loading/ranking logic
+    strategies, strategy_dicts = load_and_rank_strategies(horizon)
+    
+    if not strategies:
+        print(f"Skipping Horizon {horizon}: No valid strategies found.")
         return
 
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-        
-    if not data:
-        print(f"Skipping Horizon {horizon}: Empty strategy file.")
-        return
-
-    # Champion is the first one (sorted by Test Sortino)
-    champion_data = data[0]
-    champion_strat = Strategy.from_dict(champion_data)
+    # Champion is the first one
+    champion_strat = strategies[0]
+    champion_data = strategy_dicts[0]
     
     print(f"Analyzing Champion for Horizon {horizon}: {champion_strat.name}")
     
@@ -177,8 +233,7 @@ def generate_report(horizon):
     )
     
     # Evaluate on Test Set (OOS)
-    # Note: evaluate_population returns (stats_df, returns_matrix)
-    _, net_returns_matrix = engine.evaluate_population(
+    stats_df, net_returns_matrix = engine.evaluate_population(
         [champion_strat], 
         set_type='test', 
         return_series=True, 
@@ -187,7 +242,7 @@ def generate_report(horizon):
     
     # Calculate Detailed Metrics
     returns = net_returns_matrix[:, 0]
-    
+        
     # Cumulative PnL
     cum_pnl = np.cumsum(returns * config.ACCOUNT_SIZE)
     equity_curve = config.ACCOUNT_SIZE + cum_pnl
@@ -197,14 +252,7 @@ def generate_report(horizon):
     drawdown = (equity_curve - peak) / peak
     max_drawdown = np.min(drawdown)
     
-    # Annualization (assuming 5 min bars -> 288 bars/day -> 72k/year? No, config says 181440 annualization factor?)
-    # Config says: annualization_factor=181440. 
-    # Let's trust the engine's factor or calculate manually based on data.
-    # We'll use the returns vector directly.
-    
-    total_return = (equity_curve[-1] - config.ACCOUNT_SIZE) / config.ACCOUNT_SIZE
-    n_bars = len(returns)
-    # Estimate years based on bars (assuming tick/volume bars approximate time, or just use factor)
+    # Annualization
     # Let's use the engine's factor for annualization scalar.
     ann_factor = 181440 # From code memory
     
@@ -214,12 +262,25 @@ def generate_report(horizon):
     ann_return = avg_ret * ann_factor
     ann_vol = std_ret * np.sqrt(ann_factor)
     sharpe = ann_return / (ann_vol + 1e-9)
-    sortino = champion_data.get('test_sortino', 0.0) # Trust the engine's calc
     
-    # Trade Stats
-    # We can't easily get trade count from just returns array without logic, 
-    # but we have it in the JSON metadata usually.
-    total_trades = champion_data.get('test_trades', 0)
+    # Sourced from FRESH BACKTEST
+    sortino = stats_df.iloc[0]['sortino']
+    total_trades = int(stats_df.iloc[0]['trades'])
+    
+    # Pre-calculate Ratings
+    rating_return = '⭐⭐⭐⭐⭐' if ann_return > 0.5 else '⭐⭐⭐'
+    rating_sortino = '⭐⭐⭐⭐⭐' if sortino > 3.0 else '⭐⭐⭐'
+    rating_dd = '⭐⭐⭐⭐⭐' if max_drawdown > -0.10 else '⭐⭐'
+    rating_freq = 'High Freq' if total_trades > 500 else 'Med Freq'
+    rating_sharpe = 'Excellent' if sharpe > 2.0 else 'Good'
+    
+    recovery_profile = 'Fast recovery suggested by high Sortino.' if sortino > 2.0 else 'Moderate recovery profile.'
+    stability_profile = 'Consistent' if ann_vol < 0.20 else 'Volatile'
+    
+    edge_type = 'Robust' if sortino > 1.5 else 'Speculative'
+    complexity = 'Parimonious (Simple)' if (len(champion_strat.long_genes) + len(champion_strat.short_genes)) < 4 else 'Complex'
+    calmar = abs(ann_return/max_drawdown) if max_drawdown != 0 else 0
+    rating_calmar = 'Exceptional' if calmar > 3.0 else 'Acceptable'
     
     # Markdown Construction
     md_content = f"""# 🏆 Prop Firm Analysis: {champion_strat.name}
@@ -244,20 +305,20 @@ def generate_report(horizon):
 ### 📊 Key Metrics
 | Metric | Value | Prop Desk Rating |
 | :--- | :--- | :--- |
-| **Annualized Return** | `{ann_return*100:.2f}%` | {'⭐⭐⭐⭐⭐' if ann_return > 0.5 else '⭐⭐⭐'} |
-| **Sortino Ratio** | `{sortino:.2f}` | {'⭐⭐⭐⭐⭐' if sortino > 3.0 else '⭐⭐⭐'} |
-| **Max Drawdown** | `{max_drawdown*100:.2f}%` | {'⭐⭐⭐⭐⭐' if max_drawdown > -0.10 else '⭐⭐'} |
-| **Total Trades** | `{total_trades}` | {'High Freq' if total_trades > 500 else 'Med Freq'} |
-| **Sharpe Ratio** | `{sharpe:.2f}` | {'Excellent' if sharpe > 2.0 else 'Good'} |
+| **Annualized Return** | `{ann_return*100:.2f}%` | {rating_return} |
+| **Sortino Ratio** | `{sortino:.2f}` | {rating_sortino} |
+| **Max Drawdown** | `{max_drawdown*100:.2f}%` | {rating_dd} |
+| **Total Trades** | `{total_trades}` | {rating_freq} |
+| **Sharpe Ratio** | `{sharpe:.2f}` | {rating_sharpe} |
 
 ### 📉 Risk Profile
 * **Drawdown Depth:** The strategy experienced a maximum peak-to-valley decline of **{max_drawdown*100:.2f}%**.
-* **Recovery:** {'Fast recovery suggested by high Sortino.' if sortino > 2.0 else 'Moderate recovery profile.'}
-* **Stability:** The strategy shows a {'Consistent' if ann_vol < 0.20 else 'Volatile'} equity growth trajectory.
+* **Recovery:** {recovery_profile}
+* **Stability:** The strategy shows a {stability_profile} equity growth trajectory.
 
 ### 💡 Trader's Verdict
-> "This strategy demonstrates a **{'Robus' if sortino > 1.5 else 'Speculative'}** edge. The use of {len(champion_strat.long_genes) + len(champion_strat.short_genes)} distinct genes suggests a {'Parimonious (Simple)' if (len(champion_strat.long_genes) + len(champion_strat.short_genes)) < 4 else 'Complex'} approach to market timing. 
-> Given the Annualized Return of {ann_return*100:.0f}% against a Max DD of {max_drawdown*100:.1f}%, the **Calmar Ratio is {abs(ann_return/max_drawdown):.2f}**, which is {'Exceptional' if abs(ann_return/max_drawdown) > 3.0 else 'Acceptable'} for a funded account."
+> "This strategy demonstrates a **{edge_type}** edge. The use of {len(champion_strat.long_genes) + len(champion_strat.short_genes)} distinct genes suggests a {complexity} approach to market timing. 
+> Given the Annualized Return of {ann_return*100:.0f}% against a Max DD of {max_drawdown*100:.1f}%, the **Calmar Ratio is {calmar:.2f}**, which is {rating_calmar} for a funded account."
 
 ---
 *Generated by Gemini Alpha Factory on {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}* 
