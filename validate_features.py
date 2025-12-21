@@ -89,6 +89,13 @@ if __name__ == "__main__":
                         'target_return', 'log_ret']
         
         feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype.kind in 'bifc']
+        
+        # Remove constant features to avoid warnings/errors
+        constant_features = [c for c in feature_cols if df[c].nunique() <= 1]
+        if constant_features:
+            # print(f"Dropping {len(constant_features)} constant features: {constant_features}")
+            feature_cols = [c for c in feature_cols if c not in constant_features]
+
         target_col = 'target_return'
         
         results = []
