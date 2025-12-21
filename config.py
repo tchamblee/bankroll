@@ -33,6 +33,11 @@ STANDARD_LOT_SIZE = 100000.0 # Units of EUR/USD
 MIN_LOTS = 1
 MAX_LOTS = 3
 
+# --- TIME FILTERS ---
+# London Open (08:00 UTC) to NY Close (17:00 EST -> ~22:00 UTC)
+TRADING_START_HOUR = 8
+TRADING_END_HOUR = 22
+
 # --- GDELT SETTINGS ---
 GDELT_KEYWORDS = {
     'EUR_LOCS': ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro'],

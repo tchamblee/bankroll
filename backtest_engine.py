@@ -225,6 +225,17 @@ class BacktestEngine:
         # Each result is (Rows, Chunk_Size)
         signal_matrix = np.hstack(results)
         
+        # --- TIME FILTER (User Request) ---
+        # Force flat (0) outside of liquid hours
+        if 'time_hour' in self.context:
+            hours = self.context['time_hour']
+            # London Open (8) to NY Close (22)
+            valid_hours = (hours >= config.TRADING_START_HOUR) & (hours <= config.TRADING_END_HOUR)
+            # Apply mask: Any signal outside valid hours becomes 0
+            # signal_matrix is (Rows, Strats). valid_hours is (Rows,).
+            # Broadcasting works automatically if we reshape valid_hours to (Rows, 1)
+            signal_matrix = signal_matrix * valid_hours[:, np.newaxis]
+        
         return signal_matrix
 
     def run_simulation_batch(self, signals_matrix, prices, times, time_limit=None):

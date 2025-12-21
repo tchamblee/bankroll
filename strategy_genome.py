@@ -562,8 +562,10 @@ class Strategy:
         # Net Vote
         net_votes = l_votes - s_votes
         
-        # Clip to Max Lots
-        signal = np.clip(net_votes, -config.MAX_LOTS, config.MAX_LOTS)
+        # "All-In" Logic (User Request)
+        # Prevent thrashing (e.g. 2->3->2 lots) which racks up costs.
+        # If we have ANY signal, we go MAX_LOTS.
+        signal = np.sign(net_votes) * config.MAX_LOTS
         
         return signal
 
