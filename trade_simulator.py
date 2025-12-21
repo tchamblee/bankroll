@@ -171,7 +171,7 @@ class TradeSimulator:
 
     def simulate(self, 
                  signals: np.ndarray, 
-                 stop_loss_pct: float = 0.005, 
+                 stop_loss_pct: float = 0.0035, 
                  take_profit_pct: Optional[float] = None,
                  time_limit_bars: Optional[int] = None) -> Tuple[List[Trade], np.ndarray]:
         """
@@ -255,7 +255,7 @@ class TradeSimulator:
             
         return trades, equity_curve
 
-    def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = 0.005, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None) -> Tuple[np.ndarray, int]:
+    def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = 0.0035, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
         Uses Numba JIT.

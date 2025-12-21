@@ -189,7 +189,7 @@ def main():
         
         # 3. Simulate Trades
         # Barriers: Time = Horizon, SL = 0.5%
-        sl_pct = getattr(top_strat, 'stop_loss_pct', 0.005)
+        sl_pct = getattr(top_strat, 'stop_loss_pct', 0.0035)
         print(f"  Simulating with TimeLimit={h}, SL={sl_pct*100:.2f}%...")
         trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, time_limit_bars=h)
         

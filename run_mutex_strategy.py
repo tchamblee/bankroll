@@ -151,7 +151,7 @@ def run_mutex_backtest():
     
     # 2. Selection
     candidates = load_all_candidates()
-    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.4)
+    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.5)
     
     if not unique_strats:
         print("❌ No unique strategies found.")
