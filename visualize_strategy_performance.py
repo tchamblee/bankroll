@@ -81,33 +81,24 @@ def reconstruct_strategy(strat_dict):
         return None
 
 def plot_performance(engine, strategies):
-    # print("Running Backtest for Visualization...")
-    
-    # Setup Aligned Backtester (Trading Mode)
+    # Setup Aligned Backtester
     backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
     
-    # Get Metrics AND Account Return Series (Full Data for Visualization)
-    # evaluate_population handles splitting, but we want full curve.
-    # We can pass set_type='test' or just calculate manually for full data.
-    
+    # 1. Generate Full Signal Matrix
     full_signal_matrix = backtester.generate_signal_matrix(strategies)
-    returns_vec = backtester.returns_vec # log_ret
-    prices = backtester.close_vec
+    prices = backtester.close_vec.flatten()
+    times = backtester.times_vec
     
-    # Calculate Real Account PnL
-    signals_shifted = np.roll(full_signal_matrix, 1, axis=0); signals_shifted[0, :] = 0
-    prices_shifted = np.roll(prices, 1, axis=0); prices_shifted[0] = prices[0]
+    # 2. Run Simulation via BacktestEngine's wrapper (consistent logic)
+    print("Running Full Simulation for Plotting (SL=0.5%, TimeLimit=120)")
+    net_returns, trades_count = backtester.run_simulation_batch(
+        full_signal_matrix, 
+        prices, 
+        times, 
+        time_limit=120
+    )
     
-    position_notional = signals_shifted * backtester.standard_lot * prices_shifted
-    gross_pnl_dollar = position_notional * returns_vec
-    
-    lot_change = np.abs(np.diff(full_signal_matrix, axis=0, prepend=0))
-    turnover_notional = lot_change * backtester.standard_lot * prices
-    costs_dollar = turnover_notional * backtester.total_cost_pct
-    
-    net_pnl_dollar = gross_pnl_dollar - costs_dollar
-    net_returns = net_pnl_dollar / backtester.account_size # % Return
-    
+    # 3. Compute Cumulative Equity Curve
     cumulative = np.cumsum(net_returns, axis=0)
     
     # Plotting
@@ -118,18 +109,23 @@ def plot_performance(engine, strategies):
     
     for i, strat in enumerate(strategies):
         total_ret_pct = cumulative[-1, i]
-        n_trades = np.sum(lot_change[:, i])
+        n_trades = trades_count[i]
         
         # We need Sortino for table. Use evaluation on test set for accuracy.
-        res_test = backtester.evaluate_population([strat], set_type='test')
-        sortino = res_test.iloc[0]['sortino']
+        # Can extract from returns vec manually to avoid re-running backtester
+        test_start = backtester.val_idx
+        test_rets = net_returns[test_start:, i]
+        avg = np.mean(test_rets)
+        downside = np.std(np.minimum(test_rets, 0)) + 1e-9
+        sortino = (avg / downside) * np.sqrt(181440)
         
         print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
         
-        label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})"
+        label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})")
         plt.plot(cumulative[:, i], label=label)
         
-    # Plot Buy & Hold (Log Ret sum normalized to account %) for scale
+    # Plot Buy & Hold
+    returns_vec = backtester.returns_vec.flatten()
     asset_cum = np.cumsum(returns_vec)
     plt.plot(asset_cum, label="Market Bench (Log Ret)", color='black', alpha=0.3, linestyle='--')
     
@@ -154,26 +150,17 @@ class MockEngine:
         self.bars = df
 
 def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
-    # print(f"\n🔍 Filtering Top {top_n} Strategies from {len(strategies)} candidates...")
-    # print(f"   Batch Size: {chunk_size}")
-    
-    # Setup Backtester for Evaluation
     backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
-    
     all_results = []
     
     # Chunk Processing
     total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
     for i in range(0, len(strategies), chunk_size):
         chunk = strategies[i:i+chunk_size]
-        # print(f"   > Processing Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} strats)...")
         
         try:
-            # Evaluate on Test Set (OOS) for selection
-            # using 'test' set (last 20%) to pick best OOS performers
             results_df = backtester.evaluate_population(chunk, set_type='test')
             
-            # Store essential metrics
             for idx, row in results_df.iterrows():
                 all_results.append({
                     'strategy': chunk[idx],
@@ -184,23 +171,14 @@ def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
         except Exception as e:
             print(f"     ⚠️ Error in batch: {e}")
         
-        # Cleanup Memory
         backtester.reset_jit_context()
         
-    # Sort and Select
-    # print("   > Sorting and selecting top candidates...")
     sorted_results = sorted(all_results, key=lambda x: x['sortino'], reverse=True)
     top_performers = [x['strategy'] for x in sorted_results[:top_n]]
     
-    # print(f"✅ Selected {len(top_performers)} strategies.")
-    if len(top_performers) > 0:
-        best = sorted_results[0]
-        # print(f"   Best Strat: {best['strategy'].name} (Sortino: {best['sortino']:.2f})")
-        
     return top_performers
 
 if __name__ == "__main__":
-    # print(f"Loading Feature Matrix...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found.")
         sys.exit(1)
@@ -211,7 +189,6 @@ if __name__ == "__main__":
     import glob
     apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
     all_strategies_data = []
-    # print(f"Loading Strategies from {len(apex_files)} files...")
     for fpath in apex_files:
         try:
             with open(fpath, "r") as f:
@@ -220,7 +197,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error loading {fpath}: {e}")
             
-    # print(f"Hydrating {len(all_strategies_data)} strategies...")
     strategies = []
     seen = set()
     for d in all_strategies_data:
@@ -233,7 +209,6 @@ if __name__ == "__main__":
         print("No strategies found.")
         sys.exit(0)
     
-    # Optimize: Filter Top N before Plotting
     top_strategies = filter_top_strategies(engine, strategies, top_n=20)
     
     if top_strategies:

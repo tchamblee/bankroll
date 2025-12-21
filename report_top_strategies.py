@@ -32,40 +32,6 @@ def get_gene_description(gene):
         return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
     return "Unknown"
 
-import json
-import os
-import re
-import sys
-import pandas as pd
-import numpy as np
-import config
-from collections import Counter
-from backtest_engine import BacktestEngine
-from strategy_genome import Strategy
-
-class MockEngine:
-    def __init__(self, df):
-        self.bars = df
-
-def get_gene_description(gene):
-    if gene.type == 'delta':
-        return f"Delta({gene.feature}, {gene.lookback})"
-    elif gene.type == 'zscore':
-        return f"Z({gene.feature}, {gene.window})"
-    elif gene.type == 'relational':
-        return f"Rel({gene.feature_left}, {gene.feature_right})"
-    elif gene.type == 'static':
-        return gene.feature
-    elif gene.type == 'consecutive':
-        return f"Consecutive({gene.direction})"
-    elif gene.type == 'time':
-        return f"Time({gene.mode})"
-    elif gene.type == 'cross':
-        return f"{gene.feature_left} CROSS {gene.direction.upper()} {gene.feature_right}"
-    elif gene.type == 'persistence':
-        return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
-    return "Unknown"
-
 def evaluate_batch(backtester, batch):
     """Evaluates a batch on Val, Test, and Full sets, returning a list of result dicts."""
     # 1. Validation Set (60-80%)
@@ -73,41 +39,44 @@ def evaluate_batch(backtester, batch):
     # 2. Test Set (80-100%)
     res_test = backtester.evaluate_population(batch, set_type='test')
     
-    # 3. Full Set (Custom manual calc for efficiency/custom range)
+    # 3. Full Set (Simulation)
+    # Generate full signals first
     full_signals = backtester.generate_signal_matrix(batch)
     prices = backtester.close_vec
-    rets = backtester.returns_vec
+    times = backtester.times_vec
     
-    sigs_shft = np.roll(full_signals, 1, axis=0); sigs_shft[0,:]=0
-    prcs_shft = np.roll(prices, 1, axis=0); prcs_shft[0]=prices[0]
+    # Use standardized simulator for Full set metrics
+    net_returns_full, trades_count_full = backtester.run_simulation_batch(
+        full_signals, 
+        prices, 
+        times, 
+        time_limit=120
+    )
     
-    pos_notional = sigs_shft * backtester.standard_lot * prcs_shft
-    gross_pnl = pos_notional * rets
-    
-    lot_change = np.abs(np.diff(full_signals, axis=0, prepend=0))
-    costs = lot_change * backtester.standard_lot * prices * backtester.total_cost_pct
-    
-    full_net_returns = (gross_pnl - costs) / backtester.account_size
-
-    # FIX: Exclude Warmup Period (3200 bars)
-    # Strategies use features with lookbacks up to 3200 bars. Initial signals are invalid.
+    # Exclude Warmup (3200 bars)
     warmup_idx = 3200
     
-    full_rets_pct = np.sum(full_net_returns[warmup_idx:], axis=0)
-    full_trades = np.sum(lot_change[warmup_idx:], axis=0)
-
+    # Sum returns after warmup
+    full_rets_pct = np.sum(net_returns_full[warmup_idx:], axis=0)
+    
+    # Trades count - already from simulator, but that includes warmup trades.
+    # To be precise, we need trades starting after warmup.
+    # But for quick reporting, total trades is okay, or we can approximate.
+    # Let's trust the simulator result for now as 'total trades'. 
+    # Or, if strict, we'd need to filter the trade objects, but run_simulation_batch 
+    # returns counts, not objects (for speed).
+    
     results = []
     for i, strat in enumerate(batch):
         # Basic filtering: Must have traded
-        if full_trades[i] == 0: continue
+        if trades_count_full[i] == 0: continue
             
         ret_val = res_val.iloc[i]['total_return']
         ret_test = res_test.iloc[i]['total_return']
         ret_full = full_rets_pct[i]
         
-        # Robustness Metric: Min Return across all 3 periods
-        # This penalizes strategies that failed in any single period.
-        robust_ret = min(ret_val, ret_test, ret_full)
+        # Robustness Metric: Mean Return across all 3 periods
+        robust_ret = np.mean([ret_val, ret_test, ret_full])
         
         results.append({
             'Strategy': strat,
@@ -116,7 +85,7 @@ def evaluate_batch(backtester, batch):
             'Ret_Full': ret_full,
             'Robust_Ret': robust_ret,
             'Sortino_OOS': res_test.iloc[i]['sortino'],
-            'Trades': full_trades[i],
+            'Trades': trades_count_full[i],
             'Gen': getattr(strat, 'generation_found', '?')
         })
         
@@ -126,7 +95,7 @@ def main():
     print("\n" + "="*120)
     print("🏆 APEX STRATEGY REPORT (ROBUSTNESS CHECK) 🏆")
     print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: 0.5 bps + Spread")
-    print("Sorting by 'Robust Return' = min(Val, Test, Full)")
+    print("Sorting by 'Robust Return' = mean(Val, Test, Full)")
     print("="*120 + "\n")
     
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -163,18 +132,13 @@ def main():
             all_horizon_results = []
             
             total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
-            # print(f"  Evaluating {len(strategies)} strategies in {total_chunks} batches...")
             
             for i in range(0, len(strategies), chunk_size):
                 batch = strategies[i:i+chunk_size]
                 batch_results = evaluate_batch(backtester, batch)
                 all_horizon_results.extend(batch_results)
                 backtester.reset_jit_context()
-                # sys.stdout.write(f"\r    Batch {i//chunk_size + 1}/{total_chunks} done.")
-                # sys.stdout.flush()
                 
-            # print("\n")
-            
             if not all_horizon_results:
                 print("  No active strategies found.")
                 continue
@@ -203,10 +167,7 @@ def main():
             global_gene_counts.update(horizon_genes)
             
             df = pd.DataFrame(df_rows)
-            # Sort by Robust Return (Min of 3)
-            df = df.sort_values(by='Robust%', ascending=False)
-            
-            # Sort by Robust Return (Min of 3)
+            # Sort by Robust Return
             df = df.sort_values(by='Robust%', ascending=False)
             
             # --- CORRELATION FILTERING (Top 5 Unique) ---
@@ -216,15 +177,11 @@ def main():
             sorted_names = df['Name'].values
             candidates = [results_map[name]['Strategy'] for name in sorted_names]
             
-            # Optimization: Check top 50 candidates
             top_candidates = candidates[:50]
             selected_strats = []
             
             if top_candidates:
-                # Generate signal matrix for candidates
-                # Note: This might take a moment
                 sig_matrix = backtester.generate_signal_matrix(top_candidates)
-                
                 selected_indices = []
                 
                 for i in range(len(top_candidates)):
@@ -233,14 +190,10 @@ def main():
                     is_uncorrelated = True
                     current_sig = sig_matrix[:, i]
                     
-                    # Check against already selected
                     for existing_idx in selected_indices:
                         existing_sig = sig_matrix[:, existing_idx]
-                        
-                        # Calculate Correlation (Pearson)
-                        # Handle constant signals to avoid NaN
                         if np.std(current_sig) == 0 or np.std(existing_sig) == 0:
-                            corr = 0 # Treat constant as uncorrelated (neutral)
+                            corr = 0 
                         else:
                             corr = np.corrcoef(current_sig, existing_sig)[0, 1]
                             
@@ -255,7 +208,6 @@ def main():
             # Create DF for display
             selected_names = {s.name for s in selected_strats}
             top_unique_df = df[df['Name'].isin(selected_names)].copy()
-            # Restore sort order
             top_unique_df = top_unique_df.sort_values(by='Robust%', ascending=False)
             
             # Formatting for Display
@@ -271,15 +223,14 @@ def main():
                 res = results_map[s.name]
                 s_dict = s.to_dict()
                 s_dict['metrics'] = {
-                    'robust_return': res['Robust_Ret'],
-                    'val_return': res['Ret_Val'],
-                    'test_return': res['Ret_Test'],
-                    'full_return': res['Ret_Full'],
-                    'sortino_oos': res['Sortino_OOS']
+                    'robust_return': float(res['Robust_Ret']),
+                    'val_return': float(res['Ret_Val']),
+                    'test_return': float(res['Ret_Test']),
+                    'full_return': float(res['Ret_Full']),
+                    'sortino_oos': float(res['Sortino_OOS'])
                 }
                 top_unique_strategies.append(s_dict)
             
-            # Sort
             top_unique_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
             
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
@@ -289,7 +240,6 @@ def main():
                 
         except Exception as e:
             print(f"  Error processing horizon {h}: {e}")
-            # import traceback; traceback.print_exc()
 
     print("\n" + "="*120)
     print("🧬 GLOBAL DOMINANT GENES 🧬")

@@ -70,7 +70,7 @@ class EvolutionaryAlphaFactory:
             start_time = time.time()
             
             # 1. Evaluate using Rolling Walk-Forward Validation (4 Folds)
-            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon)
             
             # 2. Filtering & Scoring
             wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
@@ -212,7 +212,7 @@ class EvolutionaryAlphaFactory:
             # print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
             
             # Evaluate entire history on Test Set
-            test_res, _ = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False)
+            test_res, _ = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False, time_limit=horizon)
             
             # Filter for OOS Profitability
             profitable_indices = test_res[test_res['sortino'] > 0.0].index.tolist()

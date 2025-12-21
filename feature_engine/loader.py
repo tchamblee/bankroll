@@ -247,7 +247,7 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     
     # Chunking Configuration
     chunk_size = 100 # Number of files per chunk
-    max_workers = 6  # Limit concurrent workers to save RAM
+    max_workers = 8  # Limit concurrent workers to save RAM
     intermediate_aggs = []
     
     # Process in Chunks
