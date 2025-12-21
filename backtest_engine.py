@@ -381,13 +381,21 @@ class BacktestEngine:
             downside = np.std(np.minimum(net_returns, 0), axis=0) + 1e-9
             sortino = (avg / downside) * np.sqrt(self.annualization_factor)
             
-            sortino[trades_count < 3] = -1.0
+            sortino[trades_count < 8] = -5.0
             fold_scores[:, f] = sortino
             
         avg_sortino = np.mean(fold_scores, axis=1)
         min_sortino = np.min(fold_scores, axis=1)
         fold_std = np.std(fold_scores, axis=1)
-        robust_score = avg_sortino - (fold_std * 0.5)
+        
+        # Stricter Robustness: High penalty for variance
+        robust_score = avg_sortino - (fold_std * 1.0)
+        
+        # Hard Kill for blowing up in any fold
+        # If any fold has Sortino < -0.5, massive penalty
+        for i in range(len(robust_score)):
+            if min_sortino[i] < -1.5:
+                robust_score[i] -= 10.0
         
         results = []
         for i, strat in enumerate(population):

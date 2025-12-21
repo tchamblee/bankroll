@@ -147,7 +147,7 @@ class EvolutionaryAlphaFactory:
             best_stats = wfv_results.iloc[best_idx]
             
             if gen % 5 == 0:
-                print(f"Gen {gen} | Best WFV Score: {best_fitness:.4f} (Avg:{best_stats['avg_sortino']:.2f})")
+                print(f"Gen {gen} | Best WFV Score: {best_fitness:.4f} (Avg:{best_stats['avg_sortino']:.2f} | Min:{best_stats['min_sortino']:.2f})")
             
             if best_fitness > global_best_fitness:
                 global_best_fitness = best_fitness
@@ -276,7 +276,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--survivors", type=str, required=True)
     parser.add_argument("--horizon", type=int, default=60)
-    parser.add_argument("--pop_size", type=int, default=3000)
+    parser.add_argument("--pop_size", type=int, default=5000)
     parser.add_argument("--gens", type=int, default=50)
     args = parser.parse_args()
 
