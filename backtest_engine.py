@@ -52,7 +52,7 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
     trades_count = np.zeros(n_strats, dtype=int)
     
     for i in range(n_strats):
-        sl = params_chunk[i].get('sl', 0.005)
+        sl = params_chunk[i].get('sl', 0.0035)
         
         net_rets, t_count = simulator.simulate_fast(
             signals_chunk[:, i], 
@@ -257,7 +257,7 @@ class BacktestEngine:
         n_jobs = -1
         batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
-        params_list = [{'sl': getattr(s, 'stop_loss_pct', 0.005)} for s in strategies]
+        params_list = [{'sl': getattr(s, 'stop_loss_pct', 0.0035)} for s in strategies]
         
         # Split signals matrix into chunks along columns (strategies)
         # signals_matrix[:, i:i+batch_size]
