@@ -38,10 +38,10 @@ class BacktestEngine:
         # Total Cost Per Side (Multiplier of Notional Traded)
         self.total_cost_pct = effective_comm_pct + spread_slippage_pct
         
-        print(f"💰 Cost Model Updated:")
-        print(f"   - Account Size: ${self.account_size:,.0f}")
-        print(f"   - Lot Size: {self.standard_lot:,.0f} Units")
-        print(f"   - Effective Cost: {self.total_cost_pct*10000:.2f} bps of Notional")
+        # print(f"💰 Cost Model Updated:")
+        # print(f"   - Account Size: ${self.account_size:,.0f}")
+        # print(f"   - Lot Size: {self.standard_lot:,.0f} Units")
+        # print(f"   - Effective Cost: {self.total_cost_pct*10000:.2f} bps of Notional")
         
         # Pre-calculate log returns for the vectorizer if standard mode
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
@@ -69,10 +69,10 @@ class BacktestEngine:
         self.train_idx = int(n * 0.6)
         self.val_idx = int(n * 0.8)
         
-        print(f"Engine Initialized. Data: {n} bars.")
+        # print(f"Engine Initialized. Data: {n} bars.")
         
     def precompute_context(self):
-        print("⚡ Pre-computing Base Context (Time/Consecutive) [float32]...")
+        # print("⚡ Pre-computing Base Context (Time/Consecutive) [float32]...")
         numeric_cols = self.raw_data.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
             self.context[col] = self.raw_data[col].values.astype(np.float32)
@@ -99,7 +99,7 @@ class BacktestEngine:
         
         # Track base keys to allow resetting JIT features
         self.base_keys = set(self.context.keys())
-        print(f"⚡ Base Context Ready. Total Arrays: {len(self.context)}")
+        # print(f"⚡ Base Context Ready. Total Arrays: {len(self.context)}")
 
     def reset_jit_context(self):
         """Removes any JIT-computed features to free memory."""
@@ -133,7 +133,7 @@ class BacktestEngine:
                 z = (series - series.rolling(param).mean()) / (series.rolling(param).std() + 1e-9)
                 self.context[key] = z.fillna(0).values.astype(np.float32)
                 
-        if calc_count > 0: print(f"   > JIT: Computed {calc_count} new features.")
+        # if calc_count > 0: print(f"   > JIT: Computed {calc_count} new features.")
 
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         self.ensure_context(population)

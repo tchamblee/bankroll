@@ -18,7 +18,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     Identifies features to purge based on Variance, IC, and Collinearity.
     Saves survivors to data/survivors_{horizon}.json.
     """
-    print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, Stability > {stability_threshold}) ---")
+    # print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, Stability > {stability_threshold}) ---")
     
     # 1. Identify Candidate Columns
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
@@ -32,7 +32,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     feature_stats = []
 
     # 2. Variance Check (Dead Features)
-    print("\n[Step 1] Checking for Dead Features (Zero Variance)...")
+    # print("\n[Step 1] Checking for Dead Features (Zero Variance)...")
     for f in candidates:
         if df[f].std() == 0 or df[f].isna().all():
             kill_list.append({'Feature': f, 'Reason': 'Zero Variance / NaN'})
@@ -41,7 +41,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
             survivors.append(f)
             
     # 3. Stability & Weakness Check (Walk-Forward Analysis)
-    print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
+    # print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
     ic_survivors = []
     
     # Create 5 chronological folds
@@ -59,7 +59,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     # 1. Pre-calculate all Fold ICs
     fold_ic_matrix = pd.DataFrame(index=survivors, columns=range(5))
     
-    print("    ... Vectorizing fold calculations (Speedup) ...")
+    # print("    ... Vectorizing fold calculations (Speedup) ...")
     
     for i, fold_data in enumerate(folds):
         # Calculate Spearman correlation
@@ -141,14 +141,14 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     # ----------------------------------------------------
     
     # 4. Redundancy Check (Collinearity)
-    print("\n[Step 3] Checking for Redundant Features (Collinearity)...")
+    # print("\n[Step 3] Checking for Redundant Features (Collinearity)...")
     final_survivors = []
     dropped_redundant = set()
     
     # --- OPTIMIZATION: Fast Rank-Based Correlation ---
     # Pandas .corr(method='spearman') is very slow (O(N^2) sorting).
     # Instead, we rank once, then use Pearson (optimized matrix multiplication).
-    print(f"    ... Computing Correlation Matrix for {len(survivors)} survivors ...")
+    # print(f"    ... Computing Correlation Matrix for {len(survivors)} survivors ...")
     ranked_df = df[survivors].rank(method='average')
     corr_matrix = ranked_df.corr(method='pearson')
     
@@ -171,8 +171,8 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     print(f"\n💀 Purged {len(kill_list)} features.")
     print(f"🛡️  {len(final_survivors)} Survivors remaining.")
     
-    print("\n--- 🛡️ THE SURVIVORS (Elite Gene Pool) ---")
-    print(stats_df.loc[final_survivors][['IC', 'Stability', 'P-Value']])
+    # print("\n--- 🛡️ THE SURVIVORS (Elite Gene Pool) ---")
+    # print(stats_df.loc[final_survivors][['IC', 'Stability', 'P-Value']])
     
     # Save Survivors List
     survivors_path = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
@@ -203,9 +203,9 @@ if __name__ == "__main__":
     
     # Loop through Horizons from Config
     for horizon in config.PREDICTION_HORIZONS:
-        print(f"\n\n==============================================")
-        print(f"Running Feature Hunger Games for Horizon: {horizon}")
-        print(f"==============================================")
+        # print(f"\n\n==============================================")
+        # print(f"Running Feature Hunger Games for Horizon: {horizon}")
+        # print(f"==============================================")
         
         # Use only Training Data
         df = train_df.copy()

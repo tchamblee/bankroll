@@ -11,7 +11,7 @@ def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100)
     """
     if df is None or len(df) == 0: return pd.Series()
     
-    print(f"Calculating Triple-Barrier Labels (Lookahead: {lookahead}, Multiplier: {pt_sl_multiple})...")
+    # print(f"Calculating Triple-Barrier Labels (Lookahead: {lookahead}, Multiplier: {pt_sl_multiple})...")
     
     # Estimate daily volatility (simple close-to-close std dev)
     daily_vol = df['close'].pct_change().rolling(vol_window).std()
@@ -73,9 +73,9 @@ if __name__ == "__main__":
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     for horizon in config.PREDICTION_HORIZONS:
-        print(f"\n\n==============================================")
-        print(f"⚔️  FEATURE VALIDATION: Horizon {horizon} ⚔️")
-        print(f"==============================================")
+        # print(f"\n\n==============================================")
+        # print(f"⚔️  FEATURE VALIDATION: Horizon {horizon} ⚔️")
+        # print(f"==============================================")
         
         df = base_df.copy()
         
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         target_col = 'target_return'
         
         results = []
-        print("\n--- Feature Validation Results (Information Coefficient) ---")
+        # print("\n--- Feature Validation Results (Information Coefficient) ---")
         
         # Optimized Vectorized Spearman Correlation
         # 1. Drop rows where target is NaN
@@ -131,12 +131,12 @@ if __name__ == "__main__":
         else:
             results_df = pd.DataFrame(columns=['Feature', 'IC', 'P-Value'])
 
-        print(results_df)
+        # print(results_df)
         
         # 4. Bonus: Random Forest Importance
         try:
             from sklearn.ensemble import ExtraTreesRegressor
-            print("\n🌲 Random Forest Importance Check (Optimized)...")
+            # print("\n🌲 Random Forest Importance Check (Optimized)...")
             
             valid_data = df[feature_cols + [target_col]].dropna()
             if len(valid_data) > 100:
@@ -155,7 +155,7 @@ if __name__ == "__main__":
                     'Importance': model.feature_importances_
                 }).sort_values('Importance', ascending=False)
                 
-                print(importances.head(20))
+                # print(importances.head(20))
                 
                 # Merge and Save Metrics
                 # Ensure index is reset for merge

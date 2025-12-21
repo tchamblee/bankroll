@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 import config
 
 def visualize_top5():
-    print("\n🎨 VISUALIZING TOP 5 SIGNALS 🎨")
+    # print("\n🎨 VISUALIZING TOP 5 SIGNALS 🎨")
     
     # Check if Feature Matrix exists
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -25,7 +25,7 @@ def visualize_top5():
     os.makedirs(config.DIRS['PLOTS_DIR'], exist_ok=True)
     
     for horizon in config.PREDICTION_HORIZONS:
-        print(f"\n--- Visualizing Horizon: {horizon} ---")
+        # print(f"\n--- Visualizing Horizon: {horizon} ---")
         
         survivors_file = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
         if not os.path.exists(survivors_file):

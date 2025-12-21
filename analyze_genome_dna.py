@@ -8,12 +8,12 @@ from collections import Counter
 import config
 
 def analyze_dna():
-    print("Analyzing Genome DNA...")
+    # print("Analyzing Genome DNA...")
     
     # 1. Load DNA
     path = os.path.join(config.DIRS['OUTPUT_DIR'], "final_population.json")
     if not os.path.exists(path):
-        print(f"❌ Error: {path} not found. Run evolution first.")
+        # print(f"❌ Error: {path} not found. Run evolution first.")
         return
         
     with open(path, "r") as f:
@@ -33,7 +33,7 @@ def analyze_dna():
         fpath = os.path.join(config.DIRS['FEATURES_DIR'], f"feature_metrics_{h}.csv")
         if os.path.exists(fpath):
             metrics_file = fpath
-            print(f"Loading metrics from {fpath}...")
+            # print(f"Loading metrics from {fpath}...")
             break
             
     if metrics_file:

@@ -606,7 +606,7 @@ class GenomeFactory:
         self.regime_pool = [f for f in self.features if any(k in f for k in self.regime_keywords)]
         self.trigger_pool = [f for f in self.features if f not in self.regime_pool]
         
-        print(f"Factory Loaded: {len(self.regime_pool)} Regime Features | {len(self.trigger_pool)} Trigger Features")
+        # print(f"Factory Loaded: {len(self.regime_pool)} Regime Features | {len(self.trigger_pool)} Trigger Features")
 
     def set_stats(self, df):
         for f in self.features:

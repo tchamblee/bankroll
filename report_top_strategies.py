@@ -158,17 +158,17 @@ def main():
             all_horizon_results = []
             
             total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
-            print(f"  Evaluating {len(strategies)} strategies in {total_chunks} batches...")
+            # print(f"  Evaluating {len(strategies)} strategies in {total_chunks} batches...")
             
             for i in range(0, len(strategies), chunk_size):
                 batch = strategies[i:i+chunk_size]
                 batch_results = evaluate_batch(backtester, batch)
                 all_horizon_results.extend(batch_results)
                 backtester.reset_jit_context()
-                sys.stdout.write(f"\r    Batch {i//chunk_size + 1}/{total_chunks} done.")
-                sys.stdout.flush()
+                # sys.stdout.write(f"\r    Batch {i//chunk_size + 1}/{total_chunks} done.")
+                # sys.stdout.flush()
                 
-            print("\n")
+            # print("\n")
             
             if not all_horizon_results:
                 print("  No active strategies found.")

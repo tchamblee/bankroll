@@ -35,7 +35,7 @@ class EvolutionaryAlphaFactory:
         self.hall_of_fame = []
 
     def initialize_population(self):
-        print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
+        # print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
         # strategies will now have 1-2 genes to allow up/downsizing
         self.population = [self.factory.create_strategy(num_genes_range=(1, 2)) for _ in range(self.pop_size)]
 
@@ -98,7 +98,7 @@ class EvolutionaryAlphaFactory:
             # Log dominant features
             if dominant_features:
                 sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
-                print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
+                # print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
             
             # Penalties
             for i, strat in enumerate(self.population):
@@ -144,7 +144,8 @@ class EvolutionaryAlphaFactory:
             # Extract detailed WFV stats for best strat
             best_stats = wfv_results.iloc[best_idx]
             
-            print(f"\n--- Gen {gen} | Best WFV Score: {best_fitness:.4f} (Avg:{best_stats['avg_sortino']:.2f}/Min:{best_stats['min_sortino']:.2f}) ---")
+            if gen % 5 == 0:
+                print(f"Gen {gen} | Best WFV Score: {best_fitness:.4f} (Avg:{best_stats['avg_sortino']:.2f})")
             
             if best_fitness > global_best_fitness:
                 global_best_fitness = best_fitness
@@ -188,10 +189,10 @@ class EvolutionaryAlphaFactory:
                 new_population.append(child)
                 
             self.population = new_population
-            print(f"  Gen completed in {time.time()-start_time:.2f}s")
+            # print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
         # 6. Final Selection
-        print(f"\n--- 🛡️ FINAL SELECTION (TEST PHASE: All Generations) ---")
+        # print(f"\n--- 🛡️ FINAL SELECTION (TEST PHASE: All Generations) ---")
         unique_hof = []
         seen = set()
         
@@ -202,11 +203,11 @@ class EvolutionaryAlphaFactory:
                 unique_hof.append(s)
                 seen.add(s_str)
         
-        print(f"Testing {len(unique_hof)} unique robust strategies collected across all generations...")
+        # print(f"Testing {len(unique_hof)} unique robust strategies collected across all generations...")
 
         if unique_hof:
             # 7. OOS Reporting (Test Phase) on EVERYTHING
-            print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
+            # print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
             
             # Evaluate entire history on Test Set
             test_res, _ = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False)
@@ -268,7 +269,7 @@ if __name__ == "__main__":
         
     bars_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
-    print(f"\n🚀 Starting Real-Money Evolution ($30k Account, 1-3 Lots)")
+    # print(f"\n🚀 Starting Real-Money Evolution ($30k Account, 1-3 Lots)")
     
     factory = EvolutionaryAlphaFactory(
         bars_df, 

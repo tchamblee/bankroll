@@ -81,7 +81,7 @@ def reconstruct_strategy(strat_dict):
         return None
 
 def plot_performance(engine, strategies):
-    print("Running Backtest for Visualization...")
+    # print("Running Backtest for Visualization...")
     
     # Setup Aligned Backtester (Trading Mode)
     backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
@@ -153,8 +153,8 @@ class MockEngine:
         self.bars = df
 
 def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
-    print(f"\n🔍 Filtering Top {top_n} Strategies from {len(strategies)} candidates...")
-    print(f"   Batch Size: {chunk_size}")
+    # print(f"\n🔍 Filtering Top {top_n} Strategies from {len(strategies)} candidates...")
+    # print(f"   Batch Size: {chunk_size}")
     
     # Setup Backtester for Evaluation
     backtester = BacktestEngine(engine.bars, cost_bps=0.5, annualization_factor=181440)
@@ -165,7 +165,7 @@ def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
     total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
     for i in range(0, len(strategies), chunk_size):
         chunk = strategies[i:i+chunk_size]
-        print(f"   > Processing Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} strats)...")
+        # print(f"   > Processing Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} strats)...")
         
         try:
             # Evaluate on Test Set (OOS) for selection
@@ -187,19 +187,19 @@ def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
         backtester.reset_jit_context()
         
     # Sort and Select
-    print("   > Sorting and selecting top candidates...")
+    # print("   > Sorting and selecting top candidates...")
     sorted_results = sorted(all_results, key=lambda x: x['sortino'], reverse=True)
     top_performers = [x['strategy'] for x in sorted_results[:top_n]]
     
-    print(f"✅ Selected {len(top_performers)} strategies.")
+    # print(f"✅ Selected {len(top_performers)} strategies.")
     if len(top_performers) > 0:
         best = sorted_results[0]
-        print(f"   Best Strat: {best['strategy'].name} (Sortino: {best['sortino']:.2f})")
+        # print(f"   Best Strat: {best['strategy'].name} (Sortino: {best['sortino']:.2f})")
         
     return top_performers
 
 if __name__ == "__main__":
-    print(f"Loading Feature Matrix...")
+    # print(f"Loading Feature Matrix...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found.")
         sys.exit(1)
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     import glob
     apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
     all_strategies_data = []
-    print(f"Loading Strategies from {len(apex_files)} files...")
+    # print(f"Loading Strategies from {len(apex_files)} files...")
     for fpath in apex_files:
         try:
             with open(fpath, "r") as f:
@@ -219,7 +219,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error loading {fpath}: {e}")
             
-    print(f"Hydrating {len(all_strategies_data)} strategies...")
+    # print(f"Hydrating {len(all_strategies_data)} strategies...")
     strategies = []
     seen = set()
     for d in all_strategies_data:
