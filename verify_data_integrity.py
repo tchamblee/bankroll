@@ -3,6 +3,67 @@ import numpy as np
 import config
 import os
 
+def check_data_quality(df):
+    print("\n🏥 Starting General Data Health Check...")
+    
+    # Identify non-numeric columns to skip (like timestamp)
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    
+    # Exclude metadata
+    metadata_cols = ['open', 'high', 'low', 'close', 'volume', 'timestamp']
+    feature_cols = [c for c in numeric_cols if c not in metadata_cols]
+    
+    print(f"Checking {len(feature_cols)} features for anomalies...")
+    
+    issues_found = False
+    
+    # 1. NaN Check
+    nan_counts = df[feature_cols].isna().sum()
+    nan_cols = nan_counts[nan_counts > 0]
+    
+    # Threshold for expected NaNs due to rolling windows (max window ~3200)
+    NAN_THRESHOLD = 3500 
+    
+    unexpected_nans = nan_cols[nan_cols > NAN_THRESHOLD]
+    expected_nans = nan_cols[nan_cols <= NAN_THRESHOLD]
+    
+    if not unexpected_nans.empty:
+        issues_found = True
+        print(f"\n⚠️  {len(unexpected_nans)} features contain EXCESSIVE NaNs (> {NAN_THRESHOLD}):")
+        print(unexpected_nans.sort_values(ascending=False).head(20))
+    elif not expected_nans.empty:
+        print(f"✅ NaNs detected but within expected warmup range (<= {NAN_THRESHOLD} rows).")
+    else:
+        print("✅ No NaNs found in features.")
+
+    # 2. Infinite Check
+    # Check for both positive and negative infinity
+    inf_counts = np.isinf(df[feature_cols]).sum()
+    inf_cols = inf_counts[inf_counts > 0]
+    
+    if not inf_cols.empty:
+        issues_found = True
+        print(f"\n❌ {len(inf_cols)} features contain Infinite values (CRITICAL):")
+        print(inf_cols.sort_values(ascending=False).head(20))
+    else:
+        print("✅ No Infinite values found.")
+        
+    # 3. Constant Check (Zero Variance)
+    # Use std() == 0
+    stds = df[feature_cols].std()
+    const_cols = stds[stds == 0].index.tolist()
+    
+    if const_cols:
+        issues_found = True
+        print(f"\n⚠️  {len(const_cols)} features are CONSTANT (Zero Variance):")
+        print(const_cols[:20])
+        if len(const_cols) > 20:
+            print(f"...and {len(const_cols)-20} more.")
+    else:
+        print("✅ No constant features found.")
+        
+    return issues_found
+
 def check_leaks():
     print("🕵️  Starting Data Leakage Investigation...")
     
@@ -14,12 +75,10 @@ def check_leaks():
     print(f"Loading {config.DIRS['FEATURE_MATRIX']}...")
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
-    # Calculate Target (Next Day Return)
-    # log_ret is return from T-1 to T.
-    # We want to predict log_ret at T+1 (Target).
-    # So Target[i] = log_ret[i+1].
-    # Which corresponds to df['log_ret'].shift(-1).
+    # --- RUN HEALTH CHECK FIRST ---
+    check_data_quality(df)
     
+    # Calculate Target (Next Day Return)
     if 'log_ret' not in df.columns:
         df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
         
@@ -28,7 +87,7 @@ def check_leaks():
     # Drop NaNs created by shift
     valid_df = df.dropna()
     
-    print(f"Analyzing {len(valid_df)} rows and {len(valid_df.columns)} features...")
+    print(f"\nAnalyzing {len(valid_df)} rows and {len(valid_df.columns)} features for LEAKAGE...")
     
     # 1. Check Correlation with Future Return (The Holy Grail Leak)
     print("\n🔍 Checking for Direct Future Leaks (Correlation with T+1 Return)...")

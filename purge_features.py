@@ -24,12 +24,13 @@ def get_feature_correlation_matrix(df, features):
     # Optimized: Rank then Pearson (Equivalent to Spearman but much faster)
     return df[features].rank(method='average').corr(method='pearson')
 
-def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, p_threshold=0.05, corr_threshold=0.75, stability_threshold=0.25):
+def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, p_threshold=0.05, corr_threshold=0.92, stability_threshold=0.25, silent=False):
     """
     Identifies features to purge based on Variance, IC, and Collinearity.
     Saves survivors to data/survivors_{horizon}.json.
     """
-    # print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, Stability > {stability_threshold}) ---")
+    if not silent:
+        print(f"\n--- 💀 THE PURGE [Horizon: {horizon}] (IC > {ic_threshold}, Stability > {stability_threshold}) ---")
     
     # 1. Identify Candidate Columns
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
@@ -41,7 +42,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     kill_list = []
     
     # 2. Variance Check (Dead Features) - Vectorized
-    # print("\n[Step 1] Checking for Dead Features (Zero Variance)...")
+    # if not silent: print("\n[Step 1] Checking for Dead Features (Zero Variance)...")
     
     # Calculatenunique and std only once
     stats_df = df[candidates].agg(['nunique', 'std']).T
@@ -53,14 +54,14 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     survivors = [c for c in candidates if c not in dead_features]
     
     if not survivors:
-        print("No survivors after Variance Check.")
-        return []
+        if not silent: print("No survivors after Variance Check.")
+        return [], kill_list
 
     # --- OPTIMIZATION: Rank Once Strategy ---
     # Rank all survivor features globally once. 
     # This avoids re-ranking in folds and correlation matrix.
     # We use pct=False (ranks) to be compatible with Pearson-on-Ranks = Spearman.
-    # print(f"    ... Pre-ranking {len(survivors)} features for speed ...")
+    # if not silent: print(f"    ... Pre-ranking {len(survivors)} features for speed ...")
     ranked_features = df[survivors].rank(method='average')
     
     # Also rank the target (we need this for correlation)
@@ -72,7 +73,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     ranked_df = pd.concat([ranked_features, ranked_target], axis=1)
     
     # 3. Stability & Weakness Check (Walk-Forward Analysis)
-    # print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
+    # if not silent: print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
     
     # Create 5 chronological fold INDICES (not copies of data)
     n = len(df)
@@ -173,8 +174,8 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     ic_survivors = survivors_idx[pass_ic_mask & pass_stab_mask].tolist()
     
     if len(ic_survivors) == 0:
-        print("No survivors after Weakness Check.")
-        return []
+        if not silent: print("No survivors after Weakness Check.")
+        return [], kill_list
 
     # Construct Stats DataFrame for sorting
     stats_df = pd.DataFrame({
@@ -191,7 +192,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     sorted_survivors = stats_df.sort_values('Abs_IC', ascending=False).index.tolist()
     
     # 4. Redundancy Check (Collinearity)
-    # print("\n[Step 3] Checking for Redundant Features (Collinearity)...")
+    # if not silent: print("\n[Step 3] Checking for Redundant Features (Collinearity)...")
     final_survivors = []
     dropped_redundant = set()
     
@@ -236,8 +237,58 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
                 dropped_redundant.add(f2)
 
     # Output Results
-    print(f"\n💀 Purged {len(kill_list)} features.")
-    print(f"🛡️  {len(final_survivors)} Survivors remaining.")
+    if not silent:
+        print(f"\n💀 THE PURGE SUMMARY [Horizon: {horizon}]")
+        print(f"-------------------------------------------")
+        
+        # Helper to extract base name (remove trailing numbers/windows)
+        # e.g., 'rsi_14' -> 'rsi', 'volatility_roc_3200' -> 'volatility_roc'
+        import re
+        def get_base_name(s):
+            return re.sub(r'_\d+$', '', s)
+
+        # Categorize kills for reporting
+        dead_kills = [k['Feature'] for k in kill_list if 'Zero Variance' in k['Reason']]
+        weak_ic_kills = [k['Feature'] for k in kill_list if 'Weak Signal' in k['Reason']]
+        unstable_kills = [k['Feature'] for k in kill_list if 'Unstable' in k['Reason']]
+        
+        # Filter Redundant Kills: Show only if Base Name is DIFFERENT
+        # We need to look up the "Killer" (f1) for each "Victim" (f2)
+        # The 'Reason' string contains "Redundant with {f1}..."
+        redundant_kills = []
+        for k in kill_list:
+            if 'Redundant' in k['Reason']:
+                victim = k['Feature']
+                # Extract killer from reason string
+                # Reason format: "Redundant with {f1} (Corr=...)"
+                match = re.search(r'Redundant with (.+) \(', k['Reason'])
+                if match:
+                    killer = match.group(1)
+                    # Only report if they are fundamentally different features
+                    if get_base_name(victim) != get_base_name(killer):
+                        redundant_kills.append(victim)
+                else:
+                    # Fallback if parsing fails
+                    redundant_kills.append(victim)
+
+        if dead_kills:
+            print(f"❌ DEAD (Zero Var): {len(dead_kills)} features.")
+            print(f"   Examples: {dead_kills[:10]}")
+            
+        if weak_ic_kills:
+            print(f"📉 WEAK (Low IC): {len(weak_ic_kills)} features.")
+            print(f"   Examples: {weak_ic_kills[:10]}")
+            
+        if unstable_kills:
+            print(f"🎢 UNSTABLE: {len(unstable_kills)} features.")
+            print(f"   Examples: {unstable_kills[:10]}")
+            
+        if redundant_kills:
+            print(f"👯 REDUNDANT (Cross-Feature): {len(redundant_kills)} features.")
+            print(f"   Examples: {redundant_kills[:10]}")
+
+        print(f"\n🛡️  SURVIVORS: {len(final_survivors)}")
+        print(f"   Top 10: {final_survivors[:10]}")
     
     # Save Survivors List
     os.makedirs(config.DIRS['FEATURES_DIR'], exist_ok=True)
@@ -245,7 +296,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     with open(survivors_path, "w") as f:
         json.dump(final_survivors, f, indent=4)
     
-    return final_survivors
+    return final_survivors, kill_list
 
 if __name__ == "__main__":
     
@@ -267,15 +318,75 @@ if __name__ == "__main__":
     print(f"   Size: {len(train_df)} bars (Total: {len(base_df)})")
     # ------------------------------------
     
+    # Collect all candidates (all numeric features except metadata)
+    exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
+               'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', 
+               'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread',
+               'ticket_imbalance', 'residual_bund']
+    all_candidates = set([c for c in train_df.columns if c not in exclude])
+    
+    useful_features = set()
+    global_kill_reasons = {} # feature -> list of reasons
+    
+    print(f"\n⏳ Analyzing {len(config.PREDICTION_HORIZONS)} horizons...")
+    
     # Loop through Horizons from Config
     for horizon in config.PREDICTION_HORIZONS:
-        # print(f"\n\n==============================================")
-        # print(f"Running Feature Hunger Games for Horizon: {horizon}")
-        # print(f"==============================================")
+        print(f"   - Processing Horizon {horizon}...")
         
         # Optimization: In-place update (avoid full copy)
         # We reuse train_df and just overwrite the target column
         train_df['target_return'] = triple_barrier_labels(train_df, lookahead=horizon, pt_sl_multiple=2.0)
         
-        # Run the Purge for this horizon
-        purge_features(train_df, horizon)
+        # Run the Purge (Silent Mode)
+        survivors, kill_list = purge_features(train_df, horizon, silent=True)
+        
+        useful_features.update(survivors)
+        
+        # Record reasons for this horizon
+        for k in kill_list:
+            feat = k['Feature']
+            if feat not in global_kill_reasons:
+                global_kill_reasons[feat] = []
+            global_kill_reasons[feat].append(f"H{horizon}:{k['Reason']}")
+
+    # Calculate Global Rejects (Features that failed in ALL horizons)
+    useless_features = all_candidates - useful_features
+    
+    print(f"\n🌍 GLOBAL PURGE REPORT")
+    print(f"======================")
+    print(f"Total Candidates: {len(all_candidates)}")
+    print(f"Useful Features (Survived >= 1 Horizon): {len(useful_features)}")
+    print(f"Useless Features (Failed ALL Horizons): {len(useless_features)}")
+    
+    if useless_features:
+        print(f"\n🗑️  TRULY USELESS FEATURES (To be purged):")
+        # Sort by name
+        sorted_useless = sorted(list(useless_features))
+        
+        # Print with a summarized reason
+        for f in sorted_useless:
+            # Pick the most common reason or just the first one
+            reasons = global_kill_reasons.get(f, ["Unknown"])
+            # Simplistic summary: Just show the reason for H30 (or first available)
+            # Check if dead anywhere (usually dead everywhere)
+            is_dead = any("Zero Variance" in r for r in reasons)
+            is_redundant = any("Redundant" in r for r in reasons)
+            
+            if is_dead:
+                print(f"   - {f} (DEAD: Zero Variance)")
+            elif is_redundant:
+                # Find who it was redundant with
+                # Extract killer from first redundant message
+                killer = "Unknown"
+                for r in reasons:
+                    if "Redundant" in r:
+                         import re
+                         match = re.search(r'Redundant with (.+) \(', r)
+                         if match: killer = match.group(1)
+                         break
+                print(f"   - {f} (REDUNDANT with {killer} etc.)")
+            else:
+                print(f"   - {f} (WEAK/UNSTABLE in all horizons)")
+    else:
+        print("\n✅ Clean Feature Set! No completely useless features found.")
