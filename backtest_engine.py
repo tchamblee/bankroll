@@ -1,8 +1,59 @@
 import pandas as pd
 import numpy as np
+from joblib import Parallel, delayed
 from strategy_genome import Strategy
 from trade_simulator import TradeSimulator
 import config
+
+def _worker_generate_signals(strategies, context):
+    """
+    Worker function to generate signals for a chunk of strategies.
+    Executed in parallel processes.
+    """
+    n_rows = context.get('__len__', 0)
+    # Fallback if __len__ missing but arrays present
+    if n_rows == 0 and len(context) > 0:
+         for val in context.values():
+             if hasattr(val, 'shape'):
+                 n_rows = val.shape[0]
+                 break
+                 
+    n_strats = len(strategies)
+    chunk_matrix = np.zeros((n_rows, n_strats), dtype=np.int8)
+    gene_cache = {} 
+    
+    for i, strat in enumerate(strategies):
+        chunk_matrix[:, i] = strat.generate_signal(context, cache=gene_cache)
+        
+    return chunk_matrix
+
+def _worker_simulate(signals_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit):
+    """
+    Worker function to simulate a chunk of strategy signals.
+    """
+    simulator = TradeSimulator(
+        prices=prices,
+        times=times,
+        spread_bps=spread_bps,
+        cost_bps=effective_cost_bps,
+        lot_size=standard_lot,
+        account_size=account_size
+    )
+    
+    n_bars, n_strats = signals_chunk.shape
+    net_returns = np.zeros((n_bars, n_strats), dtype=np.float32)
+    trades_count = np.zeros(n_strats, dtype=int)
+    
+    for i in range(n_strats):
+        net_rets, t_count = simulator.simulate_fast(
+            signals_chunk[:, i], 
+            stop_loss_pct=0.005, 
+            time_limit_bars=time_limit
+        )
+        net_returns[:, i] = net_rets
+        trades_count[i] = t_count
+        
+    return net_returns, trades_count
 
 class BacktestEngine:
     """
@@ -123,11 +174,26 @@ class BacktestEngine:
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         self.ensure_context(population)
         num_strats = len(population)
-        num_bars = len(self.raw_data)
-        signal_matrix = np.zeros((num_bars, num_strats), dtype=np.int8)
-        gene_cache = {}
-        for i, strat in enumerate(population):
-            signal_matrix[:, i] = strat.generate_signal(self.context, cache=gene_cache)
+        if num_strats == 0:
+            return np.zeros((self.context['__len__'], 0), dtype=np.int8)
+
+        # Parallelize Signal Generation
+        # Determine number of jobs and batch size
+        n_jobs = -1 
+        batch_size = max(1, num_strats // (16 if num_strats > 100 else 4))
+        
+        # Split population into chunks
+        chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
+        
+        # Run in parallel
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_worker_generate_signals)(chunk, self.context) for chunk in chunks
+        )
+        
+        # Concatenate results
+        # Each result is (Rows, Chunk_Size)
+        signal_matrix = np.hstack(results)
+        
         return signal_matrix
 
     def run_simulation_batch(self, signals_matrix, prices, times, time_limit=None):
@@ -136,34 +202,33 @@ class BacktestEngine:
         Returns: net_returns matrix (Bars x Strats), trades_count array
         """
         n_bars, n_strats = signals_matrix.shape
+        if n_strats == 0:
+            return np.zeros((n_bars, 0)), np.zeros(0)
+            
+        # Parallelize Simulation
+        n_jobs = -1
+        batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
-        # Initialize Simulator (reused)
-        simulator = TradeSimulator(
-            prices=prices,
-            times=times,
-            spread_bps=self.spread_bps,
-            cost_bps=self.effective_cost_bps,
-            lot_size=self.standard_lot,
-            account_size=self.account_size
+        # Split signals matrix into chunks along columns (strategies)
+        # signals_matrix[:, i:i+batch_size]
+        chunks = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
+        
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_worker_simulate)(
+                chunk, 
+                prices, 
+                times, 
+                self.spread_bps, 
+                self.effective_cost_bps, 
+                self.standard_lot, 
+                self.account_size,
+                time_limit
+            ) for chunk in chunks
         )
         
-        # Results
-        all_net_returns = np.zeros((n_bars, n_strats), dtype=np.float32)
-        all_trades_count = np.zeros(n_strats, dtype=int)
-        
-        # Iterate Strategies (Cannot vectorize easily with path dependent logic)
-        for i in range(n_strats):
-            strat_signals = signals_matrix[:, i]
-            
-            # Simulate Fast (Event-Driven)
-            net_rets, t_count = simulator.simulate_fast(
-                strat_signals, 
-                stop_loss_pct=0.005, 
-                time_limit_bars=time_limit
-            )
-            
-            all_net_returns[:, i] = net_rets
-            all_trades_count[i] = t_count
+        # Reassemble results
+        all_net_returns = np.hstack([r[0] for r in results])
+        all_trades_count = np.concatenate([r[1] for r in results])
             
         return all_net_returns, all_trades_count
 
