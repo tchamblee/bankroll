@@ -13,27 +13,68 @@ class MockEngine:
     def __init__(self, df):
         self.bars = df
 
-def get_gene_description(gene):
-    if gene.type == 'delta':
-        return f"Delta({gene.feature}, {gene.lookback})"
-    elif gene.type == 'zscore':
-        return f"Z({gene.feature}, {gene.window})"
-    elif gene.type == 'relational':
-        return f"Rel({gene.feature_left}, {gene.feature_right})"
-    elif gene.type == 'static':
-        return gene.feature
-    elif gene.type == 'consecutive':
-        return f"Consecutive({gene.direction})"
-    elif gene.type == 'time':
-        return f"Time({gene.mode})"
-    elif gene.type == 'cross':
-        return f"{gene.feature_left} CROSS {gene.direction.upper()} {gene.feature_right}"
-    elif gene.type == 'persistence':
-        return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
-    elif gene.type == 'squeeze':
-        return f"{gene.feature_short} < {gene.multiplier:.2f} * {gene.feature_long}"
-    elif gene.type == 'range':
-        return f"{gene.min_val:.2f} < {gene.feature} < {gene.max_val:.2f}"
+def get_gene_description(gene_dict):
+    """Translates a single gene dictionary into a sentence."""
+    if hasattr(gene_dict, 'to_dict'): gene_dict = gene_dict.to_dict()
+    g_type = gene_dict['type']
+    
+    if g_type == 'static':
+        # f = GeneTranslator.translate_feature(gene_dict['feature']) # Assuming GeneTranslator isn't used here directly based on prev context
+        f = gene_dict['feature']
+        op = gene_dict['operator']
+        val = f"{gene_dict['threshold']:.6g}"
+        return f"{f} is {op} {val}"
+        
+    elif g_type == 'relational':
+        f1 = gene_dict['feature_left']
+        f2 = gene_dict['feature_right']
+        op = gene_dict['operator']
+        return f"{f1} is {op} {f2}"
+        
+    elif g_type == 'delta':
+        f = gene_dict['feature']
+        lookback = gene_dict['lookback']
+        op = gene_dict['operator']
+        val = f"{gene_dict['threshold']:.6g}"
+        return f"Change in {f} ({lookback} bars) is {op} {val}"
+        
+    elif g_type == 'zscore':
+        f = gene_dict['feature']
+        win = gene_dict['window']
+        op = gene_dict['operator']
+        sigma = f"{gene_dict['threshold']:.3g}σ"
+        return f"{f} ({win}-bar Z-Score) is {op} {sigma}"
+        
+    elif g_type == 'time':
+        mode = gene_dict['mode'].title() 
+        op = gene_dict['operator']
+        val = gene_dict['value']
+        return f"Current {mode} is {op} {val}"
+        
+    elif g_type == 'consecutive':
+        direction = gene_dict['direction'].upper()
+        count = gene_dict['count']
+        op = gene_dict['operator']
+        return f"Consecutive {direction} Candles {op} {count}"
+        
+    elif g_type == 'cross':
+        f1 = gene_dict['feature_left']
+        f2 = gene_dict['feature_right']
+        direction = gene_dict['direction'].upper()
+        return f"{f1} crosses {direction} {f2}"
+        
+    elif g_type == 'persistence':
+        f = gene_dict['feature']
+        op = gene_dict['operator']
+        thresh = f"{gene_dict['threshold']:.6g}"
+        win = gene_dict['window']
+        return f"({f} {op} {thresh}) FOR {win} BARS"
+
+    elif g_type == 'squeeze':
+        return f"{gene_dict['feature_short']} < {gene_dict['multiplier']:.4g} * {gene_dict['feature_long']}"
+    elif g_type == 'range':
+        f = gene_dict['feature']
+        return f"{gene_dict['min_val']:.6g} < {f} < {gene_dict['max_val']:.6g}"
     return "Unknown"
 
 def evaluate_batch(backtester, batch):
