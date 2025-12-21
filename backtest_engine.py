@@ -186,7 +186,7 @@ class BacktestEngine:
         chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
         
         # Run in parallel
-        results = Parallel(n_jobs=n_jobs)(
+        results = Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(_worker_generate_signals)(chunk, self.context) for chunk in chunks
         )
         
@@ -213,7 +213,7 @@ class BacktestEngine:
         # signals_matrix[:, i:i+batch_size]
         chunks = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
         
-        results = Parallel(n_jobs=n_jobs)(
+        results = Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(_worker_simulate)(
                 chunk, 
                 prices, 

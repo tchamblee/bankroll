@@ -191,6 +191,10 @@ class EvolutionaryAlphaFactory:
                 new_population.append(child)
                 
             self.population = new_population
+            
+            # CLEANUP: Free memory from temporary features (deltas, zscores) created this generation
+            self.backtester.reset_jit_context()
+            
             # print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
         # 6. Final Selection
