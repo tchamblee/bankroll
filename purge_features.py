@@ -336,7 +336,8 @@ if __name__ == "__main__":
         
         # Optimization: In-place update (avoid full copy)
         # We reuse train_df and just overwrite the target column
-        train_df['target_return'] = triple_barrier_labels(train_df, lookahead=horizon, pt_sl_multiple=2.0)
+        # Using default TP=1.5% SL=0.5% (Config alignment)
+        train_df['target_return'] = triple_barrier_labels(train_df, lookahead=horizon, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS)
         
         # Run the Purge (Silent Mode)
         survivors, kill_list = purge_features(train_df, horizon, silent=True)
