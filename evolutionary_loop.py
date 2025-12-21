@@ -104,8 +104,9 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
-                # Complexity Penalty (Small Data = Simple Models)
-                complexity_penalty = n_genes * 0.05
+                # Complexity Penalty (Aggressive: 0.5 per gene)
+                # This strongly favors 1-gene strategies over 2-gene strategies.
+                complexity_penalty = n_genes * 0.5
                 
                 # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.0
@@ -123,10 +124,12 @@ class EvolutionaryAlphaFactory:
                         strat_features.add(f"consecutive_{gene.direction}")
 
                 for f in strat_features:
-                    # Penalty scales with popularity: 50% usage -> 1.0 Penalty, 90% -> 1.8
+                    # Penalty scales with popularity: Aggressive Diversification
+                    # >10% usage triggers massive penalty (usage_ratio * 10.0)
+                    # e.g. 20% usage -> 2.0 penalty (kills Sortino)
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > 0.15:
-                         dom_penalty += usage_ratio * 2.0
+                    if usage_ratio > 0.10:
+                         dom_penalty += usage_ratio * 10.0
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
