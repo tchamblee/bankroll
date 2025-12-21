@@ -34,7 +34,7 @@ def _worker_generate_signals(strategies, context_path):
         
     return chunk_matrix
 
-def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit):
+def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit, hours, weekdays):
     """
     Worker function to simulate a chunk of strategy signals.
     """
@@ -59,7 +59,9 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
             signals_chunk[:, i], 
             stop_loss_pct=sl, 
             take_profit_pct=tp,
-            time_limit_bars=time_limit
+            time_limit_bars=time_limit,
+            hours=hours,
+            weekdays=weekdays
         )
         net_returns[:, i] = net_rets
         trades_count[i] = t_count
@@ -233,8 +235,11 @@ class BacktestEngine:
         # Force flat (0) outside of liquid hours and on weekends
         if 'time_hour' in self.context:
             hours = self.context['time_hour']
-            # London Open (8) to NY Close (22)
-            market_open = (hours >= config.TRADING_START_HOUR) & (hours <= config.TRADING_END_HOUR)
+            # London Open (8) to NY Close (22). Strictly less than 22 to ensure no new trades at last hour?
+            # User said "flatten BEFORE end of NY trading day". 
+            # If we enter at 21:58, we are flattened at 22:00.
+            # So (hours < 22) prevents entry at 22:00+, but allows 21:00-21:59.
+            market_open = (hours >= config.TRADING_START_HOUR) & (hours < config.TRADING_END_HOUR)
             
             # Weekend Filter (0=Mon, 4=Fri, 5=Sat, 6=Sun)
             if 'time_weekday' in self.context:
@@ -254,6 +259,31 @@ class BacktestEngine:
         n_bars, n_strats = signals_matrix.shape
         if n_strats == 0:
             return np.zeros((n_bars, 0)), np.zeros(0)
+
+        # 1. Extract Time Features for Slice
+        # Ensure 'times' aligns with 'signals_matrix' rows
+        if hasattr(times, 'dt'):
+            hours = times.dt.hour.values.astype(np.int8)
+            weekdays = times.dt.dayofweek.values.astype(np.int8)
+        else:
+            # Check if it's already numpy array of datetime or pandas Timestamps
+            dt_idx = pd.to_datetime(times)
+            hours = dt_idx.hour.values.astype(np.int8)
+            weekdays = dt_idx.dayofweek.values.astype(np.int8)
+
+        # 2. Lookahead Entry Filter
+        # Prevent entry if we are too close to 22:00 or Friday Close
+        if time_limit:
+            # Estimate: 2 mins per bar (Conservative)
+            est_duration_hours = (time_limit * 2.0) / 60.0
+            cutoff_hour = 22.0 - est_duration_hours
+            
+            # Entry Mask: (Hour < Cutoff) AND (Weekday < 5)
+            # This masks out new entries that would likely be forced closed prematurely.
+            safe_entry_mask = (hours < cutoff_hour) & (weekdays < 5)
+            
+            # Apply to signals
+            signals_matrix = signals_matrix * safe_entry_mask[:, np.newaxis]
             
         # Parallelize Simulation
         n_jobs = -1
@@ -277,7 +307,9 @@ class BacktestEngine:
                 self.effective_cost_bps, 
                 self.standard_lot, 
                 self.account_size,
-                time_limit
+                time_limit,
+                hours, # Pass slice-aligned hours
+                weekdays # Pass slice-aligned weekdays
             ) for chunk_s, chunk_p in zip(chunks_sig, chunks_params)
         )
         
