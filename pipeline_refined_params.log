@@ -1,0 +1,66 @@
+Gen 0 | Best WFV Score: -1.5000 (Avg:-1.00)
+Gen 5 | Best WFV Score: 2.0883 (Avg:7.22)
+Gen 10 | Best WFV Score: 8.8000 (Avg:12.85)
+Gen 15 | Best WFV Score: 8.0342 (Avg:14.06)
+🛑 Early Stopping Triggered (No Robust Improvement).
+
+Top 5 OOS Performers:
+  Gen 10 | Sortino: 5.07 | Ret: 0.98% | ID: Child_7604
+  Gen 9  | Sortino: 2.55 | Ret: 1.34% | ID: Child_8136
+  Gen 2  | Sortino: 2.55 | Ret: 1.34% | ID: Child_9187
+  Gen 5  | Sortino: 2.55 | Ret: 1.34% | ID: Child_4399
+  Gen 5  | Sortino: 2.55 | Ret: 1.34% | ID: Child_3538
+
+💾 Saved Top 67 Profitable Strategies from All Generations to /home/tony/bankroll/output/strategies/apex_strategies_30.json
+Gen 0 | Best WFV Score: -0.9427 (Avg:2.57)
+Gen 5 | Best WFV Score: 4.3534 (Avg:8.23)
+Gen 10 | Best WFV Score: 3.9275 (Avg:10.23)
+Gen 15 | Best WFV Score: 7.3377 (Avg:18.94)
+Gen 20 | Best WFV Score: 7.1141 (Avg:23.41)
+Gen 25 | Best WFV Score: 7.0285 (Avg:13.15)
+🛑 Early Stopping Triggered (No Robust Improvement).
+
+Top 5 OOS Performers:
+  Gen 16 | Sortino: 0.08 | Ret: 0.05% | ID: Child_8452
+  Gen 16 | Sortino: 0.08 | Ret: 0.05% | ID: Child_1251
+  Gen 16 | Sortino: 0.08 | Ret: 0.05% | ID: Child_5492
+  Gen 16 | Sortino: 0.08 | Ret: 0.05% | ID: Child_2411
+
+💾 Saved Top 4 Profitable Strategies from All Generations to /home/tony/bankroll/output/strategies/apex_strategies_60.json
+Gen 0 | Best WFV Score: 0.9224 (Avg:2.86)
+Gen 5 | Best WFV Score: 4.4676 (Avg:11.54)
+Gen 10 | Best WFV Score: 3.8457 (Avg:9.79)
+Gen 15 | Best WFV Score: 5.3360 (Avg:13.87)
+Gen 20 | Best WFV Score: 6.6840 (Avg:15.30)
+Gen 25 | Best WFV Score: 8.5111 (Avg:21.36)
+Gen 30 | Best WFV Score: 10.0060 (Avg:16.91)
+Gen 35 | Best WFV Score: 8.8996 (Avg:21.88)
+🛑 Early Stopping Triggered (No Robust Improvement).
+No profitable OOS strategies found. Saving top 10 losers for analysis.
+
+Top 5 OOS Performers:
+  Gen 26 | Sortino: -0.64 | Ret: -0.19% | ID: Child_6132
+  Gen 34 | Sortino: -0.97 | Ret: -0.52% | ID: Child_5230
+  Gen 31 | Sortino: -1.40 | Ret: -0.71% | ID: Child_7829
+  Gen 15 | Sortino: -3.99 | Ret: -2.05% | ID: Child_6592
+  Gen 14 | Sortino: -4.15 | Ret: -2.16% | ID: Child_7911
+
+💾 Saved Top 10 Profitable Strategies from All Generations to /home/tony/bankroll/output/strategies/apex_strategies_90.json
+Gen 0 | Best WFV Score: -1.5000 (Avg:-1.00)
+Gen 5 | Best WFV Score: 5.2736 (Avg:7.89)
+Gen 10 | Best WFV Score: 5.2205 (Avg:10.07)
+Gen 15 | Best WFV Score: 5.6250 (Avg:19.31)
+Gen 20 | Best WFV Score: 7.1698 (Avg:20.74)
+Gen 25 | Best WFV Score: 7.7390 (Avg:18.90)
+Gen 30 | Best WFV Score: 10.4200 (Avg:21.16)
+Gen 35 | Best WFV Score: 9.9364 (Avg:21.08)
+🛑 Early Stopping Triggered (No Robust Improvement).
+
+Top 5 OOS Performers:
+  Gen 21 | Sortino: 9.09 | Ret: 1.62% | ID: Child_8965
+  Gen 21 | Sortino: 9.08 | Ret: 2.15% | ID: Child_3807
+  Gen 4  | Sortino: 8.90 | Ret: 2.20% | ID: Child_8623
+  Gen 6  | Sortino: 8.90 | Ret: 2.20% | ID: Child_8387
+  Gen 6  | Sortino: 8.90 | Ret: 2.20% | ID: Child_3216
+
+💾 Saved Top 77 Profitable Strategies from All Generations to /home/tony/bankroll/output/strategies/apex_strategies_120.json

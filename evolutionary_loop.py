@@ -107,9 +107,9 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
-                # Complexity Penalty (Extremely Aggressive: 0.5 per gene)
-                # This makes multi-gene strategies extremely expensive unless they provide massive alpha.
-                complexity_penalty = n_genes * 0.5
+                # Complexity Penalty (Reduced: 0.25 per gene)
+                # This allows for slightly more complex strategies while still preventing bloat.
+                complexity_penalty = n_genes * 0.25
                 
                 # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.0
@@ -128,11 +128,10 @@ class EvolutionaryAlphaFactory:
 
                 for f in strat_features:
                     # Penalty scales with popularity: Ruthless Diversification
-                    # >5% usage triggers massive penalty (usage_ratio * 25.0)
-                    # e.g. 10% usage -> 2.5 penalty (kills most strategies)
+                    # >10% usage triggers penalty (usage_ratio * 10.0)
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > 0.05:
-                         dom_penalty += usage_ratio * 25.0
+                    if usage_ratio > 0.10:
+                         dom_penalty += usage_ratio * 10.0
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
@@ -184,7 +183,9 @@ class EvolutionaryAlphaFactory:
                 child = self.crossover(p1, p2)
                 
                 # Mutation
-                mut_rate = 0.15
+                mut_rate = 0.25 # Increased from 0.15
+                if horizon in [60, 240]: mut_rate = 0.50 # Boost exploration for hard horizons
+
                 for g in child.long_genes + child.short_genes:
                     if random.random() < mut_rate:
                         g.mutate(self.factory.features)

@@ -78,6 +78,10 @@ def evaluate_batch(backtester, batch):
         # Robustness Metric: Mean Return across all 3 periods
         robust_ret = np.mean([ret_val, ret_test, ret_full])
         
+        # STRICT FILTER: Must be profitable in OOS (Test) and Full simulation
+        if ret_test <= 0 or res_test.iloc[i]['sortino'] <= 0.1 or ret_full <= 0:
+            continue
+
         results.append({
             'Strategy': strat,
             'Ret_Val': ret_val,
@@ -167,8 +171,8 @@ def main():
             global_gene_counts.update(horizon_genes)
             
             df = pd.DataFrame(df_rows)
-            # Sort by Robust Return
-            df = df.sort_values(by='Robust%', ascending=False)
+            # Sort by OOS Sortino (Priority) then Robust Return
+            df = df.sort_values(by=['Sortino(OOS)', 'Robust%'], ascending=[False, False])
             
             # --- CORRELATION FILTERING (Top 5 Unique) ---
             print("  Performing Correlation Filter (Limit 5, Threshold 0.7)...")
