@@ -16,7 +16,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     
     # 1. Load Primary (EUR/USD)
     print("Loading Primary Ticker (EURUSD)...")
-    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
+    primary_df = engine.load_ticker_data("CLEAN_EURUSD*.parquet")
     if primary_df is None:
         print("❌ Failed to load primary data.")
         return None
@@ -25,10 +25,10 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     
     # 2. Load Correlators
     correlators = [
-        ("RAW_TICKS_TNX*.parquet", "_tnx"), 
-        ("RAW_TICKS_DXY*.parquet", "_dxy"), 
-        ("RAW_TICKS_BUND*.parquet", "_bund"),
-        ("RAW_TICKS_SPY*.parquet", "_spy")
+        ("CLEAN_TNX*.parquet", "_tnx"), 
+        ("CLEAN_DXY*.parquet", "_dxy"), 
+        ("CLEAN_BUND*.parquet", "_bund"),
+        ("CLEAN_SPY*.parquet", "_spy")
     ]
     
     for ticker, suffix in correlators:

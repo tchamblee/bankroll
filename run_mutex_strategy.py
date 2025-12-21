@@ -74,41 +74,47 @@ def filter_global_correlation(candidates, backtester, threshold=0.7):
     print(f"  Selected {len(selected)} globally unique strategies.")
     return selected, sig_matrix[:, selected_indices]
 
-def simulate_mutex_portfolio(backtester, unique_strats, sig_matrix):
-    n_bars = sig_matrix.shape[0]
-    warmup = 3200
-    
-    # Vectors
+from numba import jit
+
+@jit(nopython=True)
+def _jit_simulate_mutex_portfolio(sig_matrix, warmup):
+    n_bars, n_strats = sig_matrix.shape
     final_pos = np.zeros(n_bars)
     active_strat_idx = -1 
-    current_lots = 0
+    current_lots = 0.0
     
     # Simulation Loop
     for t in range(warmup, n_bars):
         if active_strat_idx == -1:
             # IDLE
-            for i in range(len(unique_strats)):
+            for i in range(n_strats):
                 sig = sig_matrix[t, i]
                 if sig != 0:
                     active_strat_idx = i
-                    current_lots = sig
+                    current_lots = float(sig)
                     final_pos[t] = current_lots
                     break
         else:
             # LOCKED
             sig = sig_matrix[t, active_strat_idx]
             if sig == 0:
-                final_pos[t] = 0
+                final_pos[t] = 0.0
                 active_strat_idx = -1
-                current_lots = 0
-            elif np.sign(sig) != np.sign(current_lots):
-                final_pos[t] = sig
-                current_lots = sig
+                current_lots = 0.0
             else:
-                final_pos[t] = sig
-                current_lots = sig
+                # We stay in the current strategy even if it changes sign (as per original logic)
+                # But original logic had: elif np.sign(sig) != np.sign(current_lots):
+                # Actually original logic always assigned final_pos[t] = sig
+                # So it was just:
+                final_pos[t] = float(sig)
+                current_lots = float(sig)
                 
     return final_pos
+
+def simulate_mutex_portfolio(backtester, unique_strats, sig_matrix):
+    warmup = 3200
+    # Ensure sig_matrix is float64 for numba if needed, or int is fine if it matches
+    return _jit_simulate_mutex_portfolio(sig_matrix.astype(np.float64), warmup)
 
 def run_mutex_backtest():
     print("\n" + "="*80)

@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import linregress
+from numba import jit
+from joblib import Parallel, delayed
 
 # --- Math / Helper Functions (from physics_features.py) ---
 
@@ -237,50 +239,66 @@ def calc_market_force(df, window=10):
     # We might want a rolling smoothed version or magnitude
     return force.rolling(window).mean()
 
+from numba import jit
+
+@jit(nopython=True)
+def _jit_fdi_rolling(x, window):
+    """
+    Numba-optimized Rolling Fractal Dimension Index (Sevcik).
+    """
+    n = len(x)
+    res = np.empty(n)
+    res[:] = np.nan
+    
+    if n < window:
+        return res
+        
+    for i in range(window - 1, n):
+        # Slice window
+        segment = x[i - window + 1 : i + 1]
+        
+        # Calculate min/max for normalization
+        p_min = segment[0]
+        p_max = segment[0]
+        for val in segment:
+            if val < p_min: p_min = val
+            if val > p_max: p_max = val
+            
+        if p_max == p_min:
+            res[i] = 1.0
+            continue
+            
+        # Path Length Calculation (Sevcik)
+        # Normalizing time to [0, 1] means dt = 1 / (window - 1)
+        dt = 1.0 / (window - 1)
+        length = 0.0
+        
+        # Pre-calc normalized prices to avoid redundant division
+        # p_norm = (segment - p_min) / (p_max - p_min)
+        inv_range = 1.0 / (p_max - p_min)
+        
+        prev_p = (segment[0] - p_min) * inv_range
+        for k in range(1, window):
+            curr_p = (segment[k] - p_min) * inv_range
+            dp = curr_p - prev_p
+            # dist = sqrt(dp^2 + dt^2)
+            length += np.sqrt(dp*dp + dt*dt)
+            prev_p = curr_p
+            
+        # FDI Formula: 1 + (log(L) + log(2)) / log(2 * (window - 1))
+        # Numba supports np.log
+        res[i] = 1.0 + (np.log(length) + np.log(2.0)) / np.log(2.0 * (window - 1))
+        
+    return res
+
 def calc_fractal_dimension(series, window=30):
     """
     Fractal Dimension Index (FDI).
-    Uses the 'variogram' or 'box-counting' like approach approximation.
-    Here we use the simple path-length definition (Sevcik).
-    
-    FDI = 1 + (log(L) + log(2)) / log(2*n)
-    where L is total path length over window normalized to unit box.
+    Uses Numba-optimized implementation for speed.
     """
-    # Need to normalize inputs to unit square [0,1]x[0,1] within the window
-    
-    def _fdi(x):
-        # x is price series
-        n = len(x)
-        if n < 2: return np.nan
-        
-        # Normalize Price to [0,1]
-        p_min = np.min(x)
-        p_max = np.max(x)
-        if p_max == p_min: return 1.0 # Flat line = dimension 1
-        
-        # Normalized Prices
-        p_norm = (x - p_min) / (p_max - p_min)
-        
-        # Normalized Time (0 to 1)
-        t_norm = np.linspace(0, 1, n)
-        
-        # Calculate Path Length
-        # Euclidean distance between successive points (dt, dp)
-        dt = t_norm[1] - t_norm[0] # Constant
-        dp = np.diff(p_norm)
-        
-        length = np.sum(np.sqrt(dp**2 + dt**2))
-        
-        # Sevcik's formula approximation or similar
-        # D = 1 + ln(L) / ln(2) # roughly
-        # A clearer one: D = log(N_boxes) / log(1/scale)
-        # Using a simpler metric often called 'Fractal Dimension' in trading:
-        # FDI = 1 + (log(L) + log(2)) / log(2 * (n-1))  <-- Sevcik
-        
-        if length <= 0: return 1.0
-        return 1 + (np.log(length) + np.log(2)) / np.log(2 * (n - 1))
-
-    return series.rolling(window=window).apply(_fdi, raw=True)
+    vals = series.values.astype(np.float64)
+    res = _jit_fdi_rolling(vals, window)
+    return pd.Series(res, index=series.index)
 
 
 # --- Feature Engineering Functions ---
@@ -315,30 +333,46 @@ def add_physics_features(df):
     
     return df
 
+def _calc_physics_window_features(w, df_minimal):
+    """Worker function for parallel window physics feature calculation."""
+    res = {}
+    
+    # Yang-Zhang Volatility
+    vol = calc_yang_zhang_volatility(df_minimal, window=w)
+    res[f'yang_zhang_vol_{w}'] = vol
+    
+    # Kyle's Lambda
+    lam = calc_kyle_lambda(df_minimal, window=w)
+    res[f'kyle_lambda_{w}'] = lam
+    
+    # Fractal Dimension Index
+    fdi = calc_fractal_dimension(df_minimal['close'], window=w)
+    res[f'fdi_{w}'] = fdi
+    
+    # ROC Features
+    res[f'kyle_lambda_roc_{w}'] = lam.pct_change()
+    res[f'fdi_roc_{w}'] = fdi.diff()
+    
+    return res
+
 def add_advanced_physics_features(df, windows=[50, 100, 200]):
     if df is None: return None
     df = df.copy()
-    print("Calculating Advanced Physics Features (YZ Vol, Kyle's Lambda, Force, FDI)...")
+    print("Calculating Advanced Physics Features (YZ Vol, Kyle's Lambda, FDI)...")
     
-    # Yang-Zhang Volatility (Best Open-Close Estimator)
-    for w in windows:
-        df[f'yang_zhang_vol_{w}'] = calc_yang_zhang_volatility(df, window=w)
+    # Minimal DF for workers to save memory/pickling time
+    cols_needed = ['open', 'high', 'low', 'close', 'volume']
+    df_min = df[cols_needed].copy()
+    
+    # Parallelize
+    results = Parallel(n_jobs=-1)(
+        delayed(_calc_physics_window_features)(w, df_min)
+        for w in windows
+    )
+    
+    new_cols = {}
+    for r in results:
+        new_cols.update(r)
         
-        # Kyle's Lambda (Liquidity Cost)
-        df[f'kyle_lambda_{w}'] = calc_kyle_lambda(df, window=w)
-        
-        # Market Force (Physics) - REDUNDANT with Residual SPY
-        # df[f'market_force_{w}'] = calc_market_force(df, window=w)
-        
-        # Fractal Dimension Index (Roughness/Complexity)
-        df[f'fdi_{w}'] = calc_fractal_dimension(df['close'], window=w)
-        
-        # Rate of Change (ROC) Features
-        # Volatility & Liquidity: Percentage Change (Expansion/Contraction)
-        # df[f'yang_zhang_vol_roc_{w}'] = df[f'yang_zhang_vol_{w}'].pct_change()
-        df[f'kyle_lambda_roc_{w}'] = df[f'kyle_lambda_{w}'].pct_change()
-        
-        # FDI: Absolute Change
-        df[f'fdi_roc_{w}'] = df[f'fdi_{w}'].diff()
-        
-    return df
+    df_new = pd.DataFrame(new_cols, index=df.index)
+    return pd.concat([df, df_new], axis=1)

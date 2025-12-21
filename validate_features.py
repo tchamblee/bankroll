@@ -5,36 +5,22 @@ import scipy.stats as stats
 import os
 import config
 
-def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100):
+from numba import jit
+
+@jit(nopython=True)
+def _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple):
     """
-    Implements Triple-Barrier Method for labeling.
+    Numba-optimized core logic for Triple Barrier labeling.
     """
-    if df is None or len(df) == 0: return pd.Series()
+    n = len(closes)
+    outcomes = np.empty(n)
+    outcomes[:] = np.nan
     
-    # print(f"Calculating Triple-Barrier Labels (Lookahead: {lookahead}, Multiplier: {pt_sl_multiple})...")
-    
-    # Estimate daily volatility (simple close-to-close std dev)
-    daily_vol = df['close'].pct_change().rolling(vol_window).std()
-    
-    # Store results
-    outcomes = []
-    
-    closes = df['close'].values
-    highs = df['high'].values
-    lows = df['low'].values
-    vols = daily_vol.values
-    n = len(df)
-    
-    for i in range(n):
-        if i + lookahead >= n:
-            outcomes.append(np.nan)
-            continue
-            
+    for i in range(n - lookahead):
         current_price = closes[i]
         vol = vols[i]
         
         if np.isnan(vol) or vol == 0:
-            outcomes.append(np.nan)
             continue
             
         # Dynamic Barriers
@@ -42,26 +28,55 @@ def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100)
         lower_barrier = current_price * (1 - vol * pt_sl_multiple)
         
         # Path analysis
-        future_highs = highs[i+1 : i+1+lookahead]
-        future_lows = lows[i+1 : i+1+lookahead]
-        future_closes = closes[i+1 : i+1+lookahead]
+        # We manually check the future window
+        first_upper = -1
+        first_lower = -1
         
-        upper_breaches = future_highs >= upper_barrier
-        lower_breaches = future_lows <= lower_barrier
+        for k in range(1, lookahead + 1):
+            idx = i + k
+            # Upper barrier check
+            if highs[idx] >= upper_barrier:
+                first_upper = k
+                break
         
-        first_upper = np.argmax(upper_breaches) if upper_breaches.any() else lookahead + 1
-        first_lower = np.argmax(lower_breaches) if lower_breaches.any() else lookahead + 1
+        for k in range(1, lookahead + 1):
+            idx = i + k
+            # Lower barrier check
+            if lows[idx] <= lower_barrier:
+                first_lower = k
+                break
         
-        if first_upper == lookahead + 1 and first_lower == lookahead + 1:
-            ret = (future_closes[-1] - current_price) / current_price
-        elif first_upper < first_lower:
-            ret = (upper_barrier - current_price) / current_price
+        # Logic to determine return based on which barrier was hit first
+        if first_upper == -1 and first_lower == -1:
+            # Vertical barrier (time limit)
+            outcomes[i] = (closes[i + lookahead] - current_price) / current_price
+        elif first_upper != -1 and (first_lower == -1 or first_upper < first_lower):
+            # Hit upper barrier
+            outcomes[i] = (upper_barrier - current_price) / current_price
         else:
-            ret = (lower_barrier - current_price) / current_price
+            # Hit lower barrier
+            outcomes[i] = (lower_barrier - current_price) / current_price
             
-        outcomes.append(ret)
-        
-    return pd.Series(outcomes, index=df.index)
+    return outcomes
+
+def triple_barrier_labels(df, lookahead=120, pt_sl_multiple=2.0, vol_window=100):
+    """
+    Implements Triple-Barrier Method for labeling.
+    Uses Numba for high performance.
+    """
+    if df is None or len(df) == 0: return pd.Series(dtype=np.float64)
+    
+    # Estimate daily volatility (simple close-to-close std dev)
+    daily_vol = df['close'].pct_change().rolling(vol_window).std()
+    
+    closes = df['close'].values.astype(np.float64)
+    highs = df['high'].values.astype(np.float64)
+    lows = df['low'].values.astype(np.float64)
+    vols = daily_vol.values.astype(np.float64)
+    
+    res = _jit_triple_barrier(closes, highs, lows, vols, lookahead, pt_sl_multiple)
+    
+    return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
     

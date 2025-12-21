@@ -1,57 +1,67 @@
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
+
+def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
+    """Worker function for parallel window feature calculation."""
+    res = {}
+    
+    # 1. Velocity
+    res[f'velocity_{w}'] = log_ret.rolling(w).sum()
+    
+    # 2. Volatility (Garman-Klass)
+    vol = np.sqrt(gk_var.rolling(w).mean())
+    if w != 800: # Match logic in original script
+        res[f'volatility_{w}'] = vol
+    
+    # 3. Efficiency & Trend Strength
+    net_change = close.diff(w).abs()
+    path = close.diff().abs().rolling(w).sum()
+    efficiency = np.where(path == 0, 0, net_change / path)
+    
+    # Trend Strength needs rolling mean of volatility
+    # Note: original used rolling(1000).mean() globally, but it was per window 'vol'
+    # Re-evaluating: vol_norm = vol / vol.rolling(1000).mean()
+    vol_norm = vol / vol.rolling(1000, min_periods=100).mean()
+    trend_strength = efficiency * vol_norm
+    res[f'trend_strength_{w}'] = trend_strength
+    
+    # 4. Autocorrelation
+    res[f'autocorr_{w}'] = log_ret.rolling(w).corr(log_ret.shift(1))
+    
+    # 5. Skewness
+    res[f'skew_{w}'] = log_ret.rolling(w).skew()
+    
+    # 6. ROC Features
+    res[f'volatility_roc_{w}'] = vol.pct_change()
+    res[f'skew_roc_{w}'] = res[f'skew_{w}'].diff()
+    res[f'trend_strength_roc_{w}'] = trend_strength.diff()
+    
+    return res
 
 def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     if df is None: return None
-    df = df.copy() # Avoid SettingWithCopy if necessary
+    df = df.copy()
     
-    df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+    log_ret = np.log(df['close'] / df['close'].shift(1))
+    df['log_ret'] = log_ret
 
     # Pre-calc Garman-Klass Variance components
-    # Var_GK = 0.5 * (ln(H/L))^2 - (2*ln(2)-1) * (ln(C/O))^2
     log_hl = np.log(df['high'] / df['low'])
     log_co = np.log(df['close'] / df['open'])
     gk_var = 0.5 * (log_hl ** 2) - (2 * np.log(2) - 1) * (log_co ** 2)
-    # Ensure non-negative (theoretical issue, practically fine)
     gk_var = gk_var.clip(lower=0)
 
-    for w in windows:
-        # 1. Velocity (Cumulative Log Return) - Scale Invariant
-        df[f'velocity_{w}'] = df['log_ret'].rolling(w).sum()
+    # Parallelize calculations
+    results = Parallel(n_jobs=-1)(
+        delayed(_calc_window_features)(w, log_ret, df['close'], df['open'], df['high'], df['low'], gk_var) 
+        for w in windows
+    )
+    
+    # Merge results
+    new_cols = {}
+    for r in results:
+        new_cols.update(r)
         
-        # 2. Volatility (Garman-Klass) - More precise, uses OHLC
-        # Rolling Vol = sqrt( Rolling Mean of Variance )
-        df[f'volatility_{w}'] = np.sqrt(gk_var.rolling(w).mean())
-        
-        net_change = df['close'].diff(w).abs()
-        path = df['close'].diff().abs().rolling(w).sum()
-        df[f'efficiency_{w}'] = np.where(path==0, 0, net_change/path)
-        
-        df[f'autocorr_{w}'] = df['log_ret'].rolling(w).corr(df['log_ret'].shift(1))
-        
-        # 3. Skewness (Tail Asymmetry) - 3rd Moment
-        df[f'skew_{w}'] = df['log_ret'].rolling(w).skew()
-        
-        # 4. Price Z-Score (Mean Reversion / Deviation) - REDUNDANT with Velocity
-        # Distance from moving average, normalized by GK volatility
-        # ma = df['close'].rolling(w).mean()
-        # GK Volatility is percentage-based (e.g. 0.001 for 0.1%). 
-        # To normalize a price difference ($), we need price * vol ($).
-        # df[f'price_zscore_{w}'] = (df['close'] - ma) / (df[f'volatility_{w}'] * df['close']).replace(0, 1) 
-        
-        vol_norm = df[f'volatility_{w}'] / df[f'volatility_{w}'].rolling(1000, min_periods=100).mean()
-        df[f'trend_strength_{w}'] = df[f'efficiency_{w}'] * vol_norm
-        
-        # Rate of Change (ROC) Features
-        df[f'volatility_roc_{w}'] = df[f'volatility_{w}'].pct_change()
-        df[f'skew_roc_{w}'] = df[f'skew_{w}'].diff()
-        df[f'trend_strength_roc_{w}'] = df[f'trend_strength_{w}'].diff()
-        
-        # Drop redundant efficiency column (Survives only as trend_strength)
-        df.drop(columns=[f'efficiency_{w}'], inplace=True)
-        
-        # Drop redundant volatility_800 (Redundant with yang_zhang_vol_400)
-        if w == 800:
-            df.drop(columns=[f'volatility_{w}'], inplace=True)
-
-    return df
+    df_new = pd.DataFrame(new_cols, index=df.index)
+    return pd.concat([df, df_new], axis=1)
