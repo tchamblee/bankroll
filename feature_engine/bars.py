@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from . import ticks
 
 def create_volume_bars(primary_df, volume_threshold=1000):
     """
@@ -11,6 +12,14 @@ def create_volume_bars(primary_df, volume_threshold=1000):
     print(f"Generating Volume Bars (Threshold: {volume_threshold})...")
     
     df = primary_df.copy()
+
+    # Pre-process Ticks for Mid Price and Microstructure
+    if 'mid_price' not in df.columns and 'pricebid' in df.columns and 'priceask' in df.columns:
+        df['mid_price'] = (df['pricebid'] + df['priceask']) / 2
+
+    # Add Tick-Level Features (OFI, Spread, Mid-Vols)
+    if 'pricebid' in df.columns and 'priceask' in df.columns:
+        df = ticks.add_tick_microstructure_features(df)
     
     # Volume Proxy Logic - Forcing Tick Bars (1 per row) for robust sampling
     vol_series = pd.Series(1, index=df.index)
@@ -33,6 +42,12 @@ def create_volume_bars(primary_df, volume_threshold=1000):
         'aggressor_vol': 'sum'
     }
     
+    # Add Tick Aggregations if available
+    if 'ofi' in df.columns:
+        agg_dict['ofi'] = 'sum'
+    if 'spread' in df.columns:
+        agg_dict['spread'] = 'mean'
+    
     # Add Bid/Ask Size aggregation if available
     if 'sizebid' in df.columns and 'sizeask' in df.columns:
         agg_dict['sizebid'] = 'mean'
@@ -43,23 +58,34 @@ def create_volume_bars(primary_df, volume_threshold=1000):
         agg_dict['pricebid'] = 'mean'
         agg_dict['priceask'] = 'mean'
         
-    bars = df.groupby('bar_id').agg(agg_dict)
+    bars_df = df.groupby('bar_id').agg(agg_dict)
     
     # Flatten Columns
-    # The order depends on the keys. Groupby sorts keys? No, usually follows order.
-    # Safest way is to reconstruct based on what we added
-    
-    flat_cols = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol']
-    if 'sizebid' in agg_dict:
-        flat_cols.extend(['avg_bid_size', 'avg_ask_size'])
-    if 'pricebid' in agg_dict:
-        flat_cols.extend(['avg_bid_price', 'avg_ask_price'])
+    # Map back to standard names
+    new_cols = []
+    for col, func in bars_df.columns:
+        if col == 'ts_event':
+            new_cols.append('time_start' if func == 'first' else 'time_end')
+        elif col == 'mid_price':
+            if func == 'first': new_cols.append('open')
+            elif func == 'max': new_cols.append('high')
+            elif func == 'min': new_cols.append('low')
+            elif func == 'last': new_cols.append('close')
+        elif col == 'vol_proxy': new_cols.append('volume')
+        elif col == 'aggressor_vol': new_cols.append('net_aggressor_vol')
+        elif col == 'ofi': new_cols.append('tick_ofi')
+        elif col == 'spread' and func == 'mean': new_cols.append('tick_spread')
+        elif col == 'sizebid': new_cols.append('avg_bid_size')
+        elif col == 'sizeask': new_cols.append('avg_ask_size')
+        elif col == 'pricebid': new_cols.append('avg_bid_price')
+        elif col == 'priceask': new_cols.append('avg_ask_price')
+        else: new_cols.append(f'{col}_{func}')
         
-    bars.columns = flat_cols
-    bars.reset_index(drop=True, inplace=True)
+    bars_df.columns = new_cols
+    bars_df.reset_index(drop=True, inplace=True)
     
     # Basic Features
-    bars['ticket_imbalance'] = np.where(bars['volume'] == 0, 0, bars['net_aggressor_vol'] / bars['volume'])
+    bars_df['ticket_imbalance'] = np.where(bars_df['volume'] == 0, 0, bars_df['net_aggressor_vol'] / bars_df['volume'])
     
-    print(f"Generated {len(bars)} Volume Bars.")
-    return bars
+    print(f"Generated {len(bars_df)} Volume Bars.")
+    return bars_df

@@ -8,6 +8,8 @@ from . import gdelt
 from . import delta
 from . import utils
 from . import macro_voltage
+from . import intermarket
+from . import ticks
 
 class FeatureEngine:
     def __init__(self, data_dir):
@@ -71,6 +73,9 @@ class FeatureEngine:
 
     def add_delta_features(self, lookback=10):
         self.bars = delta.add_delta_features(self.bars, lookback)
+
+    def add_intermarket_features(self, correlators=None):
+        self.bars = intermarket.add_intermarket_features(self.bars, self.data_dir, correlators)
 
     def filter_survivors(self, config_path="data/survivors.json"):
         """

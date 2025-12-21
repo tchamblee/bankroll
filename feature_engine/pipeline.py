@@ -15,19 +15,20 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     engine = FeatureEngine(data_dir)
     
     # 1. Load Primary (EUR/USD)
+    # Using the RAW_TICKS pattern as confirmed by audit
     print("Loading Primary Ticker (EURUSD)...")
-    primary_df = engine.load_ticker_data("CLEAN_EURUSD*.parquet")
+    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
     if primary_df is None:
         print("❌ Failed to load primary data.")
         return None
         
     engine.create_volume_bars(primary_df, volume_threshold=volume_threshold)
     
-    # 2. Load Correlators
+    # 2. Load Correlators (Residuals / Betas)
     correlators = [
-        ("CLEAN_TNX*.parquet", "_tnx"), 
-        ("CLEAN_DXY*.parquet", "_dxy"), 
-        ("CLEAN_BUND*.parquet", "_bund")
+        ("RAW_TICKS_TNX*.parquet", "_tnx"), 
+        ("RAW_TICKS_DXY*.parquet", "_dxy"), 
+        ("RAW_TICKS_BUND*.parquet", "_bund")
     ]
     
     for ticker, suffix in correlators:
@@ -35,8 +36,12 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         if corr_df is not None:
             engine.add_correlator_residual(corr_df, suffix=suffix)
 
-    # DROP REDUNDANT RESIDUALS (Keep Betas, Drop Residuals for TNX/DXY as they are redundant with SPY)
-    # They survived beta check but failed residual check.
+    # 2b. Intermarket Robust Features (ES, ZN, 6E)
+    # These use the new Intermarket module for Divergence and Relative Strength
+    engine.add_intermarket_features()
+
+    # DROP REDUNDANT RESIDUALS 
+    # (Keep Betas, Drop Residuals for TNX/DXY as they are redundant with SPY/Other)
     if engine.bars is not None:
         drop_residuals = ['residual_tnx', 'residual_dxy']
         engine.bars.drop(columns=[c for c in drop_residuals if c in engine.bars.columns], inplace=True)
@@ -46,7 +51,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     engine.add_features_to_bars(windows=windows_list)
     
     # 4. Crypto Features
-    engine.add_crypto_features("CLEAN_IBIT.parquet")
+    engine.add_crypto_features("RAW_TICKS_IBIT*.parquet")
     
     # 5. GDELT Features
     gdelt_df = engine.load_gdelt_data()
