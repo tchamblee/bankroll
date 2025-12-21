@@ -129,7 +129,9 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     
     # 3. Calculate Full ICs (Pearson on Global Ranks)
     # efficient calculation for all survivors
-    full_corrs = ranked_df[survivors].corrwith(ranked_df[target_col])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        full_corrs = ranked_df[survivors].corrwith(ranked_df[target_col])
     full_corrs = full_corrs.fillna(0)
     
     # 4. Vectorized P-Value Calculation
@@ -203,7 +205,9 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
         
     # Calculate Correlation Matrix of Survivors (Pearson on Ranks)
     # This is O(M^2 * N_sample)
-    corr_matrix = corr_sample.corr(method='pearson')
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        corr_matrix = corr_sample.corr(method='pearson')
     
     # Iterate High Signal -> Low Signal
     for i, f1 in enumerate(sorted_survivors):
@@ -236,6 +240,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     print(f"🛡️  {len(final_survivors)} Survivors remaining.")
     
     # Save Survivors List
+    os.makedirs(config.DIRS['FEATURES_DIR'], exist_ok=True)
     survivors_path = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
     with open(survivors_path, "w") as f:
         json.dump(final_survivors, f, indent=4)

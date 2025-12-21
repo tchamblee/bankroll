@@ -249,6 +249,7 @@ class EvolutionaryAlphaFactory:
             for s in output[:5]:
                 print(f"  Gen {s['generation']:<2} | Sortino: {s['test_sortino']:.2f} | Ret: {s['test_return']*100:.2f}% | ID: {s['name']}")
             
+            os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
             print(f"\n💾 Saved Top {len(output)} Profitable Strategies from All Generations to {out_path}")

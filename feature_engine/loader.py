@@ -231,6 +231,7 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     """
     Loads GDELT GKG data and aggregates it to Daily resolution.
     Extracts Sentiment (Tone) and Attention (Volume) for EUR vs USD.
+    Uses chunked processing to avoid OOM on large datasets.
     """
     search_dir = config.DIRS['DATA_GDELT']
     if not os.path.exists(search_dir):
@@ -242,21 +243,46 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
         print(f"No GDELT files found in {search_dir}")
         return None
         
-    print(f"Loading {len(files)} GDELT files (Parallel)...")
+    print(f"Loading {len(files)} GDELT files (Parallel - Chunked)...")
     
-    with ProcessPoolExecutor() as executor:
-        results = list(executor.map(process_gdelt_file, files))
+    # Chunking Configuration
+    chunk_size = 100 # Number of files per chunk
+    max_workers = 6  # Limit concurrent workers to save RAM
+    intermediate_aggs = []
     
-    # Filter Nones
-    dfs = [r for r in results if r is not None]
+    # Process in Chunks
+    for i in range(0, len(files), chunk_size):
+        chunk_files = files[i : i + chunk_size]
+        print(f"  Processing chunk {i // chunk_size + 1} / {(len(files) - 1) // chunk_size + 1}...")
+        
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(process_gdelt_file, chunk_files))
+            
+            # Filter Nones
+            dfs = [r for r in results if r is not None]
+            
+            if dfs:
+                # Concat and Aggregate this chunk immediately to save memory
+                chunk_df = pd.concat(dfs, ignore_index=True)
+                chunk_agg = chunk_df.groupby('date').sum()
+                intermediate_aggs.append(chunk_agg)
+                
+            # Explicit clean up
+            del results
+            del dfs
+            
+        except Exception as e:
+            print(f"  ⚠️ Error processing chunk {i}: {e}")
+            continue
+
+    if not intermediate_aggs:
+        print("No valid GDELT data processed.")
+        return None
     
-    if not dfs: return None
-    
-    # Concat all partial aggregations
-    combined = pd.concat(dfs, ignore_index=True)
-    
-    # Final Aggregation by Date (summing up partials)
-    final_agg = combined.groupby('date').sum()
+    # Final Aggregation
+    print("Aggregating final results...")
+    final_agg = pd.concat(intermediate_aggs).groupby('date').sum()
     
     # Calculate weighted means
     gdelt_daily = pd.DataFrame(index=final_agg.index)

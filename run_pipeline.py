@@ -37,6 +37,17 @@ def run_step(script_command, description):
 
 def main():
     print("\n🌍 STARTING ALPHA FACTORY PIPELINE 🌍\n")
+
+    # Ensure all directories exist
+    for dir_path in config.DIRS.values():
+        if isinstance(dir_path, str) and not dir_path.endswith('.parquet'):
+            os.makedirs(dir_path, exist_ok=True)
+
+    run_step("clean_data_lake.py", "Data Cleaning & Normalization")
+    
+    # 2. Feature Engineering
+    run_step("generate_features.py", "Feature Matrix Generation")
+    run_step("verify_data_integrity.py", "Data Integrity Audit")
     
     # Feature Selection & Validation
     # Note: purge_features.py generates the survivors_*.json files needed later

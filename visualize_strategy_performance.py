@@ -144,6 +144,7 @@ def plot_performance(engine, strategies):
     plt.legend(loc='upper left', fontsize='small')
     plt.grid(True, alpha=0.3)
     
+    os.makedirs(config.DIRS['PLOTS_DIR'], exist_ok=True)
     output_path = os.path.join(config.DIRS['PLOTS_DIR'], "strategy_performance.png")
     plt.savefig(output_path)
     print(f"📸 Saved Performance Chart to {output_path}")
