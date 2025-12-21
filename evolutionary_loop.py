@@ -107,12 +107,12 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
-                # Complexity Penalty (Reduced: 0.25 per gene)
+                # Complexity Penalty
                 # This allows for slightly more complex strategies while still preventing bloat.
-                complexity_penalty = n_genes * 0.25
+                complexity_penalty = n_genes * 0.5
                 
                 # Apply Dynamic Dominance Penalty
-                dom_penalty = 0.0
+                dom_penalty = 0.5
                 strat_features = set()
                 
                 for gene in strat.long_genes + strat.short_genes:
@@ -177,14 +177,22 @@ class EvolutionaryAlphaFactory:
                     self.hall_of_fame.append((elite, elite.fitness))
             
             # 5. Next Gen
-            new_population = elites[:50] # Keep top 50 unchanged
+            new_population = elites[:50] # Keep top 50 unchanged (Elitism)
+            
+            # --- IMMIGRATION (Fresh Blood Injection) ---
+            # Prune the bottom and replace with 20% completely new random strategies
+            # This prevents the gene pool from stagnating around the initial population's limits.
+            n_immigrants = int(self.pop_size * 0.20)
+            for _ in range(n_immigrants):
+                new_population.append(self.factory.create_strategy(num_genes_range=(1, 2)))
+            
+            # Fill the rest with Children of Elites (Crossover)
             while len(new_population) < self.pop_size:
                 p1, p2 = random.sample(elites, 2)
                 child = self.crossover(p1, p2)
                 
                 # Mutation
-                mut_rate = 0.25 # Increased from 0.15
-                if horizon in [60, 240]: mut_rate = 0.50 # Boost exploration for hard horizons
+                mut_rate = 0.30 # Standardized exploration rate
 
                 for g in child.long_genes + child.short_genes:
                     if random.random() < mut_rate:

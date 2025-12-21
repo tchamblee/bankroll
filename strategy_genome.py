@@ -27,7 +27,116 @@ def gene_from_dict(d):
         return CrossGene(d['feature_left'], d['direction'], d['feature_right'])
     elif d['type'] == 'persistence':
         return PersistenceGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'squeeze':
+        return SqueezeGene(d['feature_short'], d['feature_long'], d['multiplier'])
+    elif d['type'] == 'range':
+        return RangeGene(d['feature'], d['min_val'], d['max_val'])
     return None
+
+class SqueezeGene:
+    """
+    'Compression' Gene.
+    Checks if a short-term metric is compressed relative to a long-term one.
+    Logic: Short < Long * Multiplier
+    Example: vol_20 < vol_100 * 0.7 (Squeeze)
+    """
+    def __init__(self, feature_short: str, feature_long: str, multiplier: float):
+        self.feature_short = feature_short
+        self.feature_long = feature_long
+        self.multiplier = multiplier
+        self.type = 'squeeze'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature_short, self.feature_long, self.multiplier)
+            if key in cache: return cache[key]
+
+        if self.feature_short not in context or self.feature_long not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            s_data = context[self.feature_short]
+            l_data = context[self.feature_long]
+            res = s_data < (l_data * self.multiplier)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.multiplier += random.uniform(-0.1, 0.1)
+            self.multiplier = max(0.1, min(1.5, self.multiplier))
+        if random.random() < 0.3:
+            self.feature_short = random.choice(features_pool)
+        if random.random() < 0.3:
+            self.feature_long = random.choice(features_pool)
+
+    def copy(self):
+        return SqueezeGene(self.feature_short, self.feature_long, self.multiplier)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature_short': self.feature_short,
+            'feature_long': self.feature_long,
+            'multiplier': self.multiplier
+        }
+
+    def __repr__(self):
+        return f"{self.feature_short} < {self.multiplier:.2f} * {self.feature_long}"
+
+class RangeGene:
+    """
+    'Zone' Gene.
+    Checks if a feature is inside a specific value range.
+    Logic: Min < Feature < Max
+    """
+    def __init__(self, feature: str, min_val: float, max_val: float):
+        self.feature = feature
+        self.min_val = min_val
+        self.max_val = max_val
+        self.type = 'range'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.min_val, self.max_val)
+            if key in cache: return cache[key]
+
+        if self.feature not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[self.feature]
+            res = (data > self.min_val) & (data < self.max_val)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.4:
+            # Shift the range
+            shift = (self.max_val - self.min_val) * 0.1 * random.choice([-1, 1])
+            self.min_val += shift
+            self.max_val += shift
+        if random.random() < 0.4:
+            # Expand/Contract
+            change = (self.max_val - self.min_val) * 0.1
+            self.min_val -= change
+            self.max_val += change
+        if random.random() < 0.1:
+            self.feature = random.choice(features_pool)
+
+    def copy(self):
+        return RangeGene(self.feature, self.min_val, self.max_val)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'min_val': self.min_val,
+            'max_val': self.max_val
+        }
+
+    def __repr__(self):
+        return f"{self.min_val:.2f} < {self.feature} < {self.max_val:.2f}"
 
 class CrossGene:
     """
@@ -620,15 +729,15 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 15% Consecutive Gene (Pattern)
-        if rand_val < 0.15:
+        # 10% Consecutive Gene (Pattern)
+        if rand_val < 0.10:
             direction = random.choice(['up', 'down'])
             op = random.choice(['>', '=='])
             count = random.randint(2, 6)
             return ConsecutiveGene(direction, op, count)
             
-        # 15% Persistence Gene (New Filter)
-        elif rand_val < 0.30:
+        # 10% Persistence Gene (Filter)
+        elif rand_val < 0.20:
             feature = random.choice(pool)
             op = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -636,8 +745,8 @@ class GenomeFactory:
             window = random.randint(3, 10)
             return PersistenceGene(feature, op, threshold, window)
 
-        # 15% Relational Gene (Context)
-        elif rand_val < 0.45:
+        # 10% Relational Gene (Context)
+        elif rand_val < 0.30:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -645,17 +754,34 @@ class GenomeFactory:
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
             
-        # 15% Cross Gene (Event)
-        elif rand_val < 0.60:
+        # 10% Cross Gene (Event)
+        elif rand_val < 0.40:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
                 feature_right = random.choice(pool)
             direction = random.choice(['above', 'below'])
             return CrossGene(feature_left, direction, feature_right)
+
+        # 15% Squeeze Gene (Compression)
+        elif rand_val < 0.55:
+            feature_short = random.choice(pool)
+            feature_long = random.choice(pool)
+            while feature_long == feature_short and len(pool) > 1:
+                feature_long = random.choice(pool)
+            multiplier = random.uniform(0.5, 0.95)
+            return SqueezeGene(feature_short, feature_long, multiplier)
             
-        # 20% Delta Gene (Momentum)
-        elif rand_val < 0.80:
+        # 15% Range Gene (Zone)
+        elif rand_val < 0.70:
+            feature = random.choice(pool)
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            center = stats['mean'] + random.uniform(-1, 1) * stats['std']
+            width = random.uniform(0.5, 2.0) * stats['std']
+            return RangeGene(feature, center - width/2, center + width/2)
+            
+        # 15% Delta Gene (Momentum)
+        elif rand_val < 0.85:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -663,7 +789,7 @@ class GenomeFactory:
             lookback = random.choice(VALID_DELTA_LOOKBACKS) 
             return DeltaGene(feature, operator, threshold, lookback)
             
-        # 20% ZScore Gene (Statistical Extreme)
+        # 15% ZScore Gene (Statistical Extreme)
         else:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])

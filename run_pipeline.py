@@ -43,16 +43,16 @@ def main():
         if isinstance(dir_path, str) and not dir_path.endswith('.parquet'):
             os.makedirs(dir_path, exist_ok=True)
 
-    # run_step("clean_data_lake.py", "Data Cleaning & Normalization")
+    run_step("clean_data_lake.py", "Data Cleaning & Normalization")
     
     # 2. Feature Engineering
-    # run_step("generate_features.py", "Feature Matrix Generation")
-    # run_step("verify_data_integrity.py", "Data Integrity Audit")
+    run_step("generate_features.py", "Feature Matrix Generation")
+    run_step("verify_data_integrity.py", "Data Integrity Audit")
     
     # Feature Selection & Validation
     # Note: purge_features.py generates the survivors_*.json files needed later
-    # run_step("purge_features.py", "Feature Hunger Games (Selection)")
-    # run_step("validate_features.py", "Feature Validation (OOS Check)")
+    run_step("purge_features.py", "Feature Hunger Games (Selection)")
+    run_step("validate_features.py", "Feature Validation (OOS Check)")
         
     # 4. Strategy Evolution (The Brain)
     for horizon in config.PREDICTION_HORIZONS:
