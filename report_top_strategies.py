@@ -88,8 +88,13 @@ def evaluate_batch(backtester, batch):
     costs = lot_change * backtester.standard_lot * prices * backtester.total_cost_pct
     
     full_net_returns = (gross_pnl - costs) / backtester.account_size
-    full_rets_pct = np.sum(full_net_returns, axis=0)
-    full_trades = np.sum(lot_change, axis=0)
+
+    # FIX: Exclude Warmup Period (3200 bars)
+    # Strategies use features with lookbacks up to 3200 bars. Initial signals are invalid.
+    warmup_idx = 3200
+    
+    full_rets_pct = np.sum(full_net_returns[warmup_idx:], axis=0)
+    full_trades = np.sum(lot_change[warmup_idx:], axis=0)
 
     results = []
     for i, strat in enumerate(batch):
