@@ -275,9 +275,14 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     # Panic Score Logic (re-implemented)
     # 'panic_score': (global_polarity * -1) if global_tone < -5 else 0
     # Use Z-Score for robustness
-    tone_mean = gdelt_daily['global_tone'].mean()
-    tone_std = gdelt_daily['global_tone'].std()
-    if tone_std == 0: tone_std = 1.0
+    # FIX: Use Expanding Window to avoid Lookahead Bias
+    tone_mean = gdelt_daily['global_tone'].expanding(min_periods=5).mean()
+    tone_std = gdelt_daily['global_tone'].expanding(min_periods=5).std()
+    
+    # Fill early NaNs with first valid or 0/1 defaults
+    tone_mean = tone_mean.bfill().fillna(0)
+    tone_std = tone_std.bfill().fillna(1.0)
+    
     # gdelt_daily['tone_zscore'] = (gdelt_daily['global_tone'] - tone_mean) / tone_std
     tone_zscore = (gdelt_daily['global_tone'] - tone_mean) / tone_std
     

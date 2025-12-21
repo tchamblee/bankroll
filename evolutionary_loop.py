@@ -19,9 +19,6 @@ class EvolutionaryAlphaFactory:
         self.survivors_file = survivors_file
         self.prediction_mode = prediction_mode
         
-        self.factory = GenomeFactory(survivors_file)
-        self.factory.set_stats(data)
-        
         # Aligned with refactored BacktestEngine
         self.backtester = BacktestEngine(
             data, 
@@ -30,6 +27,11 @@ class EvolutionaryAlphaFactory:
             annualization_factor=181440,
             account_size=config.ACCOUNT_SIZE
         )
+        
+        self.factory = GenomeFactory(survivors_file)
+        # FIX: Use only Training Data for Genome Stats (avoid lookahead in mutation)
+        train_data = data.iloc[:self.backtester.train_idx]
+        self.factory.set_stats(train_data)
         
         self.population = []
         self.hall_of_fame = []
