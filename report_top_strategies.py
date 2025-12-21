@@ -206,39 +206,86 @@ def main():
             # Sort by Robust Return (Min of 3)
             df = df.sort_values(by='Robust%', ascending=False)
             
-            # Prune to Top 10 as requested
-            top_10_df = df.head(10).copy()
+            # Sort by Robust Return (Min of 3)
+            df = df.sort_values(by='Robust%', ascending=False)
+            
+            # --- CORRELATION FILTERING (Top 5 Unique) ---
+            print("  Performing Correlation Filter (Limit 5, Threshold 0.7)...")
+            
+            results_map = {res['Strategy'].name: res for res in all_horizon_results}
+            sorted_names = df['Name'].values
+            candidates = [results_map[name]['Strategy'] for name in sorted_names]
+            
+            # Optimization: Check top 50 candidates
+            top_candidates = candidates[:50]
+            selected_strats = []
+            
+            if top_candidates:
+                # Generate signal matrix for candidates
+                # Note: This might take a moment
+                sig_matrix = backtester.generate_signal_matrix(top_candidates)
+                
+                selected_indices = []
+                
+                for i in range(len(top_candidates)):
+                    if len(selected_strats) >= 5: break
+                    
+                    is_uncorrelated = True
+                    current_sig = sig_matrix[:, i]
+                    
+                    # Check against already selected
+                    for existing_idx in selected_indices:
+                        existing_sig = sig_matrix[:, existing_idx]
+                        
+                        # Calculate Correlation (Pearson)
+                        # Handle constant signals to avoid NaN
+                        if np.std(current_sig) == 0 or np.std(existing_sig) == 0:
+                            corr = 0 # Treat constant as uncorrelated (neutral)
+                        else:
+                            corr = np.corrcoef(current_sig, existing_sig)[0, 1]
+                            
+                        if abs(corr) > 0.7:
+                            is_uncorrelated = False
+                            break
+                    
+                    if is_uncorrelated:
+                        selected_indices.append(i)
+                        selected_strats.append(top_candidates[i])
+            
+            # Create DF for display
+            selected_names = {s.name for s in selected_strats}
+            top_unique_df = df[df['Name'].isin(selected_names)].copy()
+            # Restore sort order
+            top_unique_df = top_unique_df.sort_values(by='Robust%', ascending=False)
             
             # Formatting for Display
-            display_df = top_10_df.copy()
+            display_df = top_unique_df.copy()
             for col in ['Ret%(Val)', 'Ret%(Test)', 'Ret%(Full)', 'Robust%', 'Sortino(OOS)']:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
                 
             print(display_df.to_string(index=False))
             
-            # Save Top 10 to JSON
-            top_10_names = set(top_10_df['Name'].values)
-            top_10_strategies = []
-            for res in all_horizon_results:
-                if res['Strategy'].name in top_10_names:
-                    s_dict = res['Strategy'].to_dict()
-                    # Add computed metrics for reference
-                    s_dict['metrics'] = {
-                        'robust_return': res['Robust_Ret'],
-                        'val_return': res['Ret_Val'],
-                        'test_return': res['Ret_Test'],
-                        'full_return': res['Ret_Full'],
-                        'sortino_oos': res['Sortino_OOS']
-                    }
-                    top_10_strategies.append(s_dict)
+            # Save Top 5 Unique to JSON
+            top_unique_strategies = []
+            for s in selected_strats:
+                res = results_map[s.name]
+                s_dict = s.to_dict()
+                s_dict['metrics'] = {
+                    'robust_return': res['Robust_Ret'],
+                    'val_return': res['Ret_Val'],
+                    'test_return': res['Ret_Test'],
+                    'full_return': res['Ret_Full'],
+                    'sortino_oos': res['Sortino_OOS']
+                }
+                top_unique_strategies.append(s_dict)
             
-            # Sort JSON list to match the DataFrame order
-            top_10_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
+            # Sort
+            top_unique_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
             
-            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top10.json")
+            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
             with open(out_path, "w") as f:
-                json.dump(top_10_strategies, f, indent=4)
-            print(f"  💾 Pruned to Top 10. Saved to: {out_path}")
+                json.dump(top_unique_strategies, f, indent=4)
+            print(f"  💾 Saved Top 5 Unique Strategies to: {out_path}")
                 
         except Exception as e:
             print(f"  Error processing horizon {h}: {e}")
