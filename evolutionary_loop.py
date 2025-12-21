@@ -106,9 +106,9 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
-                # Complexity Penalty (Aggressive: 0.5 per gene)
+                # Complexity Penalty (Aggressive: 0.2 per gene)
                 # This strongly favors 1-gene strategies over 2-gene strategies.
-                complexity_penalty = n_genes * 0.5
+                complexity_penalty = n_genes * 0.2
                 
                 # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.0
