@@ -41,9 +41,9 @@ def main():
     # 1. Data ETL (Conditional Skip)
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         run_step("clean_data_lake.py", "Data Cleaning & Normalization")
-        run_step("verify_data_integrity.py", "Data Integrity Audit")
         # 2. Feature Engineering
         run_step("generate_features.py", "Feature Matrix Generation")
+        run_step("verify_data_integrity.py", "Data Integrity Audit")
     else:
         print("⏩ Skipping Data ETL (Feature Matrix Exists)")
 
@@ -64,7 +64,6 @@ def main():
     
     # 5. Analysis & Visualization
     run_step("report_top_strategies.py", "Strategy Selection & Reporting")
-    run_step("run_ensemble_strategy.py", "Ensemble 'The Brain' Backtest")
     run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
     run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
     run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")

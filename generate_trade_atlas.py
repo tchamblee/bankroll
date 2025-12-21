@@ -7,12 +7,17 @@ import sys
 import config
 from strategy_genome import Strategy
 from backtest_engine import BacktestEngine
+from run_mutex_strategy import load_all_candidates, filter_global_correlation, simulate_mutex_portfolio
 
 def load_and_rank_strategies(horizon):
-    # Prefer the Top 10 file which contains pre-calculated metrics from report_top_strategies.py
-    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
+    # Prefer the Top 5 Unique file which contains pre-calculated metrics from report_top_strategies.py
+    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
     if not os.path.exists(file_path):
-        # Fallback to raw file (metrics might be missing/defaulted to -999)
+        # Fallback to Top 10 if Top 5 Unique doesn't exist (legacy support)
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
+    
+    if not os.path.exists(file_path):
+        # Final Fallback to raw file (metrics might be missing/defaulted to -999)
         file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
         
     if not os.path.exists(file_path):
