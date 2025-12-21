@@ -360,7 +360,7 @@ if __name__ == "__main__":
     print(f"Useless Features (Failed ALL Horizons): {len(useless_features)}")
     
     if useless_features:
-        print(f"\n🗑️  TRULY USELESS FEATURES (To be purged):")
+        print(f"\n🗑️  Feature Drop Summary (Failed in ALL Horizons):")
         
         # Categorize
         dead_list = []
@@ -379,23 +379,26 @@ if __name__ == "__main__":
             else:
                 weak_list.append(f)
                 
+        # Helper to print truncated list
+        def print_truncated(label, items, icon=""):
+            items = sorted(items)
+            limit = 10
+            print(f"\n{icon} {label} [{len(items)}]:")
+            if len(items) > limit:
+                shown = items[:limit]
+                print(f"   {', '.join(shown)} ... and {len(items)-limit} more")
+            else:
+                print(f"   {', '.join(items)}")
+
         # Print Groups
         if dead_list:
-            print(f"\n❌ DEAD (Zero Variance) [{len(dead_list)}]:")
-            print(f"   {', '.join(sorted(dead_list))}")
+            print_truncated("DEAD (Zero Variance)", dead_list, "❌")
             
         if redundant_list:
-            print(f"\n👯 REDUNDANT (Collinear) [{len(redundant_list)}]:")
-            # For redundancy, maybe listing simple names is enough, 
-            # as the specific partner changes per horizon.
-            print(f"   {', '.join(sorted(redundant_list))}")
+            print_truncated("REDUNDANT (Collinear)", redundant_list, "👯")
             
         if weak_list:
-            print(f"\n📉 LOW SIGNAL (Weak/Unstable) [{len(weak_list)}]:")
-            # Wrap text for readability if list is long
-            import textwrap
-            wrapped_list = textwrap.fill(', '.join(sorted(weak_list)), width=80, initial_indent='   ', subsequent_indent='   ')
-            print(wrapped_list)
+            print_truncated("LOW SIGNAL (Weak/Unstable)", weak_list, "📉")
             
     else:
         print("\n✅ Clean Feature Set! No completely useless features found.")

@@ -183,9 +183,9 @@ def main():
         print(f"\n  👑 Selected Champion: {top_strat.name}")
         
         # 2. Generate Signals
-        print("  Generating Signals...")
-        backtester.ensure_context([top_strat])
-        signals = top_strat.generate_signal(backtester.context, cache={})
+        print("  Generating Signals (with Time Filters)...")
+        # Use backtester to apply liquid hours and weekend filters
+        signals = backtester.generate_signal_matrix([top_strat]).flatten()
         
         # 3. Simulate Trades
         # Barriers: Time = Horizon, SL = 0.5%

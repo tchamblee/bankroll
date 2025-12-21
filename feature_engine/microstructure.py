@@ -26,10 +26,7 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
         res[f'pres_trend_{w}'] = pres_imbalance.rolling(w).mean()
         res[f'price_pressure_corr_{w}'] = log_ret.rolling(w).corr(pres_imbalance)
 
-    # 6. Flow Autocorrelation
-    res[f'flow_autocorr_{w}'] = ticket_imbalance.rolling(w).corr(ticket_imbalance.shift(1))
-    
-    # 7. Order Book Alignment
+    # 6. Order Book Alignment
     if pres_imbalance is not None:
         alignment = ticket_imbalance * pres_imbalance
         res[f'order_book_alignment_{w}'] = alignment.rolling(w).mean()

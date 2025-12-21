@@ -47,22 +47,18 @@ def add_gdelt_features(df, gdelt_df):
     merged[existing_cols] = merged[existing_cols].ffill().fillna(0)
     
     # Derived Physics Features
-    # 1. Sentiment Divergence (Force Differential)
-    merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
-    
-    # 2. Attention Divergence (Mass Differential)
+    # 1. Attention Divergence (Mass Differential)
     merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
-    
-    # 3. News Velocity (Rate of Change of Attention)
-    # This is essentially Delta of Volume
-    merged['news_velocity_eur'] = merged['news_vol_eur'].diff().fillna(0)
-    merged['news_velocity_usd'] = merged['news_vol_usd'].diff().fillna(0)
     
     # 4. Regime/Panic Features
     # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
     
     # Drop temp date column and Redundant Features
-    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 'news_vol_usd', 'epu_usd', 'news_vol_eur', 'global_polarity', 'news_tone_diff']
+    # REMOVED WEAK SIGNALS: central_bank_tone, news_tone_*, news_velocity_*, energy_crisis_eur
+    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 
+                 'news_vol_usd', 'epu_usd', 'news_vol_eur', 'global_polarity', 
+                 'panic_score', 'central_bank_tone', 'news_tone_eur', 'news_tone_usd', 
+                 'energy_crisis_eur', 'news_vol_zscore']
     merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     
     return merged

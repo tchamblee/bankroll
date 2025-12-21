@@ -226,15 +226,19 @@ class BacktestEngine:
         signal_matrix = np.hstack(results)
         
         # --- TIME FILTER (User Request) ---
-        # Force flat (0) outside of liquid hours
+        # Force flat (0) outside of liquid hours and on weekends
         if 'time_hour' in self.context:
             hours = self.context['time_hour']
             # London Open (8) to NY Close (22)
-            valid_hours = (hours >= config.TRADING_START_HOUR) & (hours <= config.TRADING_END_HOUR)
+            market_open = (hours >= config.TRADING_START_HOUR) & (hours <= config.TRADING_END_HOUR)
+            
+            # Weekend Filter (0=Mon, 4=Fri, 5=Sat, 6=Sun)
+            if 'time_weekday' in self.context:
+                is_weekday = self.context['time_weekday'] < 5
+                market_open = market_open & is_weekday
+                
             # Apply mask: Any signal outside valid hours becomes 0
-            # signal_matrix is (Rows, Strats). valid_hours is (Rows,).
-            # Broadcasting works automatically if we reshape valid_hours to (Rows, 1)
-            signal_matrix = signal_matrix * valid_hours[:, np.newaxis]
+            signal_matrix = signal_matrix * market_open[:, np.newaxis]
         
         return signal_matrix
 

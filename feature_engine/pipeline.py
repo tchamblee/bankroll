@@ -27,8 +27,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     correlators = [
         ("CLEAN_TNX*.parquet", "_tnx"), 
         ("CLEAN_DXY*.parquet", "_dxy"), 
-        ("CLEAN_BUND*.parquet", "_bund"),
-        ("CLEAN_SPY*.parquet", "_spy")
+        ("CLEAN_BUND*.parquet", "_bund")
     ]
     
     for ticker, suffix in correlators:

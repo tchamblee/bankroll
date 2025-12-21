@@ -26,13 +26,10 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     trend_strength = efficiency * vol_norm
     res[f'trend_strength_{w}'] = trend_strength
     
-    # 4. Autocorrelation
-    res[f'autocorr_{w}'] = log_ret.rolling(w).corr(log_ret.shift(1))
-    
-    # 5. Skewness
+    # 4. Skewness
     res[f'skew_{w}'] = log_ret.rolling(w).skew()
     
-    # 6. ROC Features
+    # 5. ROC Features
     res[f'volatility_roc_{w}'] = vol.pct_change()
     res[f'skew_roc_{w}'] = res[f'skew_{w}'].diff()
     res[f'trend_strength_roc_{w}'] = trend_strength.diff()
