@@ -30,6 +30,10 @@ def get_gene_description(gene):
         return f"{gene.feature_left} CROSS {gene.direction.upper()} {gene.feature_right}"
     elif gene.type == 'persistence':
         return f"({gene.feature} {gene.operator} {gene.threshold:.2f}) FOR {gene.window} BARS"
+    elif gene.type == 'squeeze':
+        return f"{gene.feature_short} < {gene.multiplier:.2f} * {gene.feature_long}"
+    elif gene.type == 'range':
+        return f"{gene.min_val:.2f} < {gene.feature} < {gene.max_val:.2f}"
     return "Unknown"
 
 def evaluate_batch(backtester, batch):
