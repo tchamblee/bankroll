@@ -78,64 +78,37 @@ def get_gene_description(gene_dict):
     return "Unknown"
 
 def evaluate_batch(backtester, batch, horizon):
-    """Evaluates a batch on Val, Test, and Full sets, returning a list of result dicts."""
-    # 1. Validation Set (60-80%)
+    """Evaluates a batch on Train, Val, and Test sets, returning a list of result dicts."""
+    # 1. Training Set (0-60%) - For Overfitting Check
+    res_train = backtester.evaluate_population(batch, set_type='train', time_limit=horizon)
+    
+    # 2. Validation Set (60-80%) - Used for Selection (Semi-In-Sample)
     res_val = backtester.evaluate_population(batch, set_type='validation', time_limit=horizon)
-    # 2. Test Set (80-100%)
+    
+    # 3. Test Set (80-100%) - PURE OOS
     res_test = backtester.evaluate_population(batch, set_type='test', time_limit=horizon)
-    
-    # 3. Full Set (Simulation)
-    # Generate full signals first
-    full_signals = backtester.generate_signal_matrix(batch)
-    prices = backtester.close_vec
-    times = backtester.times_vec
-    
-    # Use standardized simulator for Full set metrics
-    net_returns_full, trades_count_full = backtester.run_simulation_batch(
-        full_signals, 
-        batch,
-        prices, 
-        times, 
-        time_limit=horizon
-    )
-    
-    # Exclude Warmup (3200 bars)
-    warmup_idx = 3200
-    
-    # Sum returns after warmup
-    full_rets_pct = np.sum(net_returns_full[warmup_idx:], axis=0)
-    
-    # Trades count - already from simulator, but that includes warmup trades.
-    # To be precise, we need trades starting after warmup.
-    # But for quick reporting, total trades is okay, or we can approximate.
-    # Let's trust the simulator result for now as 'total trades'. 
-    # Or, if strict, we'd need to filter the trade objects, but run_simulation_batch 
-    # returns counts, not objects (for speed).
     
     results = []
     for i, strat in enumerate(batch):
-        # Basic filtering: Must have traded
-        if trades_count_full[i] == 0: continue
-            
+        ret_train = res_train.iloc[i]['total_return']
         ret_val = res_val.iloc[i]['total_return']
         ret_test = res_test.iloc[i]['total_return']
-        ret_full = full_rets_pct[i]
         
-        # Robustness Metric: Mean Return across all 3 periods
-        robust_ret = np.mean([ret_val, ret_test, ret_full])
+        # Robust Return: Mean of Val + Test (Excluding Train)
+        robust_ret = np.mean([ret_val, ret_test])
         
-        # STRICT FILTER: Must be profitable in OOS (Test) and Full simulation
-        if ret_test <= 0 or res_test.iloc[i]['sortino'] <= 0.1 or ret_full <= 0:
+        # STRICT FILTER: Must be profitable in OOS (Test) and Robust > 0
+        if ret_test <= 0 or res_test.iloc[i]['sortino'] <= 0.1 or robust_ret <= 0:
             continue
 
         results.append({
             'Strategy': strat,
+            'Ret_Train': ret_train,
             'Ret_Val': ret_val,
             'Ret_Test': ret_test,
-            'Ret_Full': ret_full,
             'Robust_Ret': robust_ret,
             'Sortino_OOS': res_test.iloc[i]['sortino'],
-            'Trades': trades_count_full[i],
+            'Trades': res_test.iloc[i]['trades'], # Use Test trades count
             'Gen': getattr(strat, 'generation_found', '?')
         })
         
@@ -143,9 +116,9 @@ def evaluate_batch(backtester, batch, horizon):
 
 def main():
     print("\n" + "="*120)
-    print("🏆 APEX STRATEGY REPORT (ROBUSTNESS CHECK) 🏆")
+    print("🏆 APEX STRATEGY REPORT (ROBUST OOS) 🏆")
     print(f"Account: ${config.ACCOUNT_SIZE:,.0f} | Lots: {config.MIN_LOTS}-{config.MAX_LOTS} | Cost: {config.COST_BPS} bps + Spread")
-    print("Sorting by 'Robust Return' = mean(Val, Test, Full)")
+    print("Sorting by 'Robust Return' = mean(Val, Test)")
     print("="*120 + "\n")
     
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -205,9 +178,9 @@ def main():
                 df_rows.append({
                     'Gen': res['Gen'],
                     'Name': strat.name,
+                    'Ret%(Train)': res['Ret_Train'] * 100,
                     'Ret%(Val)': res['Ret_Val'] * 100,
                     'Ret%(Test)': res['Ret_Test'] * 100,
-                    'Ret%(Full)': res['Ret_Full'] * 100,
                     'Robust%': res['Robust_Ret'] * 100,
                     'Sortino(OOS)': res['Sortino_OOS'],
                     'Trades': int(res['Trades']),
@@ -217,8 +190,8 @@ def main():
             global_gene_counts.update(horizon_genes)
             
             df = pd.DataFrame(df_rows)
-            # Sort by OOS Sortino (Priority) then Robust Return
-            df = df.sort_values(by=['Sortino(OOS)', 'Robust%'], ascending=[False, False])
+            # Sort by Robust Return (Primary) then Sortino OOS (Secondary)
+            df = df.sort_values(by=['Robust%', 'Sortino(OOS)'], ascending=[False, False])
             
             # --- CORRELATION FILTERING (Top 5 Unique) ---
             print("  Performing Correlation Filter (Limit 5, Threshold 0.7)...")
@@ -262,7 +235,7 @@ def main():
             
             # Formatting for Display
             display_df = top_unique_df.copy()
-            for col in ['Ret%(Val)', 'Ret%(Test)', 'Ret%(Full)', 'Robust%', 'Sortino(OOS)']:
+            for col in ['Ret%(Train)', 'Ret%(Val)', 'Ret%(Test)', 'Robust%', 'Sortino(OOS)']:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
                 
             print(display_df.to_string(index=False))
@@ -274,9 +247,9 @@ def main():
                 s_dict = s.to_dict()
                 s_dict['metrics'] = {
                     'robust_return': float(res['Robust_Ret']),
+                    'train_return': float(res['Ret_Train']),
                     'val_return': float(res['Ret_Val']),
                     'test_return': float(res['Ret_Test']),
-                    'full_return': float(res['Ret_Full']),
                     'sortino_oos': float(res['Sortino_OOS'])
                 }
                 top_unique_strategies.append(s_dict)
