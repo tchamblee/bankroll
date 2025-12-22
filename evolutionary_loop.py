@@ -114,7 +114,7 @@ class EvolutionaryAlphaFactory:
                 
                 # Complexity Penalty
                 # This allows for slightly more complex strategies while still preventing bloat.
-                complexity_penalty = n_genes * 0.5
+                complexity_penalty = n_genes * 0.2
                 
                 # Apply Dynamic Dominance Penalty
                 dom_penalty = 0.5
@@ -133,9 +133,9 @@ class EvolutionaryAlphaFactory:
 
                 for f in strat_features:
                     # Penalty scales with popularity: Ruthless Diversification
-                    # >10% usage triggers penalty (usage_ratio * 10.0)
+                    # >20% usage triggers penalty (usage_ratio * 10.0)
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > 0.10:
+                    if usage_ratio > 0.20:
                          dom_penalty += usage_ratio * 10.0
                 
                 total_penalty = complexity_penalty + dom_penalty
@@ -160,7 +160,7 @@ class EvolutionaryAlphaFactory:
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 10: # Increased patience for robust convergence
+            if generations_without_improvement >= 20: # Increased patience for robust convergence
                 print(f"🛑 Early Stopping Triggered (No Robust Improvement).")
                 break
             
