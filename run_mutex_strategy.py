@@ -36,11 +36,11 @@ def load_all_candidates():
                 
                 # Filter: Must be PROFITABLE on the FULL dataset
                 # Since Mutex runs on the full history, we can't include strategies that lose money overall.
-                total_ret = metrics.get('full_return', 0) 
-                if s.sortino > 0 and total_ret > 0:
+                # using robust_return as proxy since full_return is not explicitly calculated/saved in top strategies
+                if s.sortino > 0 and s.robust > 0:
                     candidates.append(s)
                 else:
-                    print(f"  Skipping Unprofitable Strategy: {s.name} (H{h}) | Sortino: {s.sortino:.2f} | Ret: {total_ret:.4f}")
+                    print(f"  Skipping Unprofitable Strategy: {s.name} (H{h}) | Sortino: {s.sortino:.2f} | Robust: {s.robust:.4f}")
 
             except Exception as e:
                 # print(f"Error loading {h}: {e}")
