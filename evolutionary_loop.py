@@ -44,8 +44,8 @@ class EvolutionaryAlphaFactory:
 
     def initialize_population(self):
         # print(f"🧬 Spawning {self.pop_size} lot-based strategies (1-3 lots)...")
-        # strategies will now have 1-2 genes to allow up/downsizing
-        self.population = [self.factory.create_strategy((1, 2)) for _ in range(self.pop_size)]
+        # strategies will now have 3-4 genes to allow more complex logic
+        self.population = [self.factory.create_strategy((2, 3)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
@@ -75,8 +75,8 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
-            # 1. Evaluate using Rolling Walk-Forward Validation (4 Folds)
-            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon)
+            # 1. Evaluate using Rolling Walk-Forward Validation (5 Folds)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=5, time_limit=horizon)
             
             # 2. Filtering & Scoring
             wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
@@ -185,11 +185,11 @@ class EvolutionaryAlphaFactory:
             new_population = elites[:50] # Keep top 50 unchanged (Elitism)
             
             # --- IMMIGRATION (Fresh Blood Injection) ---
-            # Prune the bottom and replace with 20% completely new random strategies
-            # This prevents the gene pool from stagnating around the initial population's limits.
-            n_immigrants = int(self.pop_size * 0.20)
+            # Prune the bottom and replace with 30% completely new random strategies
+            # Increased from 20% to 30% to combat stagnation in OOS
+            n_immigrants = int(self.pop_size * 0.30)
             for _ in range(n_immigrants):
-                new_population.append(self.factory.create_strategy((1, 2)))
+                new_population.append(self.factory.create_strategy((2, 3)))
             
             # Fill the rest with Children of Elites (Crossover)
             while len(new_population) < self.pop_size:

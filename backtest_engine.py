@@ -386,14 +386,27 @@ class BacktestEngine:
             final_sortino = sortino[i]
             
             # Soft Penalty for Low Trades (Create Gradient)
-            if trades_count[i] < 20:
-                penalty = (20 - trades_count[i]) * 0.2
+            # Aligned with WFV: Relaxed to 5
+            if trades_count[i] < 5:
+                penalty = (5 - trades_count[i]) * 0.2
                 final_sortino -= penalty
             
             if trades_count[i] == 0:
                 final_sortino = -5.0
                 
-            if stability_ratio[i] > 0.5 and total_ret[i] > 0: final_sortino *= 0.5
+            # Stability Penalty
+            # Aligned with WFV: Relaxed to 0.6
+            if stability_ratio[i] > 0.6 and total_ret[i] > 0: final_sortino *= 0.6
+            
+            # --- COST COVERAGE PENALTY (Aligned with WFV) ---
+            avg_trade_ret = total_ret[i] / (trades_count[i] + 1e-9)
+            cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
+            if avg_trade_ret < cost_threshold:
+                 final_sortino -= 5.0
+            
+            # Volume Bonus
+            if trades_count[i] > 10:
+                final_sortino *= np.log10(trades_count[i])
             
             strat.fitness = final_sortino
             results.append({
@@ -456,16 +469,35 @@ class BacktestEngine:
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
             # Soft Penalty for WFV (Min Trades)
+            # Relaxed to 5 to allow sniper strategies (high precision, low freq)
             sortino = np.nan_to_num(sortino, nan=-2.0)
-            penalty = np.maximum(0, (10 - trades_count) * 0.2)
+            penalty = np.maximum(0, (5 - trades_count) * 0.2)
             sortino -= penalty
             
-            # Stability Penalty: If one trade is > 50% of total return, penalize heavily
-            unstable_mask = (stability_ratio > 0.5) & (total_ret > 0)
-            sortino[unstable_mask] *= 0.5
+            # Stability Penalty: If one trade is > 60% of total return, penalize moderately
+            # Relaxed from 0.5/0.5 to 0.6/0.6 to allow for big trend days
+            unstable_mask = (stability_ratio > 0.6) & (total_ret > 0)
+            sortino[unstable_mask] *= 0.6
+            
+            # --- COST COVERAGE PENALTY ---
+            # Force strategies to target moves significantly larger than the spread/commissions
+            avg_trade_ret = total_ret / (trades_count + 1e-9)
+            # Threshold: 1.1x the cost (Relaxed from 1.5x to increase frequency)
+            cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
+            
+            # Vectorized penalty application
+            low_profit_mask = avg_trade_ret < cost_threshold
+            sortino[low_profit_mask] -= 5.0
+            
+            # --- VOLUME BONUS ---
+            # Reward strategies that trade more frequently to improve statistical significance
+            # log10(10) = 1.0 (No bonus)
+            # log10(100) = 2.0 (Double score)
+            volume_bonus = np.where(trades_count > 10, np.log10(trades_count), 1.0)
+            sortino *= volume_bonus
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
-            sortino = np.minimum(sortino, 10.0)
+            sortino = np.minimum(sortino, 15.0) # Increased cap for bonus
             
             fold_scores[:, f] = sortino
             
@@ -474,6 +506,7 @@ class BacktestEngine:
         fold_std = np.std(fold_scores, axis=1)
         
         # Moderate Robustness
+        # Reverted penalty from 1.0 back to 0.5
         robust_score = avg_sortino - (fold_std * 0.5)
         
         results = []
