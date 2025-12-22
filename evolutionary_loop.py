@@ -255,16 +255,46 @@ class EvolutionaryAlphaFactory:
             # Sort by TEST Sortino (Real Performance)
             output.sort(key=lambda x: x['test_sortino'], reverse=True)
             
-            # Limit to Top 100 as requested
-            output = output[:100]
-            
-            # Print Top 5
-            print("\nTop 5 OOS Performers:")
-            for s in output[:5]:
-                print(f"  Gen {s['generation']:<2} | Sortino: {s['test_sortino']:.2f} | Ret: {s['test_return']*100:.2f}% | ID: {s['name']}")
+            # Save a reference to current run's best for display
+            current_run_strategies = output[:]
             
             os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+
+            # --- PERSISTENCE: MERGE WITH EXISTING CHAMPIONS ---
+            if os.path.exists(out_path):
+                try:
+                    with open(out_path, "r") as f:
+                        existing_data = json.load(f)
+                    
+                    # Merge lists
+                    combined = existing_data + output
+                    
+                    # Sort Descending by Sortino
+                    combined.sort(key=lambda x: x.get('test_sortino', -999), reverse=True)
+                    
+                    # Deduplicate by Name
+                    seen_names = set()
+                    unique_combined = []
+                    for s in combined:
+                        if s['name'] not in seen_names:
+                            unique_combined.append(s)
+                            seen_names.add(s['name'])
+                    
+                    output = unique_combined
+                    print(f"\n🔄 Merged with {len(existing_data)} existing champions. New Total: {len(output)}")
+                    
+                except Exception as e:
+                    print(f"⚠️ Failed to merge with existing strategies: {e}")
+
+            # Limit to Top 100 as requested
+            output = output[:100]
+            
+            # Print Top 5 (Current Run Only)
+            print("\nTop 5 OOS Performers (Current Run):")
+            for s in current_run_strategies[:5]:
+                print(f"  Gen {s.get('generation','?'):<2} | Sortino: {s.get('test_sortino',0):.2f} | Ret: {s.get('test_return',0)*100:.2f}% | ID: {s['name']}")
+            
             with open(out_path, "w") as f: json.dump(output, f, indent=4)
             print(f"\n💾 Saved Top {len(output)} Profitable Strategies from All Generations to {out_path}")
         else:

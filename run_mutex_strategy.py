@@ -161,6 +161,23 @@ def run_mutex_backtest():
     for i, s in enumerate(unique_strats):
         print(f"  {i+1}. {s.name} (H{s.horizon}) | Sortino: {s.sortino:.2f}")
 
+    # --- PRE-FILTER MUTEX INPUTS (Safe Entry) ---
+    print("  Applying Safe Entry Filters to Mutex Inputs...")
+    times = backtester.times_vec
+    if hasattr(times, 'dt'):
+        hours = times.dt.hour.values
+        weekdays = times.dt.dayofweek.values
+    else:
+        dt_idx = pd.to_datetime(times)
+        hours = dt_idx.hour.values
+        weekdays = dt_idx.dayofweek.values
+        
+    for i, strat in enumerate(unique_strats):
+        est_duration_hours = (strat.horizon * 2.0) / 60.0
+        cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
+        safe_mask = (hours < cutoff_hour) & (weekdays < 5)
+        sig_matrix[:, i] = sig_matrix[:, i] * safe_mask
+
     # 3. Execution (Raw Composite Signal)
     final_pos = simulate_mutex_portfolio(backtester, unique_strats, sig_matrix)
     warmup = 3200
@@ -205,12 +222,19 @@ def run_mutex_backtest():
     # 2. Individual Strategy Metrics
     print("\nBenchmarking Individual Strategies...")
     for i, strat in enumerate(unique_strats):
-        # Generate single signal vector
-        sig = sig_matrix[:, i]
+        # Use centralized batch simulation to ensure consistency with Report (Lookahead Filter)
+        single_sig_matrix = sig_matrix[:, [i]]
         
-        # Calculate PnL for this specific strategy using Simulator
-        # Use specific horizon for time limit
-        s_net_rets, s_trades = simulator.simulate_fast(sig, take_profit_pct=0.015, time_limit_bars=strat.horizon)
+        s_net_rets_batch, s_trades_batch = backtester.run_simulation_batch(
+            single_sig_matrix, 
+            [strat], 
+            backtester.close_vec, 
+            backtester.times_vec, 
+            time_limit=strat.horizon
+        )
+        
+        s_net_rets = s_net_rets_batch[:, 0]
+        s_trades = s_trades_batch[0]
         
         # Metrics
         s_valid_ret = s_net_rets[warmup:]
