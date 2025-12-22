@@ -143,7 +143,7 @@ def run_mutex_backtest():
     
     # Initialize Simulator (reusing backtester configs)
     simulator = TradeSimulator(
-        prices=backtester.close_vec.flatten(),
+        prices=backtester.open_vec.flatten(),
         times=backtester.times_vec,
         spread_bps=backtester.spread_bps,
         cost_bps=backtester.effective_cost_bps,
@@ -181,6 +181,10 @@ def run_mutex_backtest():
         sig_matrix[:, i] = sig_matrix[:, i] * safe_mask
 
     # 3. Execution (Raw Composite Signal)
+    # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+    # Shift signals forward by 1
+    sig_matrix = np.vstack([np.zeros((1, sig_matrix.shape[1]), dtype=sig_matrix.dtype), sig_matrix[:-1]])
+    
     final_pos = simulate_mutex_portfolio(backtester, unique_strats, sig_matrix)
     warmup = 3200
 
@@ -231,7 +235,7 @@ def run_mutex_backtest():
         s_net_rets_batch, s_trades_batch = backtester.run_simulation_batch(
             single_sig_matrix, 
             [strat], 
-            backtester.close_vec, 
+            backtester.open_vec, 
             backtester.times_vec, 
             time_limit=strat.horizon
         )

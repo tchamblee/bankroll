@@ -119,7 +119,8 @@ class BacktestEngine:
 
         # Prepare Data Matrices
         self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1).astype(np.float32)
-        self.close_vec = self.raw_data['close'].values.astype(np.float64) # 1D for simulator
+        self.close_vec = self.raw_data['close'].values.astype(np.float64) 
+        self.open_vec = self.raw_data['open'].values.astype(np.float64) # Added for Next-Open Execution
         
         if 'time_start' in self.raw_data.columns:
             self.times_vec = self.raw_data['time_start']
@@ -331,7 +332,15 @@ class BacktestEngine:
         else: raise ValueError("set_type must be 'train', 'validation', or 'test'")
             
         signals = full_signal_matrix[start:end]
-        prices = self.close_vec[start:end]
+        
+        # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+        # Signals generated at Close[t] must be executed at Open[t+1].
+        # We shift signals forward by 1.
+        signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
+        
+        # We use OPEN prices for execution to match the Lagged Signal
+        prices = self.open_vec[start:end]
+        
         times = self.times_vec.iloc[start:end] if hasattr(self.times_vec, 'iloc') else self.times_vec[start:end]
         
         # Prediction Mode override (Fast Vectorized)
@@ -403,7 +412,11 @@ class BacktestEngine:
                 train_end = test_end - step_size 
             
             signals = full_signal_matrix[train_end:test_end]
-            prices = self.close_vec[train_end:test_end]
+            
+            # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+            signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
+            prices = self.open_vec[train_end:test_end]
+            
             times = self.times_vec.iloc[train_end:test_end] if hasattr(self.times_vec, 'iloc') else self.times_vec[train_end:test_end]
             
             # Use Simulator

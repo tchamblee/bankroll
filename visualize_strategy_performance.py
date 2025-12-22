@@ -85,7 +85,13 @@ def plot_performance(engine, strategies):
     
     # 1. Generate Full Signal Matrix
     full_signal_matrix = backtester.generate_signal_matrix(strategies)
-    prices = backtester.close_vec.flatten()
+    
+    # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+    # Shift signals forward by 1
+    full_signal_matrix = np.vstack([np.zeros((1, full_signal_matrix.shape[1]), dtype=full_signal_matrix.dtype), full_signal_matrix[:-1]])
+    # Use Open prices
+    prices = backtester.open_vec.flatten()
+    
     times = backtester.times_vec
     
     # 2. Run Simulation via BacktestEngine's wrapper (consistent logic)
