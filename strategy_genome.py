@@ -851,41 +851,15 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 5% Consecutive Gene (Pattern)
-        if rand_val < 0.05:
-            direction = random.choice(['up', 'down'])
-            op = random.choice(['>', '=='])
-            count = random.randint(2, 6)
-            return ConsecutiveGene(direction, op, count)
-            
-        # 10% Persistence Gene (Filter)
-        elif rand_val < 0.15:
+        # 30% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
+        if rand_val < 0.30:
             feature = random.choice(pool)
-            op = random.choice(['>', '<'])
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-            window = random.randint(3, 10)
-            return PersistenceGene(feature, op, threshold, window)
-
-        # 10% Relational Gene (Context)
-        elif rand_val < 0.25:
-            feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
             operator = random.choice(['>', '<'])
-            return RelationalGene(feature_left, operator, feature_right)
-            
-        # 10% Cross Gene (Event)
-        elif rand_val < 0.35:
-            feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
-            direction = random.choice(['above', 'below'])
-            return CrossGene(feature_left, direction, feature_right)
+            threshold = random.choice([-3.0, -2.5, -2.0, -1.5, 1.5, 2.0, 2.5, 3.0])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return ZScoreGene(feature, operator, threshold, window)
 
-        # 10% Squeeze Gene (Compression)
+        # 15% Squeeze Gene (Regime Detector - Volatility Compression)
         elif rand_val < 0.45:
             feature_short = random.choice(pool)
             feature_long = random.choice(pool)
@@ -893,17 +867,64 @@ class GenomeFactory:
                 feature_long = random.choice(pool)
             multiplier = random.uniform(0.5, 0.95)
             return SqueezeGene(feature_short, feature_long, multiplier)
+
+        # 10% Cross Gene (Event)
+        elif rand_val < 0.55:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+            direction = random.choice(['above', 'below'])
+            return CrossGene(feature_left, direction, feature_right)
             
-        # 5% Range Gene (Zone) - Reduced
-        elif rand_val < 0.50:
-            feature = random.choice(pool)
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            center = stats['mean'] + random.uniform(-1, 1) * stats['std']
-            width = random.uniform(0.5, 2.0) * stats['std']
-            return RangeGene(feature, center - width/2, center + width/2)
-            
-        # 15% Delta Gene (Momentum)
+        # 10% Relational Gene (Context)
         elif rand_val < 0.65:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            return RelationalGene(feature_left, operator, feature_right)
+
+        # 10% Regime Gene (Special handling for Bounded Metrics like Hurst/Entropy)
+        elif rand_val < 0.75:
+            # Pick a bounded feature if available
+            bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
+            target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
+            
+            # Use RangeGene (Safe for bounded) or PersistenceGene
+            if random.random() < 0.5:
+                # Range
+                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+                center = stats['mean'] + random.uniform(-0.5, 0.5) * stats['std']
+                width = random.uniform(0.5, 2.0) * stats['std']
+                return RangeGene(target_feature, center - width/2, center + width/2)
+            else:
+                # Persistence (Regime must hold)
+                op = random.choice(['>', '<'])
+                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
+                window = random.randint(5, 20) # Longer window for regime
+                return PersistenceGene(target_feature, op, threshold, window)
+
+        # 5% Consecutive Gene (Pattern)
+        elif rand_val < 0.80:
+            direction = random.choice(['up', 'down'])
+            op = random.choice(['>', '=='])
+            count = random.randint(2, 6)
+            return ConsecutiveGene(direction, op, count)
+
+        # 5% Correlation Gene (Synergy)
+        elif rand_val < 0.85:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            threshold = random.choice([-0.8, -0.5, 0.5, 0.8])
+            window = random.choice(VALID_CORR_WINDOWS)
+            return CorrelationGene(feature_left, feature_right, operator, threshold, window)
+
+        # 10% Delta Gene (Momentum) - REDUCED PRIORITY due to non-adaptive thresholds
+        elif rand_val < 0.95:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -911,32 +932,13 @@ class GenomeFactory:
             lookback = random.choice(VALID_DELTA_LOOKBACKS) 
             return DeltaGene(feature, operator, threshold, lookback)
             
-        # 10% Slope Gene (Trend)
-        elif rand_val < 0.75:
-            feature = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            threshold = random.uniform(-0.02, 0.02) # Small slope threshold
-            window = random.choice(VALID_SLOPE_WINDOWS)
-            return SlopeGene(feature, operator, threshold, window)
-            
-        # 10% Correlation Gene (Synergy)
-        elif rand_val < 0.85:
-            feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            threshold = random.choice([-0.8, -0.5, 0.5, 0.8])
-            window = random.choice(VALID_CORR_WINDOWS)
-            return CorrelationGene(feature_left, feature_right, operator, threshold, window)
-            
-        # 15% ZScore Gene (Statistical Extreme)
+        # 5% Slope Gene (Trend) - REDUCED PRIORITY
         else:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-3.0, -2.0, -1.5, -1.0, 1.0, 1.5, 2.0, 3.0])
-            window = random.choice(VALID_ZSCORE_WINDOWS)
-            return ZScoreGene(feature, operator, threshold, window)
+            threshold = random.uniform(-0.02, 0.02)
+            window = random.choice(VALID_SLOPE_WINDOWS)
+            return SlopeGene(feature, operator, threshold, window)
 
     def create_random_gene(self):
         # Fallback now uses ZScore instead of Static
@@ -946,7 +948,7 @@ class GenomeFactory:
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 
-    def create_strategy(self, num_genes_range=(3, 5)):
+    def create_strategy(self, num_genes_range=(2, 4)):
         num_genes = random.randint(num_genes_range[0], num_genes_range[1])
         long_genes = []
         short_genes = []
@@ -962,8 +964,12 @@ class GenomeFactory:
         # Concordance: For complex strategies, allow 1 outlier (Robustness)
         concordance = None
         if num_genes > 2:
-            # Require ~70% agreement (Super-Majority)
-            concordance = int(max(2, num_genes * 0.7))
+            # Require ~60% agreement (Super-Majority)
+            # 3 genes -> 2 (0.6 * 3 = 1.8 -> ceil=2)
+            # 4 genes -> 3 (0.6 * 4 = 2.4 -> ceil=3)
+            # 5 genes -> 3 (0.6 * 5 = 3.0 -> ceil=3)
+            import math
+            concordance = math.ceil(num_genes * 0.6)
 
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
