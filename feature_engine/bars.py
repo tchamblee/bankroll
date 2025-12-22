@@ -21,8 +21,17 @@ def create_volume_bars(primary_df, volume_threshold=1000):
     if 'pricebid' in df.columns and 'priceask' in df.columns:
         df = ticks.add_tick_microstructure_features(df)
     
-    # Volume Proxy Logic - Forcing Tick Bars (1 per row) for robust sampling
-    vol_series = pd.Series(1, index=df.index)
+    # Volume Proxy Logic - Use Actual Size if Available
+    if 'sizebid' in df.columns and 'sizeask' in df.columns:
+        # FX Tick Data: Sum of Bid/Ask sizes as proxy for liquidity/volume at that tick
+        vol_series = (df['sizebid'].fillna(0) + df['sizeask'].fillna(0))
+    elif 'last_size' in df.columns:
+        vol_series = df['last_size'].fillna(1)
+    elif 'volume' in df.columns:
+        vol_series = df['volume'].fillna(1)
+    else:
+        # Fallback to Tick Count
+        vol_series = pd.Series(1, index=df.index)
 
     df['vol_proxy'] = vol_series
     df['cum_vol'] = vol_series.cumsum()

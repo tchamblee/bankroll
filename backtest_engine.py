@@ -218,15 +218,17 @@ class BacktestEngine:
 
         # Parallelize Signal Generation
         # Determine number of jobs and batch size
-        n_jobs = -1 
+        # LIMIT CORES to prevent OOM / Resource Exhaustion
+        import multiprocessing
+        n_jobs = min(6, multiprocessing.cpu_count())
         batch_size = max(1, num_strats // (16 if num_strats > 100 else 4))
         
         # Split population into chunks
         chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
         
         # Run in parallel using Process backend (default) but reading from Shared Memmap
-        # Removed prefer="threads" to use processes for GIL bypass
-        results = Parallel(n_jobs=n_jobs)(
+        # max_nbytes=None prevents joblib from memmapping arguments to temp files (Leaking folders fix)
+        results = Parallel(n_jobs=n_jobs, max_nbytes=None)(
             delayed(_worker_generate_signals)(chunk, self.context_path) for chunk in chunks
         )
         
@@ -289,7 +291,8 @@ class BacktestEngine:
             signals_matrix = signals_matrix * safe_entry_mask[:, np.newaxis]
             
         # Parallelize Simulation
-        n_jobs = -1
+        import multiprocessing
+        n_jobs = min(6, multiprocessing.cpu_count())
         batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
         params_list = [{'sl': getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS), 'tp': getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)} for s in strategies]
@@ -300,7 +303,8 @@ class BacktestEngine:
         chunks_params = [params_list[i:i + batch_size] for i in range(0, n_strats, batch_size)]
         
         # Run in parallel using threads for Numba JIT (which releases GIL)
-        results = Parallel(n_jobs=n_jobs)(
+        # max_nbytes=None prevents joblib from memmapping arguments to temp files (Leaking folders fix)
+        results = Parallel(n_jobs=n_jobs, max_nbytes=None)(
             delayed(_worker_simulate)(
                 chunk_s,
                 chunk_p,
@@ -380,7 +384,15 @@ class BacktestEngine:
         results = []
         for i, strat in enumerate(population):
             final_sortino = sortino[i]
-            if trades_count[i] < 5: final_sortino = -1.0
+            
+            # Soft Penalty for Low Trades (Create Gradient)
+            if trades_count[i] < 20:
+                penalty = (20 - trades_count[i]) * 0.2
+                final_sortino -= penalty
+            
+            if trades_count[i] == 0:
+                final_sortino = -5.0
+                
             if stability_ratio[i] > 0.5 and total_ret[i] > 0: final_sortino *= 0.5
             
             strat.fitness = final_sortino
@@ -432,11 +444,29 @@ class BacktestEngine:
             # Use Simulator
             net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows)
             
-            avg = np.mean(net_returns, axis=0)
-            downside = np.std(np.minimum(net_returns, 0), axis=0) + 1e-9
-            sortino = (avg / downside) * np.sqrt(self.annualization_factor)
+            total_ret = np.sum(net_returns, axis=0)
+            max_win = np.max(net_returns, axis=0)
+            stability_ratio = max_win / (total_ret + 1e-9)
             
-            sortino[trades_count < 8] = -1.0
+            avg = np.mean(net_returns, axis=0)
+            # Robust Downside Dev: Floor at 1e-6 to prevent explosion on "zero loss" strategies
+            downside_std = np.std(np.minimum(net_returns, 0), axis=0)
+            downside_std = np.maximum(downside_std, 1e-6)
+            
+            sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
+            
+            # Soft Penalty for WFV (Min Trades)
+            sortino = np.nan_to_num(sortino, nan=-2.0)
+            penalty = np.maximum(0, (10 - trades_count) * 0.2)
+            sortino -= penalty
+            
+            # Stability Penalty: If one trade is > 50% of total return, penalize heavily
+            unstable_mask = (stability_ratio > 0.5) & (total_ret > 0)
+            sortino[unstable_mask] *= 0.5
+            
+            # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
+            sortino = np.minimum(sortino, 10.0)
+            
             fold_scores[:, f] = sortino
             
         avg_sortino = np.mean(fold_scores, axis=1)
