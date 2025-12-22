@@ -8,6 +8,8 @@ import config
 # Strict grid to prevent overfitting
 VALID_DELTA_LOOKBACKS = [5, 10, 20, 50, 100, 200]
 VALID_ZSCORE_WINDOWS = [20, 50, 100, 200, 400]
+VALID_SLOPE_WINDOWS = [10, 20, 50, 100]
+VALID_CORR_WINDOWS = [20, 50, 100, 200]
 
 def gene_from_dict(d):
     """Factory to restore gene from dictionary."""
@@ -19,6 +21,10 @@ def gene_from_dict(d):
         return DeltaGene(d['feature'], d['operator'], d['threshold'], d['lookback'])
     elif d['type'] == 'zscore':
         return ZScoreGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'slope':
+        return SlopeGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'correlation':
+        return CorrelationGene(d['feature_left'], d['feature_right'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'time':
         return TimeGene(d['mode'], d['operator'], d['value'])
     elif d['type'] == 'consecutive':
@@ -465,6 +471,123 @@ class DeltaGene:
     def __repr__(self):
         return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.10f}"
 
+class SlopeGene:
+    """
+    'Trend' Gene.
+    Checks the linear regression slope of a feature.
+    Format: Slope(Feature, Window) <Operator> Threshold
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, window: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold
+        self.window = window
+        self.type = 'slope'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.window)
+            if key in cache: return cache[key]
+
+        ctx_key = f"slope_{self.feature}_{self.window}"
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.threshold
+            elif self.operator == '<': res = data < self.threshold
+            else: res = np.zeros(len(data), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.window = random.choice(VALID_SLOPE_WINDOWS)
+        if random.random() < 0.3:
+            self.threshold += random.uniform(-0.01, 0.01)
+        if random.random() < 0.1: 
+            self.feature = random.choice(features_pool)
+        if random.random() < 0.2: 
+            self.operator = '>' if self.operator == '<' else '<'
+
+    def copy(self):
+        return SlopeGene(self.feature, self.operator, self.threshold, self.window)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'window': self.window
+        }
+
+    def __repr__(self):
+        return f"Slope({self.feature}, {self.window}) {self.operator} {self.threshold:.5f}"
+
+class CorrelationGene:
+    """
+    'Synergy' Gene.
+    Checks rolling correlation between two features.
+    Format: Corr(A, B, Window) <Operator> Threshold
+    """
+    def __init__(self, feature_left: str, feature_right: str, operator: str, threshold: float, window: int):
+        self.feature_left = feature_left
+        self.feature_right = feature_right
+        self.operator = operator
+        self.threshold = threshold
+        self.window = window
+        self.type = 'correlation'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature_left, self.feature_right, self.operator, self.threshold, self.window)
+            if key in cache: return cache[key]
+
+        f1, f2 = sorted([self.feature_left, self.feature_right])
+        ctx_key = f"corr_{f1}_{f2}_{self.window}"
+        
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.threshold
+            elif self.operator == '<': res = data < self.threshold
+            else: res = np.zeros(len(data), dtype=bool)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.window = random.choice(VALID_CORR_WINDOWS)
+        if random.random() < 0.3:
+            self.threshold += random.uniform(-0.1, 0.1)
+            self.threshold = max(-1.0, min(1.0, self.threshold))
+        if random.random() < 0.15: 
+            self.feature_left = random.choice(features_pool)
+        if random.random() < 0.15: 
+            self.feature_right = random.choice(features_pool)
+        if random.random() < 0.2: 
+            self.operator = '>' if self.operator == '<' else '<'
+
+    def copy(self):
+        return CorrelationGene(self.feature_left, self.feature_right, self.operator, self.threshold, self.window)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature_left': self.feature_left,
+            'feature_right': self.feature_right,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'window': self.window
+        }
+
+    def __repr__(self):
+        return f"Corr({self.feature_left}, {self.feature_right}, {self.window}) {self.operator} {self.threshold:.2f}"
+
 class ZScoreGene:
     """
     'Statistical' Gene.
@@ -657,7 +780,9 @@ class Strategy:
             if not genes: return np.zeros(n_rows, dtype=int)
             votes = np.zeros(n_rows, dtype=int)
             for gene in genes:
-                votes += gene.evaluate(context, cache).astype(int)
+                # Numpy handles bool -> int addition automatically (True=1, False=0)
+                # This avoids allocating a temporary int array for every gene
+                votes += gene.evaluate(context, cache)
             return votes
 
         l_votes = get_votes(self.long_genes)
@@ -726,15 +851,15 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 10% Consecutive Gene (Pattern)
-        if rand_val < 0.10:
+        # 5% Consecutive Gene (Pattern)
+        if rand_val < 0.05:
             direction = random.choice(['up', 'down'])
             op = random.choice(['>', '=='])
             count = random.randint(2, 6)
             return ConsecutiveGene(direction, op, count)
             
         # 10% Persistence Gene (Filter)
-        elif rand_val < 0.20:
+        elif rand_val < 0.15:
             feature = random.choice(pool)
             op = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -743,7 +868,7 @@ class GenomeFactory:
             return PersistenceGene(feature, op, threshold, window)
 
         # 10% Relational Gene (Context)
-        elif rand_val < 0.30:
+        elif rand_val < 0.25:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -752,7 +877,7 @@ class GenomeFactory:
             return RelationalGene(feature_left, operator, feature_right)
             
         # 10% Cross Gene (Event)
-        elif rand_val < 0.40:
+        elif rand_val < 0.35:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -760,8 +885,8 @@ class GenomeFactory:
             direction = random.choice(['above', 'below'])
             return CrossGene(feature_left, direction, feature_right)
 
-        # 15% Squeeze Gene (Compression)
-        elif rand_val < 0.55:
+        # 10% Squeeze Gene (Compression)
+        elif rand_val < 0.45:
             feature_short = random.choice(pool)
             feature_long = random.choice(pool)
             while feature_long == feature_short and len(pool) > 1:
@@ -769,8 +894,8 @@ class GenomeFactory:
             multiplier = random.uniform(0.5, 0.95)
             return SqueezeGene(feature_short, feature_long, multiplier)
             
-        # 15% Range Gene (Zone)
-        elif rand_val < 0.70:
+        # 5% Range Gene (Zone) - Reduced
+        elif rand_val < 0.50:
             feature = random.choice(pool)
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             center = stats['mean'] + random.uniform(-1, 1) * stats['std']
@@ -778,13 +903,32 @@ class GenomeFactory:
             return RangeGene(feature, center - width/2, center + width/2)
             
         # 15% Delta Gene (Momentum)
-        elif rand_val < 0.85:
+        elif rand_val < 0.65:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.5, 0.5) * stats['std']
             lookback = random.choice(VALID_DELTA_LOOKBACKS) 
             return DeltaGene(feature, operator, threshold, lookback)
+            
+        # 10% Slope Gene (Trend)
+        elif rand_val < 0.75:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            threshold = random.uniform(-0.02, 0.02) # Small slope threshold
+            window = random.choice(VALID_SLOPE_WINDOWS)
+            return SlopeGene(feature, operator, threshold, window)
+            
+        # 10% Correlation Gene (Synergy)
+        elif rand_val < 0.85:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            threshold = random.choice([-0.8, -0.5, 0.5, 0.8])
+            window = random.choice(VALID_CORR_WINDOWS)
+            return CorrelationGene(feature_left, feature_right, operator, threshold, window)
             
         # 15% ZScore Gene (Statistical Extreme)
         else:
@@ -795,12 +939,12 @@ class GenomeFactory:
             return ZScoreGene(feature, operator, threshold, window)
 
     def create_random_gene(self):
-        # Legacy fallback
+        # Fallback now uses ZScore instead of Static
         feature = random.choice(self.features)
         operator = random.choice(['>', '<'])
-        stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-        threshold = stats['mean'] + random.uniform(-2, 2) * stats['std']
-        return StaticGene(feature, operator, threshold)
+        threshold = random.choice([-2.0, 2.0])
+        window = random.choice(VALID_ZSCORE_WINDOWS)
+        return ZScoreGene(feature, operator, threshold, window)
 
     def create_strategy(self, num_genes_range=(3, 5)):
         num_genes = random.randint(num_genes_range[0], num_genes_range[1])

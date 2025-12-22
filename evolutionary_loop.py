@@ -75,8 +75,8 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
-            # 1. Evaluate using Rolling Walk-Forward Validation (5 Folds)
-            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=5, time_limit=horizon)
+            # 1. Evaluate using Rolling Walk-Forward Validation (4 Folds)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon)
             
             # 2. Filtering & Scoring
             wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
@@ -208,9 +208,9 @@ class EvolutionaryAlphaFactory:
             self.population = new_population
             
             # CLEANUP: Free memory from temporary features (deltas, zscores) created this generation
-            self.backtester.reset_jit_context()
+            # self.backtester.reset_jit_context()
             
-            # print(f"  Gen completed in {time.time()-start_time:.2f}s")
+            print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
         # 6. Final Selection
         # print(f"\n--- 🛡️ FINAL SELECTION (TEST PHASE: All Generations) ---")

@@ -8,23 +8,65 @@ import os
 import shutil
 import tempfile
 
-def _worker_generate_signals(strategies, context_path):
+class LazyMMapContext:
+    """
+    Acts like a dictionary but lazy-loads numpy arrays from a directory using mmap.
+    This prevents loading the entire dataset into RAM and allows efficient parallel access.
+    """
+    def __init__(self, directory):
+        self.directory = directory
+        self.cache = {}
+        # Pre-scan directory to know available keys
+        self.available_keys = {f.replace('.npy', '') for f in os.listdir(directory) if f.endswith('.npy')}
+
+    def __getitem__(self, key):
+        if key in self.cache:
+            return self.cache[key]
+            
+        if key not in self.available_keys:
+            # Check if it's special key like __len__
+            if key == '__len__':
+                # Try to infer length from any file
+                if not self.available_keys: return 0
+                first_key = next(iter(self.available_keys))
+                arr = self[first_key]
+                return len(arr)
+            raise KeyError(f"Feature '{key}' not found in context directory.")
+
+        path = os.path.join(self.directory, f"{key}.npy")
+        # Load in mmap mode 'r' (Read-Only, Shared)
+        arr = np.load(path, mmap_mode='r')
+        self.cache[key] = arr
+        return arr
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+            
+    def __contains__(self, key):
+        return key in self.cache or key in self.available_keys
+
+    def __len__(self):
+        return self['__len__']
+
+    def keys(self):
+        return self.available_keys
+
+    def values(self):
+        for k in self.available_keys:
+            yield self[k]
+
+def _worker_generate_signals(strategies, context_dir):
     """
     Worker function to generate signals for a chunk of strategies.
     Executed in parallel processes.
     """
-    # Load context from memmapped file (Shared Memory, Zero Copy)
-    # mmap_mode='r' ensures we don't copy data to RAM, just page it.
-    context = load(context_path, mmap_mode='r')
+    # Use Lazy Context
+    context = LazyMMapContext(context_dir)
     
-    n_rows = context.get('__len__', 0)
-    # Fallback if __len__ missing but arrays present
-    if n_rows == 0 and len(context) > 0:
-         for val in context.values():
-             if hasattr(val, 'shape'):
-                 n_rows = val.shape[0]
-                 break
-                 
+    n_rows = len(context)
     n_strats = len(strategies)
     chunk_matrix = np.zeros((n_rows, n_strats), dtype=np.int8)
     gene_cache = {} 
@@ -79,11 +121,10 @@ class BacktestEngine:
         self.raw_data = data
         self.target_col = target_col
         self.annualization_factor = annualization_factor if annualization_factor else config.ANNUALIZATION_FACTOR
-        self.context = {}
         
-        # Temp dir for memmap
-        self.temp_dir = tempfile.mkdtemp(prefix="backtest_memmap_")
-        self.context_path = os.path.join(self.temp_dir, "context.joblib")
+        # Temp dir for individual npy files
+        self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_")
+        self.existing_keys = set()
         
         # --- CONFIGURATION ---
         self.account_size = account_size if account_size else config.ACCOUNT_SIZE
@@ -106,20 +147,16 @@ class BacktestEngine:
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
             self.raw_data['log_ret'] = np.log(self.raw_data['close'] / self.raw_data['close'].shift(1))
             
-        # Precompute Derived Features
-        self.precompute_context()
-
         # Clean Data
         if target_col in self.raw_data.columns:
             original_len = len(self.raw_data)
             valid_mask = ~self.raw_data[target_col].isna()
             self.raw_data = self.raw_data[valid_mask].reset_index(drop=True)
-            for key in self.context:
-                if isinstance(self.context[key], np.ndarray) and len(self.context[key]) == original_len:
-                    self.context[key] = self.context[key][valid_mask]
-            self.context['__len__'] = len(self.raw_data)
+            self.data_len = len(self.raw_data)
+        else:
+            self.data_len = len(self.raw_data)
 
-        # Prepare Data Matrices
+        # Prepare Data Matrices (Keep in RAM for Simulation, but also save to context if needed by genes)
         self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1).astype(np.float32)
         self.close_vec = self.raw_data['close'].values.astype(np.float64) 
         self.open_vec = self.raw_data['open'].values.astype(np.float64) # Added for Next-Open Execution
@@ -131,29 +168,33 @@ class BacktestEngine:
         else:
             self.times_vec = pd.Series(self.raw_data.index)
         
+        # Precompute Derived Features (Saved to disk)
+        self.precompute_context()
+        
         # Split Indices
         n = len(self.raw_data)
         self.train_idx = int(n * 0.6)
         self.val_idx = int(n * 0.8)
-        
-        # Initial sync
-        self._sync_context()
 
     def __del__(self):
         # Cleanup temp dir
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
+            
+    def _save_feature(self, name, arr):
+        path = os.path.join(self.temp_dir, f"{name}.npy")
+        np.save(path, arr)
+        self.existing_keys.add(name)
 
     def precompute_context(self):
         numeric_cols = self.raw_data.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
-            self.context[col] = self.raw_data[col].values.astype(np.float32)
-        self.context['__len__'] = len(self.raw_data)
+            self._save_feature(col, self.raw_data[col].values.astype(np.float32))
         
         if 'time_start' in self.raw_data.columns:
             dt = self.raw_data['time_start'].dt
-            self.context['time_hour'] = dt.hour.values.astype(np.float32)
-            self.context['time_weekday'] = dt.dayofweek.values.astype(np.float32)
+            self._save_feature('time_hour', dt.hour.values.astype(np.float32))
+            self._save_feature('time_weekday', dt.dayofweek.values.astype(np.float32))
             
         close = self.raw_data['close'].values
         up_mask = (close > np.roll(close, 1)); up_mask[0] = False
@@ -166,16 +207,14 @@ class BacktestEngine:
                 streaks[i] = current
             return streaks
 
-        self.context['consecutive_up'] = get_streak(up_mask)
-        self.context['consecutive_down'] = get_streak(~up_mask & (close < np.roll(close, 1)))
+        self._save_feature('consecutive_up', get_streak(up_mask))
+        self._save_feature('consecutive_down', get_streak(~up_mask & (close < np.roll(close, 1))))
         
-        self.base_keys = set(self.context.keys())
+        self.base_keys = set(self.existing_keys)
 
     def reset_jit_context(self):
-        keys_to_remove = [k for k in self.context.keys() if k not in self.base_keys]
-        for k in keys_to_remove:
-            del self.context[k]
-        self._sync_context() # Sync deletions
+        # No-op for now to persist features
+        pass
 
     def ensure_context(self, population: list[Strategy]):
         needed = set()
@@ -184,74 +223,162 @@ class BacktestEngine:
             for gene in all_genes:
                 if gene.type == 'delta': needed.add(('delta', gene.feature, gene.lookback))
                 elif gene.type == 'zscore': needed.add(('zscore', gene.feature, gene.window))
+                elif gene.type == 'slope': needed.add(('slope', gene.feature, gene.window))
+                elif gene.type == 'correlation': needed.add(('correlation', gene.feature_left, gene.feature_right, gene.window))
         
-        modified = False
-        for type_, feature, param in needed:
-            key = f"{type_}_{feature}_{param}"
-            if key in self.context: continue
+        # Only calculate what's missing
+        
+        # Helper to load feature from disk for calculation
+        # This uses simple load (RAM) because we need it for computation
+        def get_data(key):
+            if key not in self.existing_keys: return None
+            return np.load(os.path.join(self.temp_dir, f"{key}.npy"))
+
+        for item in needed:
+            type_ = item[0]
             
-            modified = True
             if type_ == 'delta':
-                arr = self.context.get(feature)
+                feature, param = item[1], item[2]
+                key = f"delta_{feature}_{param}"
+                if key in self.existing_keys: continue
+                
+                arr = get_data(feature)
                 if arr is not None:
                     w = param
                     diff = np.zeros_like(arr)
                     if w < len(arr): diff[w:] = arr[w:] - arr[:-w]
-                    self.context[key] = diff
-            elif type_ == 'zscore':
-                series = self.raw_data[feature]
-                z = (series - series.rolling(param).mean()) / (series.rolling(param).std() + 1e-9)
-                self.context[key] = z.fillna(0).values.astype(np.float32)
-        
-        if modified:
-            self._sync_context()
+                    self._save_feature(key, diff)
 
-    def _sync_context(self):
-        """Dump context to disk for shared memory access by workers."""
-        dump(self.context, self.context_path)
+            elif type_ == 'zscore':
+                feature, param = item[1], item[2]
+                key = f"zscore_{feature}_{param}"
+                if key in self.existing_keys: continue
+
+                # Vectorized Numpy Rolling Z-Score
+                arr = get_data(feature)
+                if arr is not None:
+                    w = param
+                    n_len = len(arr)
+                    if n_len >= w:
+                        kernel = np.ones(w)
+                        
+                        # Rolling Sums
+                        sum_x = np.convolve(arr, kernel, 'full')[:n_len]
+                        sum_x2 = np.convolve(arr * arr, kernel, 'full')[:n_len]
+                        
+                        # Rolling Mean and Variance
+                        # Mean = Sum / w
+                        # Var = E[x^2] - (E[x])^2
+                        
+                        mean = sum_x / w
+                        # To avoid precision issues with Mean(x^2) - Mean(x)^2, use robust variance if needed
+                        # But standard fast method:
+                        mean_x2 = sum_x2 / w
+                        var = mean_x2 - mean**2
+                        var = np.maximum(var, 0) # Clip negative 0
+                        
+                        std = np.sqrt(var)
+                        
+                        z = np.divide(arr - mean, std, out=np.zeros_like(arr), where=std!=0)
+                        
+                        # Fix startup (first w-1 are invalid due to growing window in 'full' convolution)
+                        z[:w-1] = 0.0
+                        
+                        self._save_feature(key, z.astype(np.float32))
+            
+            elif type_ == 'slope':
+                feature, w = item[1], item[2]
+                key = f"slope_{feature}_{w}"
+                if key in self.existing_keys: continue
+                
+                arr = get_data(feature)
+                if arr is not None:
+                    # Vectorized Rolling Slope
+                    y = arr
+                    n = w
+                    if len(y) > w:
+                        sum_x = (n * (n - 1)) / 2
+                        sum_x2 = (n * (n - 1) * (2 * n - 1)) / 6
+                        divisor = n * sum_x2 - sum_x ** 2
+                        
+                        kernel_xy = np.arange(n)[::-1]
+                        sum_xy = np.convolve(y, kernel_xy, mode='full')[:len(y)]
+                        sum_y = np.convolve(y, np.ones(n), mode='full')[:len(y)]
+                        
+                        slope = (n * sum_xy - sum_x * sum_y) / (divisor + 1e-9)
+                        slope[:n] = 0.0
+                        self._save_feature(key, slope.astype(np.float32))
+            
+            elif type_ == 'correlation':
+                f1, f2, w = item[1], item[2], item[3]
+                f1, f2 = sorted([f1, f2])
+                key = f"corr_{f1}_{f2}_{w}"
+                if key in self.existing_keys: continue
+                
+                a = get_data(f1)
+                b = get_data(f2)
+                
+                if a is not None and b is not None:
+                    n = w
+                    kernel = np.ones(n)
+                    
+                    aa = a * a
+                    bb = b * b
+                    ab = a * b
+                    
+                    sum_a = np.convolve(a, kernel, 'full')[:len(a)]
+                    sum_b = np.convolve(b, kernel, 'full')[:len(b)]
+                    sum_ab = np.convolve(ab, kernel, 'full')[:len(ab)]
+                    sum_aa = np.convolve(aa, kernel, 'full')[:len(aa)]
+                    sum_bb = np.convolve(bb, kernel, 'full')[:len(bb)]
+                    
+                    var_a_term = np.maximum(n * sum_aa - sum_a**2, 0)
+                    var_b_term = np.maximum(n * sum_bb - sum_b**2, 0)
+                    
+                    numerator = n * sum_ab - sum_a * sum_b
+                    denominator = np.sqrt(var_a_term * var_b_term)
+                    
+                    corr = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
+                    corr[:n-1] = 0.0
+                    corr = np.clip(corr, -1.0, 1.0)
+                    
+                    self._save_feature(key, corr.astype(np.float32))
 
     def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
         self.ensure_context(population)
         num_strats = len(population)
         if num_strats == 0:
-            return np.zeros((self.context['__len__'], 0), dtype=np.int8)
+            return np.zeros((self.data_len, 0), dtype=np.int8)
 
         # Parallelize Signal Generation
-        # Determine number of jobs and batch size
-        # LIMIT CORES to prevent OOM / Resource Exhaustion
         import multiprocessing
         n_jobs = min(6, multiprocessing.cpu_count())
         batch_size = max(1, num_strats // (16 if num_strats > 100 else 4))
         
-        # Split population into chunks
         chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
         
-        # Run in parallel using Process backend (default) but reading from Shared Memmap
-        # max_nbytes=None prevents joblib from memmapping arguments to temp files (Leaking folders fix)
+        # Pass directory path, NOT dictionary or single file
         results = Parallel(n_jobs=n_jobs, max_nbytes=None)(
-            delayed(_worker_generate_signals)(chunk, self.context_path) for chunk in chunks
+            delayed(_worker_generate_signals)(chunk, self.temp_dir) for chunk in chunks
         )
         
-        # Concatenate results
-        # Each result is (Rows, Chunk_Size)
         signal_matrix = np.hstack(results)
         
-        # --- TIME FILTER (User Request) ---
-        # Force flat (0) outside of liquid hours and on weekends
-        if 'time_hour' in self.context:
-            hours = self.context['time_hour']
-            # London Open (8) to NY Close (22). Strictly less than 22 to ensure no new trades at last hour?
-            # User said "flatten BEFORE end of NY trading day". 
-            # If we enter at 21:58, we are flattened at 22:00.
-            # So (hours < 22) prevents entry at 22:00+, but allows 21:00-21:59.
-            market_open = (hours >= config.TRADING_START_HOUR) & (hours < config.TRADING_END_HOUR)
-            
-            # Weekend Filter (0=Mon, 4=Fri, 5=Sat, 6=Sun)
-            if 'time_weekday' in self.context:
-                is_weekday = self.context['time_weekday'] < 5
+        # --- TIME FILTER ---
+        # Need to load these from disk for mask
+        def load_vec(name):
+             path = os.path.join(self.temp_dir, f"{name}.npy")
+             if os.path.exists(path): return np.load(path)
+             return None
+
+        time_hour = load_vec('time_hour')
+        if time_hour is not None:
+            market_open = (time_hour >= config.TRADING_START_HOUR) & (time_hour < config.TRADING_END_HOUR)
+            time_weekday = load_vec('time_weekday')
+            if time_weekday is not None:
+                is_weekday = time_weekday < 5
                 market_open = market_open & is_weekday
                 
-            # Apply mask: Any signal outside valid hours becomes 0
             signal_matrix = signal_matrix * market_open[:, np.newaxis]
         
         return signal_matrix
@@ -386,9 +513,9 @@ class BacktestEngine:
             final_sortino = sortino[i]
             
             # Soft Penalty for Low Trades (Create Gradient)
-            # Aligned with WFV: Relaxed to 5
-            if trades_count[i] < 5:
-                penalty = (5 - trades_count[i]) * 0.2
+            # Increased to 25 to match Prop Desk Mandate (Moderate Stat Sig)
+            if trades_count[i] < 25:
+                penalty = (25 - trades_count[i]) * 0.1
                 final_sortino -= penalty
             
             if trades_count[i] == 0:
@@ -405,7 +532,7 @@ class BacktestEngine:
                  final_sortino -= 5.0
             
             # Volume Bonus
-            if trades_count[i] > 10:
+            if trades_count[i] > 25:
                 final_sortino *= np.log10(max(trades_count[i], 1))
             
             strat.fitness = final_sortino
@@ -469,9 +596,9 @@ class BacktestEngine:
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
             # Soft Penalty for WFV (Min Trades)
-            # Relaxed to 5 to allow sniper strategies (high precision, low freq)
+            # Increased to 10 to force statistical significance (Prop Desk Mandate)
             sortino = np.nan_to_num(sortino, nan=-2.0)
-            penalty = np.maximum(0, (5 - trades_count) * 0.2)
+            penalty = np.maximum(0, (10 - trades_count) * 0.1)
             sortino -= penalty
             
             # Stability Penalty: If one trade is > 60% of total return, penalize moderately
