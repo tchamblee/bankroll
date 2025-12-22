@@ -27,6 +27,8 @@ def load_all_candidates():
             try:
                 s = Strategy.from_dict(d)
                 s.horizon = h
+                s.training_id = d.get('training_id', 'legacy') # Capture ID
+                
                 # Load metrics for ranking
                 metrics = d.get('metrics', {})
                 s.sortino = metrics.get('sortino_oos', 0)
@@ -159,7 +161,7 @@ def run_mutex_backtest():
 
     print("\nSelected Portfolio (Ranked Priority):")
     for i, s in enumerate(unique_strats):
-        print(f"  {i+1}. {s.name} (H{s.horizon}) | Sortino: {s.sortino:.2f}")
+        print(f"  {i+1}. {s.name} (H{s.horizon}) | ID: {getattr(s, 'training_id', 'legacy')} | Sortino: {s.sortino:.2f}")
 
     # --- PRE-FILTER MUTEX INPUTS (Safe Entry) ---
     print("  Applying Safe Entry Filters to Mutex Inputs...")
@@ -211,6 +213,7 @@ def run_mutex_backtest():
     
     results.append({
         'Name': 'MUTEX PORTFOLIO',
+        'TrainID': 'N/A',
         'Profit': total_profit,
         'Return%': total_ret_pct * 100,
         'MaxDD%': max_dd * 100,
@@ -253,6 +256,7 @@ def run_mutex_backtest():
         
         results.append({
             'Name': f"{strat.name} (H{strat.horizon})",
+            'TrainID': getattr(strat, 'training_id', 'legacy'),
             'Profit': s_profit,
             'Return%': s_ret_pct * 100,
             'MaxDD%': s_max_dd * 100,
@@ -264,16 +268,15 @@ def run_mutex_backtest():
     # Print Table
     results.sort(key=lambda x: x['Sortino'], reverse=True)
     
-    print("\n" + "="*95)
+    print("\n" + "="*110)
     print("🏆 PERFORMANCE LEADERBOARD (Mutex vs. Components)")
-    print("="*95)
-    print(f"{ 'Name':<30} | {'Profit ($)':<12} | {'Ret %':<8} | {'MaxDD %':<8} | {'Sortino':<8} | {'Sharpe':<8} | {'Trades':<6}")
-    print("-" * 95)
+    print("="*110)
+    print(f"{ 'Name':<30} | {'TrainID':<8} | {'Profit ($)':<12} | {'Ret %':<8} | {'MaxDD %':<8} | {'Sortino':<8} | {'Sharpe':<8} | {'Trades':<6}")
+    print("-" * 110)
     
     for r in results:
-        print(f"{r['Name']:<30} | {r['Profit']:>12,.2f} | {r['Return%']:>8.2f} | {r['MaxDD%']:>8.2f} | {r['Sortino']:>8.2f} | {r['Sharpe']:>8.2f} | {r['Trades']:>6}")
-    print("-" * 95)
-    
+        print(f"{r['Name']:<30} | {r['TrainID']:<8} | {r['Profit']:>12,.2f} | {r['Return%']:>8.2f} | {r['MaxDD%']:>8.2f} | {r['Sortino']:>8.2f} | {r['Sharpe']:>8.2f} | {r['Trades']:>6}")
+    print("-" * 110)    
     # 5. Visualize
     # Need cumulative PnL series for plot
     # Re-simulating Mutex is cheap, but we have metrics. 

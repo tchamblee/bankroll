@@ -11,8 +11,13 @@ from strategy_genome import GenomeFactory, Strategy
 from backtest_engine import BacktestEngine
 from validate_features import triple_barrier_labels
 
+import uuid
+
 class EvolutionaryAlphaFactory:
     def __init__(self, data, survivors_file, population_size=2000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
+        self.training_id = uuid.uuid4().hex[:8]  # Unique ID for this run
+        print(f"🆔 Training Run ID: {self.training_id}")
+        
         self.data = data
         self.pop_size = population_size
         self.generations = generations
@@ -249,6 +254,7 @@ class EvolutionaryAlphaFactory:
                 strat_data['test_return'] = float(test_res.iloc[i]['total_return'])
                 strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
                 strat_data['robust_score'] = float(s.fitness)
+                strat_data['training_id'] = self.training_id # Attach Run ID
                 
                 output.append(strat_data)
             
@@ -262,11 +268,17 @@ class EvolutionaryAlphaFactory:
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
 
             # --- PERSISTENCE: MERGE WITH EXISTING CHAMPIONS ---
+            new_champion_found = False
+            prev_best_score = -999.0
+
             if os.path.exists(out_path):
                 try:
                     with open(out_path, "r") as f:
                         existing_data = json.load(f)
                     
+                    if existing_data:
+                        prev_best_score = existing_data[0].get('test_sortino', -999.0)
+
                     # Merge lists
                     combined = existing_data + output
                     
@@ -282,13 +294,30 @@ class EvolutionaryAlphaFactory:
                             seen_names.add(s['name'])
                     
                     output = unique_combined
+                    
+                    # Check for New Grand Champion
+                    if output and output[0].get('training_id') == self.training_id:
+                        if output[0].get('test_sortino') > prev_best_score:
+                             new_champion_found = True
+                             
                     print(f"\n🔄 Merged with {len(existing_data)} existing champions. New Total: {len(output)}")
                     
                 except Exception as e:
                     print(f"⚠️ Failed to merge with existing strategies: {e}")
+            else:
+                 # First run ever is automatically a champion
+                 if output: new_champion_found = True
 
             # Limit to Top 100 as requested
             output = output[:100]
+            
+            if new_champion_found:
+                 champ = output[0]
+                 print(f"\n" + "="*80)
+                 print(f"🚨 NEW GRAND CHAMPION DISCOVERED (H{horizon})! 🚨")
+                 print(f"   Training ID: {champ.get('training_id')} | Sortino: {champ.get('test_sortino'):.2f}")
+                 print(f"   Name: {champ.get('name')}")
+                 print("="*80 + "\n")
             
             # Print Top 5 (Current Run Only)
             print("\nTop 5 OOS Performers (Current Run):")
