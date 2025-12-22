@@ -76,12 +76,9 @@ def add_macro_voltage_features(df, us2y_df, schatz_df, tnx_df, bund_df, windows=
     df['us_curve'] = df['tnx'] - df['us2y']
     df['de_curve'] = df['bund'] - df['schatz']
     
-    # 5. Derived Features
-    for w in windows:
-        df[f'voltage_vel_{w}'] = df['voltage_diff'].diff(w)
-        # Handle log_ret if missing (should be there from microstructure or standard)
-        if 'log_ret' in df.columns:
-            df[f'voltage_corr_{w}'] = df['log_ret'].rolling(w).corr(df['voltage_diff'].diff()).fillna(0)
+    # REMOVED: Derivative/Velocity features (diff) as they result in zero variance 
+    # on high-frequency bars due to slow-updating macro data.
+    # We keep the levels (voltage_diff, curves) which represent the macro regime.
 
     df.drop(columns=['us2y', 'schatz', 'tnx', 'bund'], errors='ignore', inplace=True)
     return df

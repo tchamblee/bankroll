@@ -78,15 +78,16 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     if gdelt_df is not None:
         engine.add_gdelt_features(gdelt_df)
         
-    # 8. Macro Voltage
-    # Pass DataFrames directly
-    engine.add_macro_voltage_features(
-        us2y_df=data_cache['us2y'],
-        schatz_df=data_cache['schatz'],
-        tnx_df=data_cache['tnx'],
-        bund_df=data_cache['bund'],
-        windows=[50, 100]
-    )
+    # 8. Macro Voltage (DISABLED - Data Mismatch)
+    # US2Y/SCHATZ data starts Oct 2025, but Training is July-Oct. 
+    # Results in Dead Features.
+    # engine.add_macro_voltage_features(
+    #    us2y_df=data_cache['us2y'],
+    #    schatz_df=data_cache['schatz'],
+    #    tnx_df=data_cache['tnx'],
+    #    bund_df=data_cache['bund'],
+    #    windows=[50, 100]
+    # )
     
     # 9. Physics & Microstructure
     engine.add_physics_features()
