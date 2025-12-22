@@ -270,6 +270,7 @@ class EvolutionaryAlphaFactory:
             # --- PERSISTENCE: MERGE WITH EXISTING CHAMPIONS ---
             new_champion_found = False
             prev_best_score = -999.0
+            current_champion = None
 
             if os.path.exists(out_path):
                 try:
@@ -277,7 +278,8 @@ class EvolutionaryAlphaFactory:
                         existing_data = json.load(f)
                     
                     if existing_data:
-                        prev_best_score = existing_data[0].get('test_sortino', -999.0)
+                        current_champion = existing_data[0]
+                        prev_best_score = current_champion.get('test_sortino', -999.0)
 
                     # Merge lists
                     combined = existing_data + output
@@ -311,6 +313,10 @@ class EvolutionaryAlphaFactory:
             # Limit to Top 100 as requested
             output = output[:100]
             
+            if current_champion:
+                print("\n🏆 Current All-Time Champion (Before Merge):")
+                print(f"  ID: {current_champion.get('training_id','legacy')} | Sortino: {current_champion.get('test_sortino',0):.2f} | Ret: {current_champion.get('test_return',0)*100:.2f}% | Name: {current_champion['name']}")
+
             if new_champion_found:
                  champ = output[0]
                  print(f"\n" + "="*80)
