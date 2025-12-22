@@ -34,7 +34,7 @@ def _worker_generate_signals(strategies, context_path):
         
     return chunk_matrix
 
-def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit, hours, weekdays):
+def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit, hours, weekdays, highs, lows):
     """
     Worker function to simulate a chunk of strategy signals.
     """
@@ -61,7 +61,9 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
             take_profit_pct=tp,
             time_limit_bars=time_limit,
             hours=hours,
-            weekdays=weekdays
+            weekdays=weekdays,
+            highs=highs,
+            lows=lows
         )
         net_returns[:, i] = net_rets
         trades_count[i] = t_count
@@ -121,6 +123,8 @@ class BacktestEngine:
         self.returns_vec = self.raw_data[self.target_col].values.reshape(-1, 1).astype(np.float32)
         self.close_vec = self.raw_data['close'].values.astype(np.float64) 
         self.open_vec = self.raw_data['open'].values.astype(np.float64) # Added for Next-Open Execution
+        self.high_vec = self.raw_data['high'].values.astype(np.float64)
+        self.low_vec = self.raw_data['low'].values.astype(np.float64)
         
         if 'time_start' in self.raw_data.columns:
             self.times_vec = self.raw_data['time_start']
@@ -250,7 +254,7 @@ class BacktestEngine:
         
         return signal_matrix
 
-    def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None):
+    def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None, highs=None, lows=None):
         """
         Runs TradeSimulator for each strategy in the batch.
         Returns: net_returns matrix (Bars x Strats), trades_count array
@@ -308,7 +312,9 @@ class BacktestEngine:
                 self.account_size,
                 time_limit,
                 hours, # Pass slice-aligned hours
-                weekdays # Pass slice-aligned weekdays
+                weekdays, # Pass slice-aligned weekdays
+                highs,
+                lows
             ) for chunk_s, chunk_p in zip(chunks_sig, chunks_params)
         )
         
@@ -340,6 +346,8 @@ class BacktestEngine:
         
         # We use OPEN prices for execution to match the Lagged Signal
         prices = self.open_vec[start:end]
+        highs = self.high_vec[start:end]
+        lows = self.low_vec[start:end]
         
         times = self.times_vec.iloc[start:end] if hasattr(self.times_vec, 'iloc') else self.times_vec[start:end]
         
@@ -354,7 +362,7 @@ class BacktestEngine:
             # Use passed time_limit or default 120
             limit = time_limit if time_limit else 120
             
-            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit)
+            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows)
         
         # --- METRICS ---
         total_ret = np.sum(net_returns, axis=0)
@@ -416,11 +424,13 @@ class BacktestEngine:
             # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
             signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
             prices = self.open_vec[train_end:test_end]
+            highs = self.high_vec[train_end:test_end]
+            lows = self.low_vec[train_end:test_end]
             
             times = self.times_vec.iloc[train_end:test_end] if hasattr(self.times_vec, 'iloc') else self.times_vec[train_end:test_end]
             
             # Use Simulator
-            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit)
+            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows)
             
             avg = np.mean(net_returns, axis=0)
             downside = np.std(np.minimum(net_returns, 0), axis=0) + 1e-9
