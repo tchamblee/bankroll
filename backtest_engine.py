@@ -406,7 +406,7 @@ class BacktestEngine:
             
             # Volume Bonus
             if trades_count[i] > 10:
-                final_sortino *= np.log10(trades_count[i])
+                final_sortino *= np.log10(max(trades_count[i], 1))
             
             strat.fitness = final_sortino
             results.append({
@@ -491,9 +491,9 @@ class BacktestEngine:
             
             # --- VOLUME BONUS ---
             # Reward strategies that trade more frequently to improve statistical significance
-            # log10(10) = 1.0 (No bonus)
-            # log10(100) = 2.0 (Double score)
-            volume_bonus = np.where(trades_count > 10, np.log10(trades_count), 1.0)
+            # Safe log10 calculation
+            safe_trades = np.maximum(trades_count, 1)
+            volume_bonus = np.where(trades_count > 10, np.log10(safe_trades), 1.0)
             sortino *= volume_bonus
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
