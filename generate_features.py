@@ -9,7 +9,7 @@ def generate_feature_matrix():
     print("==============================================")
     
     # 1. Create Engine (Expensive Step)
-    engine = create_full_feature_engine(config.DIRS['DATA_RAW_TICKS'], volume_threshold=1000)
+    engine = create_full_feature_engine(config.DIRS['DATA_CLEAN_TICKS'], volume_threshold=1000)
     
     if engine is None or engine.bars is None or len(engine.bars) == 0:
         print("❌ Error: Feature Engine failed to generate data.")

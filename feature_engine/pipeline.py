@@ -10,14 +10,14 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         engine (FeatureEngine): The populated engine with engine.bars containing all features.
     """
     if data_dir is None:
-        data_dir = config.DIRS['DATA_RAW_TICKS']
+        data_dir = config.DIRS['DATA_CLEAN_TICKS']
         
     engine = FeatureEngine(data_dir)
     
     # 1. Load Primary (EUR/USD)
-    # Using the RAW_TICKS pattern as confirmed by audit
+    # Using the CLEAN pattern
     print("Loading Primary Ticker (EURUSD)...")
-    primary_df = engine.load_ticker_data("RAW_TICKS_EURUSD*.parquet")
+    primary_df = engine.load_ticker_data("CLEAN_EURUSD.parquet")
     if primary_df is None:
         print("❌ Failed to load primary data.")
         return None
@@ -30,15 +30,15 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     
     # Define Loading Specs
     load_specs = {
-        'tnx': "RAW_BARS_TNX*.parquet",
-        'dxy': "RAW_BARS_DXY*.parquet",
-        'bund': "RAW_BARS_BUND*.parquet",
-        'us2y': "RAW_BARS_US2Y*.parquet",
-        'schatz': "RAW_BARS_SCHATZ*.parquet",
-        'es': "RAW_BARS_ES*.parquet",
-        'zn': "RAW_BARS_ZN*.parquet",
-        '6e': "RAW_BARS_6E*.parquet",
-        'ibit': "RAW_BARS_IBIT*.parquet"
+        'tnx': "CLEAN_TNX.parquet",
+        'dxy': "CLEAN_DXY.parquet",
+        'bund': "CLEAN_BUND.parquet",
+        'us2y': "CLEAN_US2Y.parquet",
+        'schatz': "CLEAN_SCHATZ.parquet",
+        'es': "CLEAN_ES.parquet",
+        'zn': "CLEAN_ZN.parquet",
+        '6e': "CLEAN_6E.parquet",
+        'ibit': "CLEAN_IBIT.parquet"
     }
     
     data_cache = {}
