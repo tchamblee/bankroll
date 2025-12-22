@@ -226,10 +226,9 @@ def generate_report(horizon):
     # Backtest
     # We need to run the backtester to get the equity curve
     engine = BacktestEngine(
-        df, 
-        cost_bps=0.5, 
-        target_col='log_ret',
-        account_size=config.ACCOUNT_SIZE
+        df,
+        cost_bps=config.COST_BPS,
+        annualization_factor=config.ANNUALIZATION_FACTOR
     )
     
     # Evaluate on Test Set (OOS)

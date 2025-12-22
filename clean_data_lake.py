@@ -7,7 +7,11 @@ from joblib import Parallel, delayed
 
 def _process_ticker(ticker, raw_dir, clean_dir):
     try:
-        pattern = os.path.join(raw_dir, f"RAW_TICKS_{ticker}*.parquet")
+        if ticker == 'EURUSD':
+            pattern = os.path.join(raw_dir, f"RAW_TICKS_{ticker}*.parquet")
+        else:
+            pattern = os.path.join(raw_dir, f"RAW_BARS_{ticker}*.parquet")
+            
         files = glob.glob(pattern)
         
         if not files: return

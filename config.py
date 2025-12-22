@@ -34,7 +34,7 @@ MIN_LOTS = 1
 MAX_LOTS = 3
 COST_BPS = 0.5
 SPREAD_BPS = 1.0
-ANNUALIZATION_FACTOR = 100800 # 5 min bars? No, volume bars. Approx bars per year.
+ANNUALIZATION_FACTOR = 181440 # 720 bars/day * 252 days (Assuming 2-min bars or equivalent tick density)
 DEFAULT_STOP_LOSS = 0.005 # 0.5%
 DEFAULT_TAKE_PROFIT = 0.015 # 1.5%
 

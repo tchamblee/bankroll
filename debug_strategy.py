@@ -10,11 +10,10 @@ from strategy_genome import Strategy
 def main():
     print("DEBUGGING CHILD_7803 (H240)")
     
-    # Load Feature Matrix
-    base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    backtester = BacktestEngine(base_df, cost_bps=0.5, annualization_factor=181440)
+    # Create Backtester
+    backtester = BacktestEngine(base_df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
-    # Load Strategy
+    # 3. Prepare Single Strategy
     with open("output/strategies/apex_strategies_240.json", "r") as f:
         data = json.load(f)
         

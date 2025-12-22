@@ -139,7 +139,7 @@ def run_mutex_backtest():
         return
 
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    backtester = BacktestEngine(df, annualization_factor=181440)
+    backtester = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
     
     # Initialize Simulator (reusing backtester configs)
     simulator = TradeSimulator(

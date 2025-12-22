@@ -30,15 +30,15 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     
     # Define Loading Specs
     load_specs = {
-        'tnx': "RAW_TICKS_TNX*.parquet",
-        'dxy': "RAW_TICKS_DXY*.parquet",
-        'bund': "RAW_TICKS_BUND*.parquet",
-        'us2y': "RAW_TICKS_US2Y*.parquet",
-        'schatz': "RAW_TICKS_SCHATZ*.parquet",
-        'es': "RAW_TICKS_ES_*.parquet",
-        'zn': "RAW_TICKS_ZN_*.parquet",
-        '6e': "RAW_TICKS_6E_*.parquet",
-        'ibit': "RAW_TICKS_IBIT*.parquet"
+        'tnx': "RAW_BARS_TNX*.parquet",
+        'dxy': "RAW_BARS_DXY*.parquet",
+        'bund': "RAW_BARS_BUND*.parquet",
+        'us2y': "RAW_BARS_US2Y*.parquet",
+        'schatz': "RAW_BARS_SCHATZ*.parquet",
+        'es': "RAW_BARS_ES*.parquet",
+        'zn': "RAW_BARS_ZN*.parquet",
+        '6e': "RAW_BARS_6E*.parquet",
+        'ibit': "RAW_BARS_IBIT*.parquet"
     }
     
     data_cache = {}
