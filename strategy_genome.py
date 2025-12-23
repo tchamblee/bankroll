@@ -37,7 +37,134 @@ def gene_from_dict(d):
         return SqueezeGene(d['feature_short'], d['feature_long'], d['multiplier'])
     elif d['type'] == 'range':
         return RangeGene(d['feature'], d['min_val'], d['max_val'])
+    elif d['type'] == 'event':
+        return EventGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'extrema':
+        return ExtremaGene(d['feature'], d['mode'], d['window'])
     return None
+
+class EventGene:
+    """
+    'Memory' Gene.
+    Checks if a condition was True at least ONCE in the last N bars.
+    Format: (Feature > Threshold) occurred in last Window bars
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, window: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold
+        self.window = window
+        self.type = 'event'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.window)
+            if key in cache: return cache[key]
+
+        if self.feature not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[self.feature]
+            # 1. Generate Boolean Mask
+            if self.operator == '>': mask = data > self.threshold
+            elif self.operator == '<': mask = data < self.threshold
+            else: mask = np.zeros(len(data), dtype=bool)
+            
+            # 2. Check Event (Rolling Sum > 0)
+            # Cumsum trick: Sum[i] - Sum[i-w] > 0
+            mask_int = mask.astype(int)
+            csum = np.cumsum(mask_int)
+            csum = np.insert(csum, 0, 0) 
+            
+            rolling_sum = np.zeros(len(data), dtype=int)
+            w = self.window
+            if len(data) >= w:
+                rolling_sum[w-1:] = csum[w:] - csum[:-w]
+                
+            res = rolling_sum > 0
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.window = max(5, self.window + random.choice([-2, 2, 5]))
+        if random.random() < 0.3:
+            self.threshold += random.uniform(-0.5, 0.5)
+        if random.random() < 0.1:
+            self.feature = random.choice(features_pool)
+
+    def copy(self):
+        return EventGene(self.feature, self.operator, self.threshold, self.window)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'operator': self.operator,
+            'threshold': self.threshold,
+            'window': self.window
+        }
+
+    def __repr__(self):
+        return f"Event({self.feature} {self.operator} {self.threshold:.2f} in last {self.window})"
+
+class ExtremaGene:
+    """
+    'Breakout' Gene.
+    Checks if current value is the Max or Min of the last N bars.
+    """
+    def __init__(self, feature: str, mode: str, window: int):
+        self.feature = feature
+        self.mode = mode # 'max' or 'min'
+        self.window = window
+        self.type = 'extrema'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.mode, self.window)
+            if key in cache: return cache[key]
+
+        if self.feature not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[self.feature]
+            s = pd.Series(data)
+            
+            if self.mode == 'max':
+                rolling = s.rolling(self.window).max().values
+                # Use isclose for float safety or >= for breakout logic
+                res = data >= rolling 
+            else: # min
+                rolling = s.rolling(self.window).min().values
+                res = data <= rolling
+                
+            res = np.nan_to_num(res, nan=False).astype(bool)
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3:
+            self.window = random.choice(VALID_ZSCORE_WINDOWS)
+        if random.random() < 0.3:
+            self.mode = 'min' if self.mode == 'max' else 'max'
+        if random.random() < 0.1:
+            self.feature = random.choice(features_pool)
+
+    def copy(self):
+        return ExtremaGene(self.feature, self.mode, self.window)
+
+    def to_dict(self):
+        return {
+            'type': self.type,
+            'feature': self.feature,
+            'mode': self.mode,
+            'window': self.window
+        }
+
+    def __repr__(self):
+        return f"{self.feature} IS {self.mode.upper()}({self.window})"
 
 class SqueezeGene:
     """
@@ -871,8 +998,24 @@ class GenomeFactory:
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
 
-        # 15% Squeeze Gene (Regime Detector - Volatility Compression)
+        # 10% Event Gene (Memory - New)
+        elif rand_val < 0.40:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = random.uniform(-1.0, 1.0) * stats['std'] + stats['mean']
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return EventGene(feature, operator, threshold, window)
+
+        # 5% Extrema Gene (Breakout - New)
         elif rand_val < 0.45:
+            feature = random.choice(pool)
+            mode = random.choice(['max', 'min'])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return ExtremaGene(feature, mode, window)
+
+        # 10% Squeeze Gene (Regime Detector - Volatility Compression)
+        elif rand_val < 0.55:
             feature_short = random.choice(pool)
             feature_long = random.choice(pool)
             while feature_long == feature_short and len(pool) > 1:
@@ -881,7 +1024,7 @@ class GenomeFactory:
             return SqueezeGene(feature_short, feature_long, multiplier)
 
         # 10% Cross Gene (Event)
-        elif rand_val < 0.55:
+        elif rand_val < 0.65:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -890,7 +1033,7 @@ class GenomeFactory:
             return CrossGene(feature_left, direction, feature_right)
             
         # 10% Relational Gene (Context)
-        elif rand_val < 0.65:
+        elif rand_val < 0.75:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -899,7 +1042,7 @@ class GenomeFactory:
             return RelationalGene(feature_left, operator, feature_right)
 
         # 10% Regime Gene (Special handling for Bounded Metrics like Hurst/Entropy)
-        elif rand_val < 0.75:
+        elif rand_val < 0.85:
             # Pick a bounded feature if available
             bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
             target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
@@ -920,14 +1063,14 @@ class GenomeFactory:
                 return PersistenceGene(target_feature, op, threshold, window)
 
         # 5% Consecutive Gene (Pattern)
-        elif rand_val < 0.80:
+        elif rand_val < 0.90:
             direction = random.choice(['up', 'down'])
             op = random.choice(['>', '=='])
             count = random.randint(2, 6)
             return ConsecutiveGene(direction, op, count)
 
         # 5% Correlation Gene (Synergy)
-        elif rand_val < 0.85:
+        elif rand_val < 0.95:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             operator = random.choice(['>', '<'])
@@ -935,22 +1078,21 @@ class GenomeFactory:
             window = random.choice(VALID_CORR_WINDOWS)
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
-        # 10% Delta Gene (Momentum) - REDUCED PRIORITY due to non-adaptive thresholds
-        elif rand_val < 0.95:
-            feature = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = random.uniform(-0.5, 0.5) * stats['std']
-            lookback = random.choice(VALID_DELTA_LOOKBACKS) 
-            return DeltaGene(feature, operator, threshold, lookback)
-            
-        # 5% Slope Gene (Trend) - REDUCED PRIORITY
+        # 5% Delta/Slope Gene (Momentum/Trend) - Low Priority
         else:
-            feature = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            threshold = random.uniform(-0.02, 0.02)
-            window = random.choice(VALID_SLOPE_WINDOWS)
-            return SlopeGene(feature, operator, threshold, window)
+            if random.random() < 0.5:
+                feature = random.choice(pool)
+                operator = random.choice(['>', '<'])
+                stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+                threshold = random.uniform(-0.5, 0.5) * stats['std']
+                lookback = random.choice(VALID_DELTA_LOOKBACKS) 
+                return DeltaGene(feature, operator, threshold, lookback)
+            else:
+                feature = random.choice(pool)
+                operator = random.choice(['>', '<'])
+                threshold = random.uniform(-0.02, 0.02)
+                window = random.choice(VALID_SLOPE_WINDOWS)
+                return SlopeGene(feature, operator, threshold, window)
 
     def create_random_gene(self):
         # Fallback now uses ZScore instead of Static
