@@ -6,7 +6,7 @@ import os
 import sys
 import shutil
 import config
-from strategy_genome import Strategy
+from genome import Strategy
 from backtest_engine import BacktestEngine
 from trade_simulator import TradeSimulator
 

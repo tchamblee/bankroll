@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed, dump, load
-from strategy_genome import Strategy
+from genome import Strategy
 from trade_simulator import TradeSimulator
 import config
 import os

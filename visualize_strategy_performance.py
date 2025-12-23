@@ -6,7 +6,7 @@ import os
 import sys
 import re
 from feature_engine import FeatureEngine
-from strategy_genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
+from genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
 from backtest_engine import BacktestEngine
 import config
 

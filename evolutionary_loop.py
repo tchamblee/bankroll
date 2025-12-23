@@ -7,7 +7,7 @@ import random
 import time
 import config
 from feature_engine import FeatureEngine
-from strategy_genome import GenomeFactory, Strategy
+from genome import GenomeFactory, Strategy
 from backtest_engine import BacktestEngine
 from validate_features import triple_barrier_labels
 

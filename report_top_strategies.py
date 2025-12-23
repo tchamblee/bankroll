@@ -7,7 +7,7 @@ import numpy as np
 import config
 from collections import Counter
 from backtest_engine import BacktestEngine
-from strategy_genome import Strategy
+from genome import Strategy
 
 class MockEngine:
     def __init__(self, df):

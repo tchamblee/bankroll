@@ -1,0 +1,7 @@
+# Strict grid to prevent overfitting
+VALID_DELTA_LOOKBACKS = [5, 10, 20, 50, 100, 200]
+VALID_ZSCORE_WINDOWS = [20, 50, 100, 200, 400]
+VALID_CORR_WINDOWS = [20, 50, 100, 200]
+VALID_FLUX_LAGS = [5, 10, 20, 50]
+VALID_EFF_WINDOWS = [20, 50, 100, 200]
+VALID_SLOPE_WINDOWS = [20, 50, 100] # Re-added for Divergence
