@@ -98,7 +98,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         # --- 2. FORCE CLOSE (EOD/Time) ---
         # Logic remains similar, but applied to current time i
         force_close = False
-        if hours[i] >= 22 or weekdays[i] >= 5:
+        if hours[i] >= config.TRADING_END_HOUR or weekdays[i] >= 5:
             force_close = True
             
         if position != 0.0 and not barrier_hit:
@@ -208,10 +208,10 @@ class TradeSimulator:
     def __init__(self, 
                  prices: np.ndarray, 
                  times: pd.Series,
-                 spread_bps: float = 1.0, 
-                 cost_bps: float = 0.5,
-                 lot_size: float = 100000.0,
-                 account_size: float = 30000.0):
+                 spread_bps: float = config.SPREAD_BPS, 
+                 cost_bps: float = config.COST_BPS,
+                 lot_size: float = config.STANDARD_LOT_SIZE,
+                 account_size: float = config.ACCOUNT_SIZE):
         
         self.prices = prices.astype(np.float64) # Ensure precision
         self.times = times.values if hasattr(times, 'values') else times
@@ -260,7 +260,7 @@ class TradeSimulator:
             weekday = self.weekdays[i]
             
             # --- FORCE CLOSE LOGIC ---
-            force_close = (hour >= 22) or (weekday >= 5)
+            force_close = (hour >= config.TRADING_END_HOUR) or (weekday >= 5)
             
             step_pnl = 0.0
             if position != 0:

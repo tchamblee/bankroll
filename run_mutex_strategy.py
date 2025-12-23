@@ -176,11 +176,12 @@ def run_mutex_backtest():
     final_pos = simulate_mutex_portfolio(backtester, unique_strats, sig_matrix)
     warmup = 3200
 
-    # 4. Calculate PnL (Using TradeSimulator)
-    # Apply standard barriers (120 bars default, SL 0.5%)
-    net_rets, trades_count = simulator.simulate_fast(final_pos, take_profit_pct=0.015, time_limit_bars=120)
-    
-    # --- Comparative Analysis ---
+        
+        # Fast Simulation
+        # TODO: Add Stop Loss from gene if supported?
+        net_rets, trades_count = simulator.simulate_fast(final_pos, take_profit_pct=config.DEFAULT_TAKE_PROFIT, time_limit_bars=config.DEFAULT_TIME_LIMIT)
+        
+        # Performance Metrics
     results = []
     
     # 1. Mutex Portfolio Metrics

@@ -35,7 +35,7 @@ class BacktestEngine:
         # Variable Commission: 0.2 bps (0.00002)
         var_comm_pct = self.cost_bps / 10000.0
         # Fixed Commission approximation
-        fixed_comm_pct = fixed_cost / 100000.0 
+        fixed_comm_pct = fixed_cost / config.STANDARD_LOT_SIZE
         effective_comm_pct = max(var_comm_pct, fixed_comm_pct)
         
         self.effective_cost_bps = effective_comm_pct * 10000.0
@@ -247,7 +247,7 @@ class BacktestEngine:
                 trades_count = np.sum(np.abs(signals), axis=0) # Approx
             else:
                 # Full Simulation Mode
-                limit = time_limit if time_limit else 120
+                limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
                 net_returns, trades_count = self.run_simulation_batch(signals, chunk_pop, prices, times, time_limit=limit, highs=highs, lows=lows)
             
             # 3. Calculate Metrics for Chunk
@@ -332,7 +332,7 @@ class BacktestEngine:
         
         fold_scores = np.zeros((len(population), folds))
         
-        limit = time_limit if time_limit else 120
+        limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
         
         for f in range(folds):
             start = f * step_size

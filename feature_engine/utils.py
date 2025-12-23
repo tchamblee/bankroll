@@ -1,18 +1,17 @@
-import os
-import json
+import numpy as np
 import pandas as pd
+import json
+import os
+import config
 
-def filter_survivors(df, config_path="data/survivors.json"):
-    """
-    Retains only the Elite Survivors identified by the Purge (from JSON).
-    """
-    if df is None: return None
-    
-    # Default: Keep everything
-    cols_to_keep = df.columns.tolist()
-    
-    if os.path.exists(config_path):
-        try:
+def filter_survivors(df, config_path=None):
+    if config_path is None:
+        config_path = os.path.join(config.DIRS['FEATURES_DIR'], "survivors.json")
+
+    if not os.path.exists(config_path):
+        return df
+        
+    try:
             with open(config_path, "r") as f:
                 survivors = json.load(f)
             

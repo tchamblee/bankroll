@@ -55,7 +55,7 @@ def _jit_triple_barrier(closes, highs, lows, lookahead, tp_pct, sl_pct):
             
     return outcomes
 
-def triple_barrier_labels(df, lookahead=120, tp_pct=0.015, sl_pct=0.005):
+def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS):
     """
     Implements Triple-Barrier Method for labeling.
     Uses Numba for high performance.
@@ -95,7 +95,7 @@ if __name__ == "__main__":
         
         # 2. Generate Labels (Triple Barrier)
         # Using default TP=1.5% SL=0.5% as a standard baseline
-        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_pct=0.015, sl_pct=0.005)
+        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS)
         
         # 3. Analyze (Hunger Games)
         # Broader inclusion logic: Exclude metadata, keep everything else

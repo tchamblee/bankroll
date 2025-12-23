@@ -77,8 +77,18 @@ class FeatureEngine:
     def add_intermarket_features(self, correlator_dfs):
         self.bars = intermarket.add_intermarket_features(self.bars, correlator_dfs)
 
-    def filter_survivors(self, config_path="data/survivors.json"):
-        """
-        Retains only the Elite Survivors identified by the Purge (from JSON).
-        """
-        self.bars = utils.filter_survivors(self.bars, config_path)
+        # 12. Purge (Survival of the Fittest)
+        # ----------------------------------------------------
+        if self.use_survivors:
+             self.filter_survivors()
+        
+        return self.bars
+
+    def filter_survivors(self, config_path=None):
+        if config_path is None:
+            config_path = os.path.join(config.DIRS['FEATURES_DIR'], "survivors.json")
+
+        if not os.path.exists(config_path):
+            return
+            
+        print(f"⚔️ Filtering Features based on {config_path}...")

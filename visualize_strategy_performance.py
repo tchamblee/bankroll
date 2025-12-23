@@ -95,13 +95,13 @@ def plot_performance(engine, strategies):
     times = backtester.times_vec
     
     # 2. Run Simulation via BacktestEngine's wrapper (consistent logic)
-    print("Running Full Simulation for Plotting (SL=0.5%, TimeLimit=120)")
+    print(f"Running Full Simulation for Plotting (SL={config.DEFAULT_STOP_LOSS*100}%, TimeLimit={config.DEFAULT_TIME_LIMIT})")
     net_returns, trades_count = backtester.run_simulation_batch(
         full_signal_matrix, 
         strategies,
         prices, 
         times, 
-        time_limit=120
+        time_limit=config.DEFAULT_TIME_LIMIT
     )
     
     # 3. Compute Cumulative Equity Curve
@@ -140,7 +140,7 @@ def plot_performance(engine, strategies):
     plt.axvspan(backtester.train_idx, backtester.val_idx, color='yellow', alpha=0.05, label="Val")
     plt.axvspan(backtester.val_idx, len(cumulative), color='red', alpha=0.05, label="Test (OOS)")
     
-    plt.title(f"Apex Trading Performance: $30k Account, 1-3 Lots (Tiered Position Sizing)", fontsize=16)
+    plt.title(f"Apex Trading Performance: ${int(config.ACCOUNT_SIZE/1000)}k Account, {config.MIN_LOTS}-{config.MAX_LOTS} Lots (Tiered Position Sizing)", fontsize=16)
     plt.ylabel("Cumulative Account Return (%)")
     plt.xlabel("Bar Index")
     plt.legend(loc='upper left', fontsize='small')

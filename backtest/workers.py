@@ -38,8 +38,11 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
     trades_count = np.zeros(n_strats, dtype=int)
     
     for i in range(n_strats):
-        sl = params_chunk[i].get('sl', 0.005)
-        tp = params_chunk[i].get('tp', 0.0)
+        # Extract params
+        start_idx = params_chunk[i].get('start_idx', 0)
+        end_idx = params_chunk[i].get('end_idx', len(prices))
+        tp = params_chunk[i].get('tp', config.DEFAULT_TAKE_PROFIT)
+        sl = params_chunk[i].get('sl', config.DEFAULT_STOP_LOSS)
         
         net_rets, t_count = simulator.simulate_fast(
             signals_chunk[:, i], 
