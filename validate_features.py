@@ -101,7 +101,8 @@ if __name__ == "__main__":
         # Broader inclusion logic: Exclude metadata, keep everything else
         exclude_cols = ['time_start', 'time_end', 'ts_event', 'open', 'high', 'low', 'close', 
                         'volume', 'net_aggressor_vol', 'cum_vol', 'vol_proxy', 'bar_id', 
-                        'target_return', 'log_ret']
+                        'target_return', 'log_ret',
+                        'avg_ask_price', 'avg_bid_price', 'avg_ask_size', 'avg_bid_size']
         
         feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype.kind in 'bifc']
         

@@ -58,7 +58,8 @@ def add_microstructure_features(df, windows=[50, 100]):
         df['pres_imbalance'] = pres_imbalance
         
     if 'avg_bid_price' in df.columns and 'avg_ask_price' in df.columns:
-        df['avg_spread'] = df['avg_ask_price'] - df['avg_bid_price']
+        mid_price = (df['avg_ask_price'] + df['avg_bid_price']) / 2
+        df['avg_spread'] = (df['avg_ask_price'] - df['avg_bid_price']) / mid_price.replace(0, 1)
         
     # Parallelize
     results = Parallel(n_jobs=-1)(
