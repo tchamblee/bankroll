@@ -1009,50 +1009,16 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 30% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
-        if rand_val < 0.30:
+        # 35% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
+        if rand_val < 0.35:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-3.0, -2.5, -2.0, -1.5, 1.5, 2.0, 2.5, 3.0])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
 
-        # 10% Event Gene (Memory - New)
-        elif rand_val < 0.40:
-            feature = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = random.uniform(-1.0, 1.0) * stats['std'] + stats['mean']
-            window = random.choice(VALID_ZSCORE_WINDOWS)
-            return EventGene(feature, operator, threshold, window)
-
-        # 5% Extrema Gene (Breakout - New)
-        elif rand_val < 0.45:
-            feature = random.choice(pool)
-            mode = random.choice(['max', 'min'])
-            window = random.choice(VALID_ZSCORE_WINDOWS)
-            return ExtremaGene(feature, mode, window)
-
-        # 10% Squeeze Gene (Regime Detector - Volatility Compression)
-        elif rand_val < 0.55:
-            feature_short = random.choice(pool)
-            feature_long = random.choice(pool)
-            while feature_long == feature_short and len(pool) > 1:
-                feature_long = random.choice(pool)
-            multiplier = random.uniform(0.5, 0.95)
-            return SqueezeGene(feature_short, feature_long, multiplier)
-
-        # 10% Cross Gene (Event)
-        elif rand_val < 0.65:
-            feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
-            direction = random.choice(['above', 'below'])
-            return CrossGene(feature_left, direction, feature_right)
-            
-        # 10% Relational Gene (Context)
-        elif rand_val < 0.75:
+        # 15% Relational Gene (Context - "Is A > B?")
+        elif rand_val < 0.50:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -1060,36 +1026,17 @@ class GenomeFactory:
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
 
-        # 10% Regime Gene (Special handling for Bounded Metrics like Hurst/Entropy)
-        elif rand_val < 0.85:
-            # Pick a bounded feature if available
-            bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
-            target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
-            
-            # Use RangeGene (Safe for bounded) or PersistenceGene
-            if random.random() < 0.5:
-                # Range
-                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-                center = stats['mean'] + random.uniform(-0.5, 0.5) * stats['std']
-                width = random.uniform(0.5, 2.0) * stats['std']
-                return RangeGene(target_feature, center - width/2, center + width/2)
-            else:
-                # Persistence (Regime must hold)
-                op = random.choice(['>', '<'])
-                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-                window = random.randint(5, 20) # Longer window for regime
-                return PersistenceGene(target_feature, op, threshold, window)
+        # 10% Squeeze Gene (Regime Detector - Volatility Compression)
+        elif rand_val < 0.60:
+            feature_short = random.choice(pool)
+            feature_long = random.choice(pool)
+            while feature_long == feature_short and len(pool) > 1:
+                feature_long = random.choice(pool)
+            multiplier = random.uniform(0.5, 0.95)
+            return SqueezeGene(feature_short, feature_long, multiplier)
 
-        # 5% Consecutive Gene (Pattern)
-        elif rand_val < 0.90:
-            direction = random.choice(['up', 'down'])
-            op = random.choice(['>', '=='])
-            count = random.randint(2, 6)
-            return ConsecutiveGene(direction, op, count)
-
-        # 5% Correlation Gene (Synergy)
-        elif rand_val < 0.95:
+        # 10% Correlation Gene (Synergy - "Are A and B moving together?")
+        elif rand_val < 0.70:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             operator = random.choice(['>', '<'])
@@ -1097,7 +1044,55 @@ class GenomeFactory:
             window = random.choice(VALID_CORR_WINDOWS)
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
-        # 5% Delta/Slope Gene (Momentum/Trend) - Low Priority
+        # 10% Event Gene (Memory - "Did X happen recently?")
+        elif rand_val < 0.80:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = random.uniform(-1.0, 1.0) * stats['std'] + stats['mean']
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return EventGene(feature, operator, threshold, window)
+
+        # 5% Cross Gene (Event - "A crossed B")
+        elif rand_val < 0.85:
+            feature_left = random.choice(pool)
+            feature_right = random.choice(pool)
+            while feature_right == feature_left and len(pool) > 1:
+                feature_right = random.choice(pool)
+            direction = random.choice(['above', 'below'])
+            return CrossGene(feature_left, direction, feature_right)
+
+        # 5% Regime Gene (Bounded Metrics)
+        elif rand_val < 0.90:
+            bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
+            target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
+            if random.random() < 0.5:
+                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+                center = stats['mean'] + random.uniform(-0.5, 0.5) * stats['std']
+                width = random.uniform(0.5, 2.0) * stats['std']
+                return RangeGene(target_feature, center - width/2, center + width/2)
+            else:
+                op = random.choice(['>', '<'])
+                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
+                window = random.randint(5, 20)
+                return PersistenceGene(target_feature, op, threshold, window)
+
+        # 5% Extrema Gene (Breakout)
+        elif rand_val < 0.95:
+            feature = random.choice(pool)
+            mode = random.choice(['max', 'min'])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return ExtremaGene(feature, mode, window)
+
+        # 2% Consecutive Gene (Pattern - "3 Green Bars")
+        elif rand_val < 0.97:
+            direction = random.choice(['up', 'down'])
+            op = random.choice(['>', '=='])
+            count = random.randint(2, 6)
+            return ConsecutiveGene(direction, op, count)
+
+        # 3% Delta/Slope Gene (Momentum/Trend)
         else:
             if random.random() < 0.5:
                 feature = random.choice(pool)

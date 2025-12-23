@@ -456,10 +456,18 @@ class BacktestEngine:
         return all_net_returns, all_trades_count
 
     def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False, prediction_mode=False, time_limit=None):
-        if not population: return []
+        if not population: 
+            return (pd.DataFrame(), np.array([])) if return_series else pd.DataFrame()
         
-        full_signal_matrix = self.generate_signal_matrix(population)
+        # --- CHUNKING TO PREVENT OOM ---
+        # Process strategies in batches of 2000
+        BATCH_SIZE = 2000
+        n_strats = len(population)
         
+        all_results = []
+        all_net_returns = []
+        
+        # Determine index ranges once
         if set_type == 'train':
             start, end = 0, self.train_idx
         elif set_type == 'validation':
@@ -467,86 +475,105 @@ class BacktestEngine:
         elif set_type == 'test':
             start, end = self.val_idx, len(self.raw_data)
         else: raise ValueError("set_type must be 'train', 'validation', or 'test'")
-            
-        signals = full_signal_matrix[start:end]
         
-        # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
-        # Signals generated at Close[t] must be executed at Open[t+1].
-        # We shift signals forward by 1.
-        signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
-        
-        # We use OPEN prices for execution to match the Lagged Signal
         prices = self.open_vec[start:end]
         highs = self.high_vec[start:end]
         lows = self.low_vec[start:end]
-        
         times = self.times_vec.iloc[start:end] if hasattr(self.times_vec, 'iloc') else self.times_vec[start:end]
         
-        # Prediction Mode override (Fast Vectorized)
-        if prediction_mode:
-            returns = self.returns_vec[start:end]
-            strat_returns = signals * returns
-            net_returns = strat_returns
-            trades_count = np.sum(np.abs(signals), axis=0) # Approx
-        else:
-            # Full Simulation Mode
-            # Use passed time_limit or default 120
-            limit = time_limit if time_limit else 120
+        # Loop through chunks
+        for i in range(0, n_strats, BATCH_SIZE):
+            chunk_pop = population[i:i + BATCH_SIZE]
             
-            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows)
-        
-        # --- METRICS ---
-        total_ret = np.sum(net_returns, axis=0)
-        stdev = np.std(net_returns, axis=0) + 1e-9
-        avg_ret = np.mean(net_returns, axis=0)
-        sharpe = (avg_ret / stdev) * np.sqrt(self.annualization_factor)
-        
-        downside = np.minimum(net_returns, 0)
-        downside_std = np.std(downside, axis=0) + 1e-9
-        sortino = (avg_ret / downside_std) * np.sqrt(self.annualization_factor)
-        
-        max_win = np.max(net_returns, axis=0)
-        stability_ratio = max_win / (total_ret + 1e-9)
-        
-        results = []
-        for i, strat in enumerate(population):
-            final_sortino = sortino[i]
+            # 1. Generate Signals for Chunk
+            full_signal_matrix = self.generate_signal_matrix(chunk_pop)
+            signals = full_signal_matrix[start:end]
             
-            # Soft Penalty for Low Trades (Create Gradient)
-            # Increased to 25 to match Prop Desk Mandate (Moderate Stat Sig)
-            if trades_count[i] < 25:
-                penalty = (25 - trades_count[i]) * 0.1
-                final_sortino -= penalty
+            # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+            # Signals generated at Close[t] must be executed at Open[t+1].
+            # We shift signals forward by 1.
+            signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
             
-            if trades_count[i] == 0:
-                final_sortino = -5.0
+            # 2. Simulate Chunk
+            if prediction_mode:
+                returns = self.returns_vec[start:end]
+                strat_returns = signals * returns
+                net_returns = strat_returns
+                trades_count = np.sum(np.abs(signals), axis=0) # Approx
+            else:
+                # Full Simulation Mode
+                limit = time_limit if time_limit else 120
+                net_returns, trades_count = self.run_simulation_batch(signals, chunk_pop, prices, times, time_limit=limit, highs=highs, lows=lows)
+            
+            # 3. Calculate Metrics for Chunk
+            total_ret = np.sum(net_returns, axis=0)
+            stdev = np.std(net_returns, axis=0) + 1e-9
+            avg_ret = np.mean(net_returns, axis=0)
+            sharpe = (avg_ret / stdev) * np.sqrt(self.annualization_factor)
+            
+            downside = np.minimum(net_returns, 0)
+            downside_std = np.std(downside, axis=0) + 1e-9
+            sortino = (avg_ret / downside_std) * np.sqrt(self.annualization_factor)
+            
+            max_win = np.max(net_returns, axis=0)
+            stability_ratio = max_win / (total_ret + 1e-9)
+            
+            chunk_results = []
+            for j, strat in enumerate(chunk_pop):
+                final_sortino = sortino[j]
                 
-            # Stability Penalty
-            # Aligned with WFV: Relaxed to 0.6
-            if stability_ratio[i] > 0.6 and total_ret[i] > 0: final_sortino *= 0.6
+                # Soft Penalty for Low Trades (Create Gradient)
+                # Increased to 25 to match Prop Desk Mandate (Moderate Stat Sig)
+                if trades_count[j] < 25:
+                    penalty = (25 - trades_count[j]) * 0.1
+                    final_sortino -= penalty
+                
+                if trades_count[j] == 0:
+                    final_sortino = -5.0
+                    
+                # Stability Penalty
+                # Aligned with WFV: Relaxed to 0.6
+                if stability_ratio[j] > 0.6 and total_ret[j] > 0: final_sortino *= 0.6
+                
+                # --- COST COVERAGE PENALTY (Aligned with WFV) ---
+                avg_trade_ret = total_ret[j] / (trades_count[j] + 1e-9)
+                cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
+                if avg_trade_ret < cost_threshold:
+                     final_sortino -= 5.0
+                
+                # Volume Bonus
+                if trades_count[j] > 25:
+                    final_sortino *= np.log10(max(trades_count[j], 1))
+                
+                strat.fitness = final_sortino
+                chunk_results.append({
+                    'id': strat.name,
+                    'sharpe': sharpe[j],
+                    'sortino': final_sortino,
+                    'total_return': total_ret[j],
+                    'trades': trades_count[j],
+                    'stability': stability_ratio[j]
+                })
             
-            # --- COST COVERAGE PENALTY (Aligned with WFV) ---
-            avg_trade_ret = total_ret[i] / (trades_count[i] + 1e-9)
-            cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
-            if avg_trade_ret < cost_threshold:
-                 final_sortino -= 5.0
+            all_results.extend(chunk_results)
             
-            # Volume Bonus
-            if trades_count[i] > 25:
-                final_sortino *= np.log10(max(trades_count[i], 1))
+            if return_series:
+                all_net_returns.append(net_returns)
+                
+            # Explicit Cleanup
+            del full_signal_matrix, signals, net_returns
             
-            strat.fitness = final_sortino
-            results.append({
-                'id': strat.name,
-                'sharpe': sharpe[i],
-                'sortino': final_sortino,
-                'total_return': total_ret[i],
-                'trades': trades_count[i],
-                'stability': stability_ratio[i]
-            })
-            
-        results_df = pd.DataFrame(results)
-        return (results_df, net_returns) if return_series else results_df
+        results_df = pd.DataFrame(all_results)
+        
+        if return_series:
+            # Concatenate along columns (axis 1)
+            if all_net_returns:
+                combined_returns = np.hstack(all_net_returns)
+            else:
+                combined_returns = np.array([])
+            return results_df, combined_returns
+        else:
+            return results_df
 
     def evaluate_walk_forward(self, population: list[Strategy], folds=4, time_limit=None):
         if not population: return []
@@ -598,7 +625,7 @@ class BacktestEngine:
             # Soft Penalty for WFV (Min Trades)
             # Increased to 10 to force statistical significance (Prop Desk Mandate)
             sortino = np.nan_to_num(sortino, nan=-2.0)
-            penalty = np.maximum(0, (10 - trades_count) * 0.1)
+            penalty = np.maximum(0, (30 - trades_count) * 0.2)
             sortino -= penalty
             
             # Stability Penalty: If one trade is > 60% of total return, penalize moderately
@@ -620,7 +647,7 @@ class BacktestEngine:
             # Reward strategies that trade more frequently to improve statistical significance
             # Safe log10 calculation
             safe_trades = np.maximum(trades_count, 1)
-            volume_bonus = np.where(trades_count > 10, np.log10(safe_trades), 1.0)
+            volume_bonus = np.where(trades_count > 30, np.log10(safe_trades), 1.0)
             sortino *= volume_bonus
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)

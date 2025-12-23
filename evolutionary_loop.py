@@ -182,13 +182,17 @@ class EvolutionaryAlphaFactory:
                     # Check for duplicates in HOF (simple name check or gene hash ideally)
                     self.hall_of_fame.append((elite, elite.fitness))
             
+            # Cap Hall of Fame Size to prevent memory explosion
+            if len(self.hall_of_fame) > 20000:
+                self.hall_of_fame.sort(key=lambda x: x[1], reverse=True)
+                self.hall_of_fame = self.hall_of_fame[:20000]
+
             # 5. Next Gen
             new_population = elites[:50] # Keep top 50 unchanged (Elitism)
             
             # --- IMMIGRATION (Fresh Blood Injection) ---
             # Prune the bottom and replace with 30% completely new random strategies
-            # Increased from 20% to 30% to combat stagnation in OOS
-            n_immigrants = int(self.pop_size * 0.30)
+            n_immigrants = int(self.pop_size * 0.1)
             for _ in range(n_immigrants):
                 new_population.append(self.factory.create_strategy((2, 4)))
             
@@ -234,7 +238,8 @@ class EvolutionaryAlphaFactory:
             
             # --- PROFITABILITY CHECK: TRAINING SET ---
             # Strategies must be profitable in the initial Training Set (0-60%)
-            train_res, _ = self.backtester.evaluate_population(unique_hof, set_type='train', return_series=True, prediction_mode=False, time_limit=horizon)
+            # Use return_series=False to save memory
+            train_res = self.backtester.evaluate_population(unique_hof, set_type='train', return_series=False, prediction_mode=False, time_limit=horizon)
             
             valid_train_indices = train_res[train_res['total_return'] > 0].index.tolist()
             unique_hof = [unique_hof[i] for i in valid_train_indices]
@@ -243,7 +248,7 @@ class EvolutionaryAlphaFactory:
                  print("🛑 All strategies failed the Training Profitability Check (Ret > 0).")
             else:
                 # Evaluate entire history on Test Set
-                test_res, _ = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=True, prediction_mode=False, time_limit=horizon)
+                test_res = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon)
                 
                 # Filter for OOS Profitability
                 profitable_indices = test_res[test_res['sortino'] > 0.0].index.tolist()
