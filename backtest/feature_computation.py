@@ -28,8 +28,27 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
             streaks[i] = current
         return streaks
 
-    _save_feature(temp_dir, existing_keys, 'consecutive_up', get_streak(up_mask))
-    _save_feature(temp_dir, existing_keys, 'consecutive_down', get_streak(~up_mask & (close < np.roll(close, 1))))
+    # Precompute Base ATR (for Dynamic Barriers)
+    # TR = Max(H-L, |H-C_prev|, |L-C_prev|)
+    h, l, c = raw_data['high'].values, raw_data['low'].values, raw_data['close'].values
+    c_prev = np.roll(c, 1); c_prev[0] = c[0]
+    
+    tr1 = h - l
+    tr2 = np.abs(h - c_prev)
+    tr3 = np.abs(l - c_prev)
+    tr = np.maximum(tr1, np.maximum(tr2, tr3))
+    
+    # Simple Moving Average for ATR (Window 50 for stability approx 2 hours)
+    # Using convolution for speed
+    w_atr = 50
+    if len(tr) >= w_atr:
+        kernel = np.ones(w_atr) / w_atr
+        atr = np.convolve(tr, kernel, mode='full')[:len(tr)]
+        atr[:w_atr] = tr[:w_atr] # Fill warmup with raw TR or mean of available
+    else:
+        atr = tr
+        
+    _save_feature(temp_dir, existing_keys, 'atr_base', atr.astype(np.float32))
 
 def ensure_feature_context(population, temp_dir, existing_keys):
     needed = set()

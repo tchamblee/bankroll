@@ -7,14 +7,13 @@ import config
 
 @jit(nopython=True)
 def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
-                       highs: np.ndarray, lows: np.ndarray,
+                       highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,
                        lot_size: float, spread_pct: float, comm_pct: float, 
-                       account_size: float, stop_loss_pct: float, 
-                       take_profit_pct: float, time_limit_bars: int) -> Tuple[np.ndarray, int]:
+                       account_size: float, sl_mult: float, 
+                       tp_mult: float, time_limit_bars: int) -> Tuple[np.ndarray, int]:
     """
-    JIT-Compiled Event-Driven Simulation.
-    Supports Intra-Bar Barrier Checking (High/Low) and Next-Open Execution.
+    JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers.
     """
     n = len(signals)
     
@@ -24,50 +23,40 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     # Position entering step i (from i-1)
     position = 0.0 
     entry_price = 0.0
+    entry_atr = 0.0
     entry_idx = 0
     
-    # We need to track if we were stopped out in the previous interval
-    # to correct the PnL calculation in the second loop.
-    # Arrays to store the effective exit price for each bar if a barrier was hit.
-    # 0.0 means no barrier hit (use standard Open-Open).
+    # Barrier Exit Prices
     barrier_exit_prices = np.zeros(n, dtype=np.float64)
     
     # Iterate all bars
     for i in range(n):
         # --- 1. CHECK BARRIERS FROM PREVIOUS INTERVAL [i-1 to i] ---
-        # We are standing at Open[i]. We just traversed Bar i-1.
-        # Did we survive Bar i-1?
-        
         barrier_hit = False
         
         if i > 0 and position != 0.0:
-            # Check High/Low of Bar i-1
-            # Note: signals[i] is the decision for Open[i]. 
-            # 'position' is what we held coming into i.
-            
-            # SL/TP Checks on Bar i-1
-            # We use entry_price (which was Open[entry_idx] or similar)
-            
             h_prev = highs[i-1]
             l_prev = lows[i-1]
+            
+            # Dynamic Distances based on Entry Volatility
+            sl_dist = entry_atr * sl_mult
+            tp_dist = entry_atr * tp_mult
             
             # Long Position
             if position > 0:
                 # Stop Loss (Low Check)
-                if stop_loss_pct > 0.0:
-                    sl_price = entry_price * (1.0 - stop_loss_pct)
+                if sl_mult > 0.0:
+                    sl_price = entry_price - sl_dist
                     if l_prev <= sl_price:
-                        # HIT SL
                         position = 0.0
-                        realized_signals[i] = 0.0 # Forced flat
+                        realized_signals[i] = 0.0
                         barrier_exit_prices[i] = sl_price
                         barrier_hit = True
                         
-                # Take Profit (High Check) - Only if SL not hit (simplified)
-                if not barrier_hit and take_profit_pct > 0.0:
-                    tp_price = entry_price * (1.0 + take_profit_pct)
+                # Take Profit (High Check)
+                if not barrier_hit and tp_mult > 0.0:
+                    tp_price = entry_price + tp_dist
                     if h_prev >= tp_price:
-                        # HIT TP
                         position = 0.0
                         realized_signals[i] = 0.0
                         barrier_exit_prices[i] = tp_price
@@ -76,27 +65,24 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             # Short Position
             elif position < 0:
                 # Stop Loss (High Check)
-                if stop_loss_pct > 0.0:
-                    sl_price = entry_price * (1.0 + stop_loss_pct)
+                if sl_mult > 0.0:
+                    sl_price = entry_price + sl_dist
                     if h_prev >= sl_price:
-                        # HIT SL
                         position = 0.0
                         realized_signals[i] = 0.0
                         barrier_exit_prices[i] = sl_price
                         barrier_hit = True
                         
                 # Take Profit (Low Check)
-                if not barrier_hit and take_profit_pct > 0.0:
-                    tp_price = entry_price * (1.0 - take_profit_pct)
+                if not barrier_hit and tp_mult > 0.0:
+                    tp_price = entry_price - tp_dist
                     if l_prev <= tp_price:
-                        # HIT TP
                         position = 0.0
                         realized_signals[i] = 0.0
                         barrier_exit_prices[i] = tp_price
                         barrier_hit = True
 
         # --- 2. FORCE CLOSE (EOD/Time) ---
-        # Logic remains similar, but applied to current time i
         force_close = False
         if hours[i] >= config.TRADING_END_HOUR or weekdays[i] >= 5:
             force_close = True
@@ -111,18 +97,15 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         realized_signals[i] = 0.0
 
         # --- 3. NEW ENTRY ---
-        # Only if we aren't forced closed and didn't just hit a barrier
         if force_close:
             realized_signals[i] = 0.0
         elif position == 0.0 and realized_signals[i] != 0.0:
-            # Entering new trade at Open[i]
             position = realized_signals[i]
             entry_price = prices[i]
+            entry_atr = atr_vec[i] # Capture Volatility at Entry
             entry_idx = i
             
-        # Update current position state for next iteration
-        # Note: 'position' variable here effectively tracks realized_signals[i]
-        # unless we modify it in next loop.
+        # Update loop state...
         
     # --- COST & PNL CALCULATION ---
     net_returns = np.zeros(n, dtype=np.float64)
@@ -130,55 +113,24 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     
     for i in range(n):
         curr_pos = realized_signals[i]
-        
-        # Determine Exit Price
-        # Standard: Open[i]
-        # Barrier Hit: barrier_exit_prices[i]
-        
         current_price = prices[i]
-        executed_at_barrier = False
         
         if barrier_exit_prices[i] != 0.0:
             current_price = barrier_exit_prices[i]
-            executed_at_barrier = True
             
         if i > 0:
-            # PnL from holding prev_pos from i-1 to i
-            # Price Change: (Current Price - Prev Price)
-            # Prev Price was Open[i-1] (or entry if i-1 was entry?)
-            # Actually, simplify: Mark-to-Market PnL
-            
-            # If we hit a barrier at i, it means we exited AT the barrier price during the interval.
-            # So the move is (BarrierPrice - Open[i-1]).
-            # And then we are flat (curr_pos=0).
-            
-            # If we didn't hit barrier, move is (Open[i] - Open[i-1]).
-            
             price_change = current_price - prices[i-1]
             gross_pnl = prev_pos * lot_size * price_change
-            
-            # Cost Logic
-            # If we changed position, we paid spread/comm.
-            # If we exited at Barrier, we paid cost at Barrier Price.
-            
             pos_change = abs(curr_pos - prev_pos)
-            
-            cost_price = current_price # Price where execution happened
-            cost = pos_change * lot_size * cost_price * (spread_pct + comm_pct)
-            
+            cost = pos_change * lot_size * current_price * (spread_pct + comm_pct)
             net_pnl = gross_pnl - cost
             net_returns[i] = net_pnl / account_size
-            
-            if pos_change > 0:
-                trade_count += 1
-                
+            if pos_change > 0: trade_count += 1
         else:
-            # First bar
             pos_change = abs(curr_pos - 0.0)
             cost = pos_change * lot_size * prices[i] * (spread_pct + comm_pct)
             net_returns[i] = -cost / account_size
-            if pos_change > 0:
-                trade_count += 1
+            if pos_change > 0: trade_count += 1
                 
         prev_pos = curr_pos
 
@@ -201,10 +153,6 @@ class Trade:
     events: List[Dict] = field(default_factory=list)
 
 class TradeSimulator:
-    """
-    Centralized logic for simulating trades with Triple Barrier constraints.
-    Ensures consistency between Backtesting and Reporting/Visualization.
-    """
     def __init__(self, 
                  prices: np.ndarray, 
                  times: pd.Series,
@@ -334,35 +282,41 @@ class TradeSimulator:
 
     def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = config.DEFAULT_STOP_LOSS, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None,
                       hours: Optional[np.ndarray] = None, weekdays: Optional[np.ndarray] = None,
-                      highs: Optional[np.ndarray] = None, lows: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
+                      highs: Optional[np.ndarray] = None, lows: Optional[np.ndarray] = None,
+                      atr: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
-        Uses Numba JIT. Supports Intra-Bar High/Low checks.
         """
         limit_val = time_limit_bars if time_limit_bars is not None else 0
-        sl_val = stop_loss_pct if stop_loss_pct is not None else 0.0
-        tp_val = take_profit_pct if take_profit_pct is not None else 0.0
         
-        # Use pre-calculated or passed arrays
+        # Interpret inputs as Multipliers
+        sl_mult = stop_loss_pct if stop_loss_pct is not None else 0.0
+        tp_mult = take_profit_pct if take_profit_pct is not None else 0.0
+        
         h_arr = hours if hours is not None else self.hours
         w_arr = weekdays if weekdays is not None else self.weekdays
-        
-        # Highs/Lows defaults
         high_vec = highs.astype(np.float64) if highs is not None else self.prices
         low_vec = lows.astype(np.float64) if lows is not None else self.prices
+        
+        # ATR Handling
+        if atr is None:
+            atr_vec = self.prices * 0.001 
+        else:
+            atr_vec = atr.astype(np.float64)
         
         return _jit_simulate_fast(
             signals.astype(np.float64),
             self.prices,
             high_vec,
             low_vec,
+            atr_vec,
             h_arr,
             w_arr,
             self.lot_size,
             self.spread_pct,
             self.comm_pct,
             self.account_size,
-            sl_val,
-            tp_val,
+            sl_mult,
+            tp_mult,
             limit_val
         )

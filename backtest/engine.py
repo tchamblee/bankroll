@@ -68,6 +68,14 @@ class BacktestEngine:
         # Precompute Derived Features (Saved to disk)
         self.precompute_context()
         
+        # Load ATR Base (Essential for Dynamic Simulation)
+        atr_path = os.path.join(self.temp_dir, 'atr_base.npy')
+        if os.path.exists(atr_path):
+            self.atr_vec = np.load(atr_path).astype(np.float64)
+        else:
+            # Fallback if computation failed (should not happen)
+            self.atr_vec = np.zeros_like(self.close_vec)
+        
         # Split Indices
         n = len(self.raw_data)
         self.train_idx = int(n * config.TRAIN_SPLIT_RATIO)
@@ -128,7 +136,7 @@ class BacktestEngine:
         
         return signal_matrix
 
-    def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None, highs=None, lows=None):
+    def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None, highs=None, lows=None, atr=None):
         """
         Runs TradeSimulator for each strategy in the batch.
         Returns: net_returns matrix (Bars x Strats), trades_count array
@@ -148,20 +156,10 @@ class BacktestEngine:
             hours = dt_idx.hour.values.astype(np.int8)
             weekdays = dt_idx.dayofweek.values.astype(np.int8)
 
-        # 2. Lookahead Entry Filter
-        # Prevent entry if we are too close to Market Close
-        if time_limit:
-            # Estimate: 2 mins per bar (Conservative)
-            est_duration_hours = (time_limit * 2.0) / 60.0
-            cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
-            
-            # Entry Mask: (Hour < Cutoff) AND (Weekday < 5)
-            # This masks out new entries that would likely be forced closed prematurely.
-            safe_entry_mask = (hours < cutoff_hour) & (weekdays < 5)
-            
-            # Apply to signals
-            signals_matrix = signals_matrix * safe_entry_mask[:, np.newaxis]
-            
+        # ATR Fallback
+        if atr is None:
+            atr = np.zeros_like(prices) # Should not happen if called correctly
+
         # Parallelize Simulation
         import multiprocessing
         n_jobs = min(6, multiprocessing.cpu_count())
@@ -190,7 +188,8 @@ class BacktestEngine:
                 hours, # Pass slice-aligned hours
                 weekdays, # Pass slice-aligned weekdays
                 highs,
-                lows
+                lows,
+                atr # Pass ATR
             ) for chunk_s, chunk_p in zip(chunks_sig, chunks_params)
         )
         
@@ -225,6 +224,7 @@ class BacktestEngine:
         prices = self.open_vec[start:end]
         highs = self.high_vec[start:end]
         lows = self.low_vec[start:end]
+        atr = self.atr_vec[start:end]
         times = self.times_vec.iloc[start:end] if hasattr(self.times_vec, 'iloc') else self.times_vec[start:end]
         
         # Loop through chunks
@@ -236,6 +236,8 @@ class BacktestEngine:
             signals = full_signal_matrix[start:end]
             
             # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
+            # Signals generated at Close[t] must be executed at Open[t+1].
+            # We shift signals forward by 1.
             signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
             
             # 2. Simulate Chunk
@@ -246,7 +248,7 @@ class BacktestEngine:
                 trades_count = np.sum(np.abs(signals), axis=0) # Approx
             else:
                 limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
-                net_returns, trades_count = self.run_simulation_batch(signals, chunk_pop, prices, times, time_limit=limit, highs=highs, lows=lows)
+                net_returns, trades_count = self.run_simulation_batch(signals, chunk_pop, prices, times, time_limit=limit, highs=highs, lows=lows, atr=atr)
             
             # 3. Calculate Metrics for Chunk
             total_ret = np.sum(net_returns, axis=0)
@@ -344,11 +346,12 @@ class BacktestEngine:
             prices = self.open_vec[train_end:test_end]
             highs = self.high_vec[train_end:test_end]
             lows = self.low_vec[train_end:test_end]
+            atr = self.atr_vec[train_end:test_end]
             
             times = self.times_vec.iloc[train_end:test_end] if hasattr(self.times_vec, 'iloc') else self.times_vec[train_end:test_end]
             
             # Use Simulator
-            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows)
+            net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows, atr=atr)
             
             total_ret = np.sum(net_returns, axis=0)
             max_win = np.max(net_returns, axis=0)
