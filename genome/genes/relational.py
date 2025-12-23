@@ -36,13 +36,23 @@ class RelationalGene:
         if random.random() < 0.3: 
             self.operator = '>' if self.operator == '<' else '<'
             
-        # 2. Mutate Left Feature
+        # 2. Mutate Left Feature (and update Right to match)
         if random.random() < 0.3: 
-            self.feature_left = random.choice(features_pool)
+            new_left = random.choice(features_pool)
+            root = new_left.rsplit('_', 1)[0]
+            compatible = [f for f in features_pool if f.startswith(root) and f != new_left]
             
-        # 3. Mutate Right Feature
+            if compatible:
+                self.feature_left = new_left
+                self.feature_right = random.choice(compatible)
+            
+        # 3. Mutate Right Feature (Must match Left)
         if random.random() < 0.3: 
-            self.feature_right = random.choice(features_pool)
+            root = self.feature_left.rsplit('_', 1)[0]
+            compatible = [f for f in features_pool if f.startswith(root) and f != self.feature_left]
+            
+            if compatible:
+                self.feature_right = random.choice(compatible)
 
     def copy(self):
         return RelationalGene(self.feature_left, self.operator, self.feature_right)

@@ -44,10 +44,24 @@ class CrossGene:
     def mutate(self, features_pool):
         if random.random() < 0.3:
             self.direction = 'below' if self.direction == 'above' else 'above'
+            
+        # Mutate Left (Update Right)
         if random.random() < 0.3:
-            self.feature_left = random.choice(features_pool)
+            new_left = random.choice(features_pool)
+            root = new_left.rsplit('_', 1)[0]
+            compatible = [f for f in features_pool if f.startswith(root) and f != new_left]
+            
+            if compatible:
+                self.feature_left = new_left
+                self.feature_right = random.choice(compatible)
+                
+        # Mutate Right (Match Left)
         if random.random() < 0.3:
-            self.feature_right = random.choice(features_pool)
+            root = self.feature_left.rsplit('_', 1)[0]
+            compatible = [f for f in features_pool if f.startswith(root) and f != self.feature_left]
+            
+            if compatible:
+                self.feature_right = random.choice(compatible)
 
     def copy(self):
         return CrossGene(self.feature_left, self.direction, self.feature_right)

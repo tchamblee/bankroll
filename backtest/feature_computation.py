@@ -38,6 +38,19 @@ def ensure_feature_context(population, temp_dir, existing_keys):
         for gene in all_genes:
             if gene.type == 'delta': needed.add(('delta', gene.feature, gene.lookback))
             elif gene.type == 'zscore': needed.add(('zscore', gene.feature, gene.window))
+            
+            # Implicit Z-Score dependency for EventGene
+            elif gene.type == 'event': 
+                if gene.feature.startswith('zscore_'):
+                    # format: zscore_{feature}_{window}
+                    parts = gene.feature.split('_')
+                    # Last part is window, rest is feature name (rejoined)
+                    # zscore_close_800 -> feature='close', window=800
+                    # zscore_delta_close_50_800 -> feature='delta_close_50', window=800
+                    w = int(parts[-1])
+                    feat = "_".join(parts[1:-1])
+                    needed.add(('zscore', feat, w))
+            
             elif gene.type == 'correlation': needed.add(('correlation', gene.feature_left, gene.feature_right, gene.window))
             elif gene.type == 'flux': needed.add(('flux', gene.feature, gene.lag))
             elif gene.type == 'divergence': 

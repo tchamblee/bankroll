@@ -45,34 +45,48 @@ class GenomeFactory:
         if rand_val < 0.30:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-3.0, -2.5, -2.0, -1.5, 1.5, 2.0, 2.5, 3.0])
+            # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
+            threshold = random.choice([-1.5, -1.25, 1.25, 1.5])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
 
         # 15% Relational Gene (Context - "Is A > B?")
         elif rand_val < 0.45:
             feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
-            operator = random.choice(['>', '<'])
-            return RelationalGene(feature_left, operator, feature_right)
+            # Find compatible features (same root)
+            # e.g. 'volatility_100' compatible with 'volatility_200'
+            root = feature_left.rsplit('_', 1)[0]
+            compatible = [f for f in pool if f.startswith(root) and f != feature_left]
+            
+            if compatible:
+                feature_right = random.choice(compatible)
+                operator = random.choice(['>', '<'])
+                return RelationalGene(feature_left, operator, feature_right)
+            else:
+                # Fallback to ZScore if no compatible comparison found
+                return self.create_random_gene()
 
         # 5% Squeeze Gene (Regime Detector - Volatility Compression)
         elif rand_val < 0.50:
             feature_short = random.choice(pool)
-            feature_long = random.choice(pool)
-            while feature_long == feature_short and len(pool) > 1:
-                feature_long = random.choice(pool)
-            multiplier = random.uniform(0.5, 0.95)
-            return SqueezeGene(feature_short, feature_long, multiplier)
+            # Squeeze needs compatible long-term feature
+            root = feature_short.rsplit('_', 1)[0]
+            compatible = [f for f in pool if f.startswith(root) and f != feature_short]
+            
+            if compatible:
+                feature_long = random.choice(compatible)
+                multiplier = random.uniform(0.5, 0.95)
+                return SqueezeGene(feature_short, feature_long, multiplier)
+            else:
+                return self.create_random_gene()
 
         # 10% Correlation Gene (Synergy - "Are A and B moving together?")
         elif rand_val < 0.60:
+            # Correlation can be between ANY two features (that's the point)
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-0.8, -0.5, 0.5, 0.8])
+            threshold = random.choice([-0.6, -0.4, 0.4, 0.6])
             window = random.choice(VALID_CORR_WINDOWS)
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
@@ -95,29 +109,47 @@ class GenomeFactory:
 
         # 5% Divergence Gene (Structure)
         elif rand_val < 0.75:
+            # Divergence needs compatible features (Price vs Oscillator usually, or Price vs Price)
+            # Simplified: Random pair is risky. Let's restrict to same root.
             f1 = random.choice(pool)
-            f2 = random.choice(pool)
-            while f1 == f2 and len(pool) > 1: f2 = random.choice(pool)
-            window = random.choice(VALID_SLOPE_WINDOWS)
-            return DivergenceGene(f1, f2, window)
+            root = f1.rsplit('_', 1)[0]
+            compatible = [f for f in pool if f.startswith(root) and f != f1]
+            
+            if compatible:
+                f2 = random.choice(compatible)
+                window = random.choice(VALID_SLOPE_WINDOWS)
+                return DivergenceGene(f1, f2, window)
+            else:
+                return self.create_random_gene()
 
         # 10% Event Gene (Memory - "Did X happen recently?")
         elif rand_val < 0.85:
             feature = random.choice(pool)
+            
+            # Make Event Adaptive: Wrap in Z-Score
+            # "Did Z-Score(Feature) > 2.0 happen in last 10 bars?"
+            z_window = random.choice(VALID_ZSCORE_WINDOWS)
+            adaptive_feature = f"zscore_{feature}_{z_window}"
+            
             operator = random.choice(['>', '<'])
-            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = random.uniform(-1.0, 1.0) * stats['std'] + stats['mean']
-            window = random.choice(VALID_ZSCORE_WINDOWS)
-            return EventGene(feature, operator, threshold, window)
+            threshold = random.choice([-1.5, -1.0, 1.0, 1.5]) # Relaxed Sigma
+            window = random.choice(VALID_ZSCORE_WINDOWS) # Lookback for the event itself
+            
+            return EventGene(adaptive_feature, operator, threshold, window)
 
         # 5% Cross Gene (Event - "A crossed B")
         elif rand_val < 0.90:
             feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
-            while feature_right == feature_left and len(pool) > 1:
-                feature_right = random.choice(pool)
-            direction = random.choice(['above', 'below'])
-            return CrossGene(feature_left, direction, feature_right)
+            # Enforce Compatibility
+            root = feature_left.rsplit('_', 1)[0]
+            compatible = [f for f in pool if f.startswith(root) and f != feature_left]
+            
+            if compatible:
+                feature_right = random.choice(compatible)
+                direction = random.choice(['above', 'below'])
+                return CrossGene(feature_left, direction, feature_right)
+            else:
+                return self.create_random_gene()
 
         # 5% Regime Gene (Bounded Metrics)
         elif rand_val < 0.95:
@@ -127,7 +159,7 @@ class GenomeFactory:
             op = random.choice(['>', '<'])
             stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
             threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-            window = random.randint(5, 20)
+            window = random.randint(3, 8)
             return PersistenceGene(target_feature, op, threshold, window)
 
         # 3% Extrema Gene (Breakout)
@@ -191,12 +223,16 @@ class GenomeFactory:
         
         # Concordance: For complex strategies, allow 1 outlier (Robustness)
         concordance = None
-        if num_genes > 2:
-            # Require ~60% agreement (Super-Majority)
-            # 3 genes -> 2 (0.6 * 3 = 1.8 -> ceil=2)
-            # 4 genes -> 3 (0.6 * 4 = 2.4 -> ceil=3)
-            # 5 genes -> 3 (0.6 * 5 = 3.0 -> ceil=3)
-            concordance = math.ceil(num_genes * 0.6)
+        if num_genes > 0:
+            if num_genes <= 2:
+                # Allow 1/2 (OR Logic) to boost frequency for simple strategies
+                concordance = 1
+            else:
+                # Require majority (~51%)
+                # 3 genes -> 2 (2/3)
+                # 4 genes -> 3 (3/4)
+                # 5 genes -> 3 (3/5)
+                concordance = math.ceil(num_genes * 0.51)
 
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",

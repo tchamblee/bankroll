@@ -200,12 +200,13 @@ class BacktestEngine:
             
         return all_net_returns, all_trades_count
 
-    def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False, prediction_mode=False, time_limit=None):
+    def evaluate_population(self, population: list[Strategy], set_type='train', return_series=False, prediction_mode=False, time_limit=None, min_trades=None):
         if not population: 
             return (pd.DataFrame(), np.array([])) if return_series else pd.DataFrame()
         
+        target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
+        
         # --- CHUNKING TO PREVENT OOM ---
-        # Process strategies in batches
         BATCH_SIZE = config.EVO_BATCH_SIZE
         n_strats = len(population)
         
@@ -235,8 +236,6 @@ class BacktestEngine:
             signals = full_signal_matrix[start:end]
             
             # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
-            # Signals generated at Close[t] must be executed at Open[t+1].
-            # We shift signals forward by 1.
             signals = np.vstack([np.zeros((1, signals.shape[1]), dtype=signals.dtype), signals[:-1]])
             
             # 2. Simulate Chunk
@@ -246,7 +245,6 @@ class BacktestEngine:
                 net_returns = strat_returns
                 trades_count = np.sum(np.abs(signals), axis=0) # Approx
             else:
-                # Full Simulation Mode
                 limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
                 net_returns, trades_count = self.run_simulation_batch(signals, chunk_pop, prices, times, time_limit=limit, highs=highs, lows=lows)
             
@@ -267,27 +265,22 @@ class BacktestEngine:
             for j, strat in enumerate(chunk_pop):
                 final_sortino = sortino[j]
                 
-                # Soft Penalty for Low Trades (Create Gradient)
-                # Aligned with Prop Desk Mandate (Moderate Stat Sig)
-                if trades_count[j] < config.MIN_TRADES_FOR_METRICS:
-                    penalty = (config.MIN_TRADES_FOR_METRICS - trades_count[j]) * 0.1
-                    final_sortino -= penalty
+                # Hard Cut-off for Low Trades (Kill "Sniper" strategies)
+                if trades_count[j] < target_min_trades:
+                     final_sortino = -10.0
                 
-                if trades_count[j] == 0:
-                    final_sortino = -5.0
-                    
                 # Stability Penalty
-                # Aligned with WFV: Relaxed to 0.6
-                if stability_ratio[j] > 0.6 and total_ret[j] > 0: final_sortino *= 0.6
+                elif stability_ratio[j] > 0.6 and total_ret[j] > 0: 
+                    final_sortino *= 0.6
                 
-                # --- COST COVERAGE PENALTY (Aligned with WFV) ---
+                # --- COST COVERAGE PENALTY ---
                 avg_trade_ret = total_ret[j] / (trades_count[j] + 1e-9)
                 cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
                 if avg_trade_ret < cost_threshold:
                      final_sortino -= 5.0
                 
                 # Volume Bonus
-                if trades_count[j] > config.MIN_TRADES_FOR_METRICS:
+                if trades_count[j] > target_min_trades:
                     final_sortino *= np.log10(max(trades_count[j], 1))
                 
                 strat.fitness = final_sortino
@@ -311,7 +304,6 @@ class BacktestEngine:
         results_df = pd.DataFrame(all_results)
         
         if return_series:
-            # Concatenate along columns (axis 1)
             if all_net_returns:
                 combined_returns = np.hstack(all_net_returns)
             else:
@@ -320,8 +312,10 @@ class BacktestEngine:
         else:
             return results_df
 
-    def evaluate_walk_forward(self, population: list[Strategy], folds=config.WFV_FOLDS, time_limit=None):
+    def evaluate_walk_forward(self, population: list[Strategy], folds=config.WFV_FOLDS, time_limit=None, min_trades=None):
         if not population: return []
+        
+        target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
 
         full_signal_matrix = self.generate_signal_matrix(population)
         n_bars = len(self.raw_data)
@@ -361,39 +355,37 @@ class BacktestEngine:
             stability_ratio = max_win / (total_ret + 1e-9)
             
             avg = np.mean(net_returns, axis=0)
-            # Robust Downside Dev: Floor at 1e-6 to prevent explosion on "zero loss" strategies
             downside_std = np.std(np.minimum(net_returns, 0), axis=0)
             downside_std = np.maximum(downside_std, 1e-6)
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
-            # Soft Penalty for WFV (Min Trades)
-            # Aligned with Prop Desk Mandate
-            sortino = np.nan_to_num(sortino, nan=-2.0)
-            penalty = np.maximum(0, (config.VOLUME_BONUS_THRESHOLD - trades_count) * 0.2)
-            sortino -= penalty
+            # Hard Cut-off for Low Trades (Kill "Sniper" strategies)
+            sortino = np.nan_to_num(sortino, nan=-10.0)
             
-            # Stability Penalty: If one trade is > 60% of total return, penalize moderately
-            # Relaxed from 0.5/0.5 to 0.6/0.6 to allow for big trend days
+            low_trades_mask = trades_count < target_min_trades
+            sortino[low_trades_mask] = -10.0
+            
             unstable_mask = (stability_ratio > 0.6) & (total_ret > 0)
             sortino[unstable_mask] *= 0.6
             
             # --- COST COVERAGE PENALTY ---
-            # Force strategies to target moves significantly larger than the spread/commissions
             avg_trade_ret = total_ret / (trades_count + 1e-9)
-            # Threshold: 1.1x the cost (Relaxed from 1.5x to increase frequency)
             cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
             
-            # Vectorized penalty application
             low_profit_mask = avg_trade_ret < cost_threshold
             sortino[low_profit_mask] -= 5.0
             
             # --- VOLUME BONUS ---
-            # Reward strategies that trade more frequently to improve statistical significance
-            # Safe log10 calculation
             safe_trades = np.maximum(trades_count, 1)
             volume_bonus = np.where(trades_count > config.VOLUME_BONUS_THRESHOLD, np.log10(safe_trades), 1.0)
             sortino *= volume_bonus
+            
+            # --- OVERFITTING CAP ("Too Good To Be True") ---
+            # Strategies with Sortino > 20 are likely exploiting noise/bugs.
+            # "Retire" them from the pool.
+            overfit_mask = sortino > 20.0
+            sortino[overfit_mask] = -10.0
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
             sortino = np.minimum(sortino, 15.0) # Reverted cap for bonus
@@ -404,8 +396,6 @@ class BacktestEngine:
         min_sortino = np.min(fold_scores, axis=1)
         fold_std = np.std(fold_scores, axis=1)
         
-        # Moderate Robustness (Reverted from Strict Min)
-        # Reward high average performance while penalizing instability
         robust_score = avg_sortino - (fold_std * 0.5)
         
         results = []

@@ -81,8 +81,13 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
+            # Dynamic Trade Filter (Ramp-up)
+            current_min_trades = 3
+            if gen >= 5: current_min_trades = 6
+            if gen >= 15: current_min_trades = 10
+            
             # 1. Evaluate using Rolling Walk-Forward Validation (4 Folds)
-            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon, min_trades=current_min_trades)
             
             # 2. Filtering & Scoring
             wfv_scores = wfv_results['sortino'].values # Already penalized for fold variance
@@ -105,24 +110,24 @@ class EvolutionaryAlphaFactory:
                 for f in used_features:
                     feature_counts[f] = feature_counts.get(f, 0) + 1
             
-            # Identify dominant features (>15% of population)
-            threshold = self.pop_size * 0.15
-            # dominant_features = {f for f, count in feature_counts.items() if count > threshold}
+            # Identify dominant features (>20% of population)
+            threshold = self.pop_size * 0.20
+            dominant_features = {f for f, count in feature_counts.items() if count > threshold}
             
-            # # Log dominant features
-            # if dominant_features:
-            #     sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
-            #     print(f"Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
+            # Log dominant features
+            if dominant_features:
+                sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
+                print(f"  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
             
             # Penalties
             for i, strat in enumerate(self.population):
                 n_genes = len(strat.long_genes) + len(strat.short_genes)
                 
                 # Complexity Penalty
-                # This allows for slightly more complex strategies while still preventing bloat.
                 complexity_penalty = n_genes * config.COMPLEXITY_PENALTY_PER_GENE
                 
-                # Apply Dynamic Dominance Penalty
+                # Apply Dynamic Dominance Penalty (Ruthless Diversification)
+                # If a feature is used by 80% of pop, penalty = (0.8 - 0.2) * 20 = 12.0
                 dom_penalty = 0.0
                 strat_features = set()
                 
@@ -132,17 +137,13 @@ class EvolutionaryAlphaFactory:
                     elif hasattr(gene, 'feature_left'):
                         strat_features.add(gene.feature_left)
                         strat_features.add(gene.feature_right)
-                    elif hasattr(gene, 'mode'):
-                        strat_features.add(f"time_{gene.mode}")
-                    elif hasattr(gene, 'direction'):
-                        strat_features.add(f"consecutive_{gene.direction}")
 
-                # for f in strat_features:
-                #     # Penalty scales with popularity: Ruthless Diversification
-                #     # >20% usage triggers penalty (usage_ratio * 10.0)
-                #     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                #     if usage_ratio > config.DOMINANCE_PENALTY_THRESHOLD:
-                #          dom_penalty += usage_ratio * config.DOMINANCE_PENALTY_MULTIPLIER
+                for f in strat_features:
+                    count = feature_counts.get(f, 0)
+                    ratio = count / self.pop_size
+                    if ratio > 0.20:
+                         # Quadratic Penalty for herd behavior
+                         dom_penalty += (ratio - 0.20) * 20.0
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
@@ -280,7 +281,8 @@ class EvolutionaryAlphaFactory:
             val_fitness_map = {s.name: s.fitness for s in top_candidates}
             
             # Evaluate on Test Set (One-Shot)
-            test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon)
+            # Lower min_trades for Test Set (smaller sample size)
+            test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon, min_trades=10)
             
             output = []
             
@@ -307,6 +309,120 @@ class EvolutionaryAlphaFactory:
             # Save to Disk (Sorted by Robustness)
             os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+
+            # --- PORTFOLIO ENSEMBLING ---
+            print("\n--- 🧩 CONSTRUCTING DIVERSE PORTFOLIO ---")
+            
+            # 1. Generate Signals for Top 50 candidates to compute correlation
+            # We use the VALIDATION set for correlation checking (avoid test leakage)
+            cand_signals = self.backtester.generate_signal_matrix(top_candidates)
+            
+            # Slice to Validation Set
+            val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
+            cand_signals_val = cand_signals[val_start:val_end]
+            
+            portfolio = []
+            portfolio_indices = []
+            
+            # Greedy Selection
+            for i, strat in enumerate(top_candidates):
+                if len(portfolio) >= 5: break
+                
+                if not portfolio:
+                    portfolio.append(strat)
+                    portfolio_indices.append(i)
+                    continue
+                
+                # Check Correlation with existing portfolio
+                # Signals are -3 to +3 (Lots). We care about direction.
+                current_sig = cand_signals_val[:, i]
+                
+                is_uncorrelated = True
+                for p_idx in portfolio_indices:
+                    existing_sig = cand_signals_val[:, p_idx]
+                    
+                    # Correlation
+                    # Handle flat signals (std=0) to avoid NaN
+                    if np.std(current_sig) == 0 or np.std(existing_sig) == 0:
+                        corr = 0.0
+                    else:
+                        corr = np.corrcoef(current_sig, existing_sig)[0, 1]
+                    
+                    if corr > 0.5: # Correlation Threshold
+                        is_uncorrelated = False
+                        break
+                
+                if is_uncorrelated:
+                    portfolio.append(strat)
+                    portfolio_indices.append(i)
+            
+            print(f"Selected {len(portfolio)} Strategies for Ensemble:")
+            for s in portfolio:
+                print(f"  - {s.name} (Robust: {s.fitness:.2f})")
+                
+            # --- TEST PORTFOLIO OOS ---
+            # Sum signals for Test Set
+            test_start = self.backtester.val_idx
+            test_end = len(self.backtester.raw_data)
+            
+            cand_signals_test = cand_signals[test_start:test_end]
+            portfolio_signals_test = cand_signals_test[:, portfolio_indices]
+            
+            # Net Signal (Equal Weight - Sum of Lots)
+            # Clip to MAX_LOTS to simulate a pooled account limit? 
+            # Or just sum them (allows leveraging up). Let's sum.
+            net_signal = np.sum(portfolio_signals_test, axis=1)
+            
+            # Shift for Execution
+            net_signal = np.concatenate(([0], net_signal[:-1]))
+            
+            # Simulate Portfolio
+            # We treat the 'Net Signal' as a single strategy signal
+            # Need to reshape for simulator
+            net_signal_matrix = net_signal.reshape(-1, 1)
+            
+            prices = self.backtester.open_vec[test_start:test_end]
+            times = self.backtester.times_vec.iloc[test_start:test_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[test_start:test_end]
+            highs = self.backtester.high_vec[test_start:test_end]
+            lows = self.backtester.low_vec[test_start:test_end]
+            
+            # Dummy strategy for params
+            dummy_strat = portfolio[0]
+            
+            # Run Simulation
+            # Note: We pass [dummy_strat] just to get SL/TP params, but we override signals
+            # Actually, simulator uses strat params.
+            # Ideally we simulate each strat individually and sum returns.
+            # But summing signals effectively simulates a pooled account.
+            # Using the SL/TP of the first strat is imperfect but decent for estimation.
+            
+            net_returns, trades = self.backtester.run_simulation_batch(
+                net_signal_matrix, 
+                [dummy_strat], 
+                prices, times, 
+                time_limit=horizon, 
+                highs=highs, 
+                lows=lows
+            )
+            
+            # Portfolio Metrics
+            total_ret = np.sum(net_returns)
+            port_sharpe = 0.0
+            if np.std(net_returns) > 0:
+                port_sharpe = (np.mean(net_returns) / np.std(net_returns)) * np.sqrt(config.ANNUALIZATION_FACTOR)
+            
+            print("\n" + "="*60)
+            print(f"🏛️  PORTFOLIO OOS RESULT (5 Uncorrelated Strategies) 🏛️")
+            print(f"   Return: {total_ret*100:.2f}%")
+            print(f"   Sharpe: {port_sharpe:.2f}")
+            print(f"   Trades: {np.sum(trades)}")
+            print("="*60 + "\n")
+            
+            # Save Portfolio
+            port_data = [s.to_dict() for s in portfolio]
+            port_out = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_portfolio_{horizon}.json")
+            with open(port_out, "w") as f:
+                json.dump(port_data, f, indent=4)
 
             # --- PERSISTENCE: APPEND ONLY ---
             # We append new robust strategies. We do not re-rank by Test Score globally.
