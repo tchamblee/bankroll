@@ -396,7 +396,7 @@ class BacktestEngine:
             sortino *= volume_bonus
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
-            sortino = np.minimum(sortino, 10.0) # Reduced cap for realism
+            sortino = np.minimum(sortino, 15.0) # Reverted cap for bonus
             
             fold_scores[:, f] = sortino
             
@@ -404,9 +404,9 @@ class BacktestEngine:
         min_sortino = np.min(fold_scores, axis=1)
         fold_std = np.std(fold_scores, axis=1)
         
-        # STRICT ROBUSTNESS: You are only as good as your worst month.
-        # Use Minimum Score across all folds.
-        robust_score = min_sortino
+        # Moderate Robustness (Reverted from Strict Min)
+        # Reward high average performance while penalizing instability
+        robust_score = avg_sortino - (fold_std * 0.5)
         
         results = []
         for i, strat in enumerate(population):

@@ -56,9 +56,15 @@ class EvolutionaryAlphaFactory:
         
         combined_long = p1.long_genes + p2.long_genes
         combined_short = p1.short_genes + p2.short_genes
+        combined_regime = p1.regime_genes + p2.regime_genes
         
         child.long_genes = [g.copy() for g in random.sample(combined_long, min(len(combined_long), n_long))]
         child.short_genes = [g.copy() for g in random.sample(combined_short, min(len(combined_short), n_short))]
+        
+        # Inherit Regime Genes (0-2 max)
+        if combined_regime:
+            n_regime = random.randint(0, min(len(combined_regime), 2))
+            child.regime_genes = [g.copy() for g in random.sample(combined_regime, n_regime)]
         
         return child
 

@@ -156,7 +156,8 @@ class GenomeFactory:
         # Fallback now uses ZScore instead of Static
         feature = random.choice(self.features)
         operator = random.choice(['>', '<'])
-        threshold = random.choice([-2.0, 2.0])
+        # Lower thresholds to encourage activity (1.5 sigma instead of 2.0)
+        threshold = random.choice([-1.5, 1.5, 2.0])
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 

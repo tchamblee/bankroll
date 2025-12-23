@@ -34,7 +34,7 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
 def ensure_feature_context(population, temp_dir, existing_keys):
     needed = set()
     for strat in population:
-        all_genes = strat.long_genes + strat.short_genes
+        all_genes = strat.long_genes + strat.short_genes + strat.regime_genes
         for gene in all_genes:
             if gene.type == 'delta': needed.add(('delta', gene.feature, gene.lookback))
             elif gene.type == 'zscore': needed.add(('zscore', gene.feature, gene.window))
