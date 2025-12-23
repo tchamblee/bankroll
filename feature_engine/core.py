@@ -1,3 +1,5 @@
+import os
+import config
 from . import loader
 from . import bars
 from . import standard
@@ -10,10 +12,13 @@ from . import utils
 from . import macro_voltage
 from . import intermarket
 from . import ticks
+from . import event_decay
+
 
 class FeatureEngine:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, use_survivors=False):
         self.data_dir = data_dir
+        self.use_survivors = use_survivors
         self.bars = None
         # We don't store raw ticks in self anymore to save memory, 
         # but we need them temporarily for correlator processing.
@@ -73,6 +78,9 @@ class FeatureEngine:
 
     def add_delta_features(self, lookback=10):
         self.bars = delta.add_delta_features(self.bars, lookback)
+
+    def add_event_decay_features(self, high_windows=[100, 200, 400], shock_windows=[100]):
+        self.bars = event_decay.add_event_decay_features(self.bars, high_windows, shock_windows)
 
     def add_intermarket_features(self, correlator_dfs):
         self.bars = intermarket.add_intermarket_features(self.bars, correlator_dfs)

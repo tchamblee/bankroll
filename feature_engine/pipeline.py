@@ -69,6 +69,10 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # 5. Standard Features
     windows_list = [25, 50, 100, 200, 400, 800, 1600, 3200]
     engine.add_features_to_bars(windows=windows_list)
+
+    # 5b. Event Decay (Burst Features)
+    # Using specific windows for decay logic
+    engine.add_event_decay_features(high_windows=[100, 200, 400], shock_windows=[50, 100])
     
     # 6. Crypto Features
     engine.add_crypto_features(data_cache['ibit'])
