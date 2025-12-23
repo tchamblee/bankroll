@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance):
+def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi):
     """Worker function for parallel window microstructure feature calculation."""
     res = {}
     
@@ -16,6 +16,14 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
     # 3. Flow Shock
     flow_std = ticket_imbalance.rolling(w).std()
     res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
+    
+    # 3b. OFI Trend & Shock (Higher Fidelity)
+    if normalized_ofi is not None:
+        ofi_trend = normalized_ofi.rolling(w).mean()
+        res[f'ofi_trend_{w}'] = ofi_trend
+        
+        ofi_std = normalized_ofi.rolling(w).std()
+        res[f'ofi_shock_{w}'] = (normalized_ofi - ofi_trend) / ofi_std.replace(0, 1)
 
     # 4. Duration Trend
     if bar_duration is not None:
@@ -43,6 +51,12 @@ def add_microstructure_features(df, windows=[50, 100]):
     ticket_imbalance = df['net_aggressor_vol'] / vol
     df['ticket_imbalance'] = ticket_imbalance
     
+    # Prepare OFI
+    normalized_ofi = None
+    if 'tick_ofi' in df.columns:
+        # Normalize OFI by volume to make it comparable to ticket_imbalance
+        normalized_ofi = df['tick_ofi'] / vol
+    
     log_ret = np.log(df['close'] / df['close'].shift(1))
     df['log_ret'] = log_ret
     
@@ -63,7 +77,7 @@ def add_microstructure_features(df, windows=[50, 100]):
         
     # Parallelize
     results = Parallel(n_jobs=-1)(
-        delayed(_calc_micro_window_features)(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance)
+        delayed(_calc_micro_window_features)(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi)
         for w in windows
     )
     

@@ -1,4 +1,5 @@
 import numpy as np
+import config
 from trade_simulator import TradeSimulator
 from .context import LazyMMapContext
 
