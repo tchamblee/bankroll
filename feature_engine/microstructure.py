@@ -16,17 +16,21 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
     # 3. Flow Shock
     flow_std = ticket_imbalance.rolling(w).std()
     res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
+    
+    # 4. VPIN (Volume-Synchronized Probability of Informed Trading) Proxy
+    # In Volume Bars, VPIN ~ Rolling Mean of Absolute Imbalance
+    res[f'vpin_{w}'] = ticket_imbalance.abs().rolling(w).mean()
 
-    # 4. Duration Trend
+    # 5. Duration Trend
     if bar_duration is not None:
         res[f'duration_trend_{w}'] = bar_duration.rolling(w).mean()
         
-    # 5. Pressure Trend
+    # 6. Pressure Trend
     if pres_imbalance is not None:
         res[f'pres_trend_{w}'] = pres_imbalance.rolling(w).mean()
         res[f'price_pressure_corr_{w}'] = log_ret.rolling(w).corr(pres_imbalance)
 
-    # 6. Order Book Alignment
+    # 7. Order Book Alignment
     if pres_imbalance is not None:
         alignment = ticket_imbalance * pres_imbalance
         res[f'order_book_alignment_{w}'] = alignment.rolling(w).mean()
