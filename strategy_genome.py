@@ -895,6 +895,24 @@ class Strategy:
         self.min_concordance = min_concordance
         self.fitness = 0.0
         
+        self.cleanup()
+
+    def cleanup(self):
+        """Removes duplicate genes within each gene list."""
+        def _dedup(genes):
+            seen = set()
+            unique = []
+            for g in genes:
+                s = str(g)
+                if s not in seen:
+                    seen.add(s)
+                    unique.append(g)
+            return unique
+            
+        self.long_genes = _dedup(self.long_genes)
+        self.short_genes = _dedup(self.short_genes)
+        self.regime_genes = _dedup(self.regime_genes)
+        
     def generate_signal(self, context: dict, cache: dict = None) -> np.array:
         n_rows = context.get('__len__', 0)
         if n_rows == 0 and len(context) > 0:
@@ -957,6 +975,7 @@ class Strategy:
             min_concordance=d.get('min_concordance')
         )
         s.fitness = d.get('fitness', 0.0)
+        s.cleanup()
         return s
 
     def __repr__(self):

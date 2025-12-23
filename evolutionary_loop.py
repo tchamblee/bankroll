@@ -101,12 +101,12 @@ class EvolutionaryAlphaFactory:
             
             # Identify dominant features (>15% of population)
             threshold = self.pop_size * 0.15
-            dominant_features = {f for f, count in feature_counts.items() if count > threshold}
+            # dominant_features = {f for f, count in feature_counts.items() if count > threshold}
             
-            # Log dominant features
-            if dominant_features:
-                sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
-                print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
+            # # Log dominant features
+            # if dominant_features:
+            #     sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
+            #     print(f"Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
             
             # Penalties
             for i, strat in enumerate(self.population):
@@ -131,12 +131,12 @@ class EvolutionaryAlphaFactory:
                     elif hasattr(gene, 'direction'):
                         strat_features.add(f"consecutive_{gene.direction}")
 
-                for f in strat_features:
-                    # Penalty scales with popularity: Ruthless Diversification
-                    # >20% usage triggers penalty (usage_ratio * 10.0)
-                    usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > config.DOMINANCE_PENALTY_THRESHOLD:
-                         dom_penalty += usage_ratio * config.DOMINANCE_PENALTY_MULTIPLIER
+                # for f in strat_features:
+                #     # Penalty scales with popularity: Ruthless Diversification
+                #     # >20% usage triggers penalty (usage_ratio * 10.0)
+                #     usage_ratio = feature_counts.get(f, 0) / self.pop_size
+                #     if usage_ratio > config.DOMINANCE_PENALTY_THRESHOLD:
+                #          dom_penalty += usage_ratio * config.DOMINANCE_PENALTY_MULTIPLIER
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
@@ -204,6 +204,7 @@ class EvolutionaryAlphaFactory:
                     if random.random() < mut_rate:
                         g.mutate(self.factory.features)
                 
+                child.cleanup()
                 new_population.append(child)
                 
             self.population = new_population
