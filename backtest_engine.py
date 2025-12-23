@@ -223,8 +223,12 @@ class BacktestEngine:
             for gene in all_genes:
                 if gene.type == 'delta': needed.add(('delta', gene.feature, gene.lookback))
                 elif gene.type == 'zscore': needed.add(('zscore', gene.feature, gene.window))
-                elif gene.type == 'slope': needed.add(('slope', gene.feature, gene.window))
                 elif gene.type == 'correlation': needed.add(('correlation', gene.feature_left, gene.feature_right, gene.window))
+                elif gene.type == 'flux': needed.add(('flux', gene.feature, gene.lag))
+                elif gene.type == 'divergence': 
+                    needed.add(('slope', gene.feature_a, gene.window))
+                    needed.add(('slope', gene.feature_b, gene.window))
+                elif gene.type == 'efficiency': needed.add(('efficiency', gene.feature, gene.window))
         
         # Only calculate what's missing
         
@@ -248,6 +252,64 @@ class BacktestEngine:
                     diff = np.zeros_like(arr)
                     if w < len(arr): diff[w:] = arr[w:] - arr[:-w]
                     self._save_feature(key, diff)
+
+            elif type_ == 'flux':
+                feature, lag = item[1], item[2]
+                key = f"flux_{feature}_{lag}"
+                if key in self.existing_keys: continue
+                
+                arr = get_data(feature)
+                if arr is not None:
+                    # Flux = Delta(Delta(X, lag), lag)
+                    d1 = np.zeros_like(arr)
+                    if len(arr) > lag: d1[lag:] = arr[lag:] - arr[:-lag]
+                    
+                    flux = np.zeros_like(arr)
+                    if len(arr) > lag: flux[lag:] = d1[lag:] - d1[:-lag]
+                    self._save_feature(key, flux)
+
+            elif type_ == 'slope':
+                feature, w = item[1], item[2]
+                key = f"slope_{feature}_{w}"
+                if key in self.existing_keys: continue
+                
+                arr = get_data(feature)
+                if arr is not None:
+                    y = arr
+                    n = w
+                    if len(y) > w:
+                        sum_x = (n * (n - 1)) / 2
+                        sum_x2 = (n * (n - 1) * (2 * n - 1)) / 6
+                        divisor = n * sum_x2 - sum_x ** 2
+                        
+                        kernel_xy = np.arange(n)[::-1]
+                        sum_xy = np.convolve(y, kernel_xy, mode='full')[:len(y)]
+                        sum_y = np.convolve(y, np.ones(n), mode='full')[:len(y)]
+                        
+                        slope = (n * sum_xy - sum_x * sum_y) / (divisor + 1e-9)
+                        slope[:n] = 0.0
+                        self._save_feature(key, slope.astype(np.float32))
+
+            elif type_ == 'efficiency':
+                feature, w = item[1], item[2]
+                key = f"eff_{feature}_{w}"
+                if key in self.existing_keys: continue
+                
+                arr = get_data(feature)
+                if arr is not None:
+                    # ER = Change / Path
+                    change = np.zeros_like(arr)
+                    if len(arr) > w: change[w:] = np.abs(arr[w:] - arr[:-w])
+                    
+                    diff1 = np.zeros_like(arr)
+                    diff1[1:] = np.abs(arr[1:] - arr[:-1])
+                    
+                    kernel = np.ones(w)
+                    path = np.convolve(diff1, kernel, mode='full')[:len(arr)]
+                    
+                    er = np.divide(change, path, out=np.zeros_like(change), where=path!=0)
+                    er[:w] = 0.0
+                    self._save_feature(key, er.astype(np.float32))
 
             elif type_ == 'zscore':
                 feature, param = item[1], item[2]
@@ -285,29 +347,6 @@ class BacktestEngine:
                         z[:w-1] = 0.0
                         
                         self._save_feature(key, z.astype(np.float32))
-            
-            elif type_ == 'slope':
-                feature, w = item[1], item[2]
-                key = f"slope_{feature}_{w}"
-                if key in self.existing_keys: continue
-                
-                arr = get_data(feature)
-                if arr is not None:
-                    # Vectorized Rolling Slope
-                    y = arr
-                    n = w
-                    if len(y) > w:
-                        sum_x = (n * (n - 1)) / 2
-                        sum_x2 = (n * (n - 1) * (2 * n - 1)) / 6
-                        divisor = n * sum_x2 - sum_x ** 2
-                        
-                        kernel_xy = np.arange(n)[::-1]
-                        sum_xy = np.convolve(y, kernel_xy, mode='full')[:len(y)]
-                        sum_y = np.convolve(y, np.ones(n), mode='full')[:len(y)]
-                        
-                        slope = (n * sum_xy - sum_x * sum_y) / (divisor + 1e-9)
-                        slope[:n] = 0.0
-                        self._save_feature(key, slope.astype(np.float32))
             
             elif type_ == 'correlation':
                 f1, f2, w = item[1], item[2], item[3]

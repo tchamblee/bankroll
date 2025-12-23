@@ -8,8 +8,10 @@ import config
 # Strict grid to prevent overfitting
 VALID_DELTA_LOOKBACKS = [5, 10, 20, 50, 100, 200]
 VALID_ZSCORE_WINDOWS = [20, 50, 100, 200, 400]
-VALID_SLOPE_WINDOWS = [10, 20, 50, 100]
 VALID_CORR_WINDOWS = [20, 50, 100, 200]
+VALID_FLUX_LAGS = [5, 10, 20, 50]
+VALID_EFF_WINDOWS = [20, 50, 100, 200]
+VALID_SLOPE_WINDOWS = [20, 50, 100] # Re-added for Divergence
 
 def gene_from_dict(d):
     """Factory to restore gene from dictionary."""
@@ -17,10 +19,14 @@ def gene_from_dict(d):
         return RelationalGene(d['feature_left'], d['operator'], d['feature_right'])
     elif d['type'] == 'delta':
         return DeltaGene(d['feature'], d['operator'], d['threshold'], d['lookback'])
+    elif d['type'] == 'flux':
+        return FluxGene(d['feature'], d['operator'], d['threshold'], d['lag'])
+    elif d['type'] == 'divergence':
+        return DivergenceGene(d['feature_a'], d['feature_b'], d['window'])
+    elif d['type'] == 'efficiency':
+        return EfficiencyGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'zscore':
         return ZScoreGene(d['feature'], d['operator'], d['threshold'], d['window'])
-    elif d['type'] == 'slope':
-        return SlopeGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'correlation':
         return CorrelationGene(d['feature_left'], d['feature_right'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'time':
@@ -33,8 +39,6 @@ def gene_from_dict(d):
         return PersistenceGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'squeeze':
         return SqueezeGene(d['feature_short'], d['feature_long'], d['multiplier'])
-    elif d['type'] == 'range':
-        return RangeGene(d['feature'], d['min_val'], d['max_val'])
     elif d['type'] == 'event':
         return EventGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'extrema':
@@ -215,59 +219,7 @@ class SqueezeGene:
     def __repr__(self):
         return f"{self.feature_short} < {self.multiplier:.2f} * {self.feature_long}"
 
-class RangeGene:
-    """
-    'Zone' Gene.
-    Checks if a feature is inside a specific value range.
-    Logic: Min < Feature < Max
-    """
-    def __init__(self, feature: str, min_val: float, max_val: float):
-        self.feature = feature
-        self.min_val = min_val
-        self.max_val = max_val
-        self.type = 'range'
 
-    def evaluate(self, context: dict, cache: dict = None) -> np.array:
-        if cache is not None:
-            key = (self.type, self.feature, self.min_val, self.max_val)
-            if key in cache: return cache[key]
-
-        if self.feature not in context:
-            res = np.zeros(context.get('__len__', 0), dtype=bool)
-        else:
-            data = context[self.feature]
-            res = (data > self.min_val) & (data < self.max_val)
-            
-        if cache is not None: cache[key] = res
-        return res
-
-    def mutate(self, features_pool):
-        if random.random() < 0.4:
-            # Shift the range
-            shift = (self.max_val - self.min_val) * 0.1 * random.choice([-1, 1])
-            self.min_val += shift
-            self.max_val += shift
-        if random.random() < 0.4:
-            # Expand/Contract
-            change = (self.max_val - self.min_val) * 0.1
-            self.min_val -= change
-            self.max_val += change
-        if random.random() < 0.1:
-            self.feature = random.choice(features_pool)
-
-    def copy(self):
-        return RangeGene(self.feature, self.min_val, self.max_val)
-
-    def to_dict(self):
-        return {
-            'type': self.type,
-            'feature': self.feature,
-            'min_val': self.min_val,
-            'max_val': self.max_val
-        }
-
-    def __repr__(self):
-        return f"{self.min_val:.2f} < {self.feature} < {self.max_val:.2f}"
 
 class CrossGene:
     """
@@ -536,25 +488,112 @@ class DeltaGene:
     def __repr__(self):
         return f"Delta({self.feature}, {self.lookback}) {self.operator} {self.threshold:.10f}"
 
-class SlopeGene:
+class FluxGene:
     """
-    'Trend' Gene.
-    Checks the linear regression slope of a feature.
-    Format: Slope(Feature, Window) <Operator> Threshold
+    'Physics' Gene. Measures Acceleration (Second Derivative).
+    Flux = (Val[t] - Val[t-L]) - (Val[t-L] - Val[t-2L])
+    """
+    def __init__(self, feature: str, operator: str, threshold: float, lag: int):
+        self.feature = feature
+        self.operator = operator
+        self.threshold = threshold
+        self.lag = lag
+        self.type = 'flux'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature, self.operator, self.threshold, self.lag)
+            if key in cache: return cache[key]
+
+        ctx_key = f"flux_{self.feature}_{self.lag}"
+        if ctx_key not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            data = context[ctx_key]
+            if self.operator == '>': res = data > self.threshold
+            elif self.operator == '<': res = data < self.threshold
+            else: res = np.zeros(len(data), dtype=bool)
+        
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3: self.lag = random.choice(VALID_FLUX_LAGS)
+        if random.random() < 0.3: self.threshold += random.uniform(-0.1, 0.1)
+        if random.random() < 0.1: self.feature = random.choice(features_pool)
+        if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
+
+    def copy(self):
+        return FluxGene(self.feature, self.operator, self.threshold, self.lag)
+
+    def to_dict(self):
+        return {'type': self.type, 'feature': self.feature, 'operator': self.operator, 'threshold': self.threshold, 'lag': self.lag}
+
+    def __repr__(self):
+        return f"Flux({self.feature}, {self.lag}) {self.operator} {self.threshold:.4f}"
+
+class DivergenceGene:
+    """
+    'Physics' Gene. Checks if two features are moving in opposite directions.
+    True if Slope(A) * Slope(B) < 0 (i.e. signs are different).
+    """
+    def __init__(self, feature_a: str, feature_b: str, window: int):
+        self.feature_a = feature_a
+        self.feature_b = feature_b
+        self.window = window
+        self.type = 'divergence'
+
+    def evaluate(self, context: dict, cache: dict = None) -> np.array:
+        if cache is not None:
+            key = (self.type, self.feature_a, self.feature_b, self.window)
+            if key in cache: return cache[key]
+
+        k_a = f"slope_{self.feature_a}_{self.window}"
+        k_b = f"slope_{self.feature_b}_{self.window}"
+        
+        if k_a not in context or k_b not in context:
+            res = np.zeros(context.get('__len__', 0), dtype=bool)
+        else:
+            s_a = context[k_a]
+            s_b = context[k_b]
+            # Divergence = One positive, one negative
+            res = (s_a * s_b) < 0
+            
+        if cache is not None: cache[key] = res
+        return res
+
+    def mutate(self, features_pool):
+        if random.random() < 0.3: self.window = random.choice(VALID_SLOPE_WINDOWS)
+        if random.random() < 0.2: self.feature_a = random.choice(features_pool)
+        if random.random() < 0.2: self.feature_b = random.choice(features_pool)
+
+    def copy(self):
+        return DivergenceGene(self.feature_a, self.feature_b, self.window)
+
+    def to_dict(self):
+        return {'type': self.type, 'feature_a': self.feature_a, 'feature_b': self.feature_b, 'window': self.window}
+
+    def __repr__(self):
+        return f"Div({self.feature_a}, {self.feature_b}, {self.window})"
+
+class EfficiencyGene:
+    """
+    'Physics' Gene. Measures Market Efficiency (Kaufman).
+    ER = NetChange / TotalPath. 1.0 = Straight Line, 0.0 = Noise.
     """
     def __init__(self, feature: str, operator: str, threshold: float, window: int):
         self.feature = feature
         self.operator = operator
         self.threshold = threshold
         self.window = window
-        self.type = 'slope'
+        self.type = 'efficiency'
 
     def evaluate(self, context: dict, cache: dict = None) -> np.array:
         if cache is not None:
             key = (self.type, self.feature, self.operator, self.threshold, self.window)
             if key in cache: return cache[key]
 
-        ctx_key = f"slope_{self.feature}_{self.window}"
+        ctx_key = f"eff_{self.feature}_{self.window}"
         if ctx_key not in context:
             res = np.zeros(context.get('__len__', 0), dtype=bool)
         else:
@@ -567,29 +606,21 @@ class SlopeGene:
         return res
 
     def mutate(self, features_pool):
-        if random.random() < 0.3:
-            self.window = random.choice(VALID_SLOPE_WINDOWS)
-        if random.random() < 0.3:
-            self.threshold += random.uniform(-0.01, 0.01)
-        if random.random() < 0.1: 
-            self.feature = random.choice(features_pool)
-        if random.random() < 0.2: 
-            self.operator = '>' if self.operator == '<' else '<'
+        if random.random() < 0.3: self.window = random.choice(VALID_EFF_WINDOWS)
+        if random.random() < 0.3: self.threshold = max(0.0, min(1.0, self.threshold + random.uniform(-0.1, 0.1)))
+        if random.random() < 0.1: self.feature = random.choice(features_pool)
+        if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
 
     def copy(self):
-        return SlopeGene(self.feature, self.operator, self.threshold, self.window)
+        return EfficiencyGene(self.feature, self.operator, self.threshold, self.window)
 
     def to_dict(self):
-        return {
-            'type': self.type,
-            'feature': self.feature,
-            'operator': self.operator,
-            'threshold': self.threshold,
-            'window': self.window
-        }
+        return {'type': self.type, 'feature': self.feature, 'operator': self.operator, 'threshold': self.threshold, 'window': self.window}
 
     def __repr__(self):
-        return f"Slope({self.feature}, {self.window}) {self.operator} {self.threshold:.5f}"
+        return f"Eff({self.feature}, {self.window}) {self.operator} {self.threshold:.2f}"
+
+
 
 class CorrelationGene:
     """
@@ -947,8 +978,8 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 35% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
-        if rand_val < 0.35:
+        # 30% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
+        if rand_val < 0.30:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-3.0, -2.5, -2.0, -1.5, 1.5, 2.0, 2.5, 3.0])
@@ -956,7 +987,7 @@ class GenomeFactory:
             return ZScoreGene(feature, operator, threshold, window)
 
         # 15% Relational Gene (Context - "Is A > B?")
-        elif rand_val < 0.50:
+        elif rand_val < 0.45:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -964,8 +995,8 @@ class GenomeFactory:
             operator = random.choice(['>', '<'])
             return RelationalGene(feature_left, operator, feature_right)
 
-        # 10% Squeeze Gene (Regime Detector - Volatility Compression)
-        elif rand_val < 0.60:
+        # 5% Squeeze Gene (Regime Detector - Volatility Compression)
+        elif rand_val < 0.50:
             feature_short = random.choice(pool)
             feature_long = random.choice(pool)
             while feature_long == feature_short and len(pool) > 1:
@@ -974,7 +1005,7 @@ class GenomeFactory:
             return SqueezeGene(feature_short, feature_long, multiplier)
 
         # 10% Correlation Gene (Synergy - "Are A and B moving together?")
-        elif rand_val < 0.70:
+        elif rand_val < 0.60:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             operator = random.choice(['>', '<'])
@@ -982,8 +1013,33 @@ class GenomeFactory:
             window = random.choice(VALID_CORR_WINDOWS)
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
+        # 5% Flux Gene (Acceleration)
+        elif rand_val < 0.65:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = random.uniform(-0.1, 0.1) * stats['std']
+            lag = random.choice(VALID_FLUX_LAGS)
+            return FluxGene(feature, operator, threshold, lag)
+
+        # 5% Efficiency Gene (Path)
+        elif rand_val < 0.70:
+            feature = random.choice(pool)
+            operator = random.choice(['>', '<'])
+            threshold = random.uniform(0.3, 0.8)
+            window = random.choice(VALID_EFF_WINDOWS)
+            return EfficiencyGene(feature, operator, threshold, window)
+
+        # 5% Divergence Gene (Structure)
+        elif rand_val < 0.75:
+            f1 = random.choice(pool)
+            f2 = random.choice(pool)
+            while f1 == f2 and len(pool) > 1: f2 = random.choice(pool)
+            window = random.choice(VALID_SLOPE_WINDOWS)
+            return DivergenceGene(f1, f2, window)
+
         # 10% Event Gene (Memory - "Did X happen recently?")
-        elif rand_val < 0.80:
+        elif rand_val < 0.85:
             feature = random.choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -992,7 +1048,7 @@ class GenomeFactory:
             return EventGene(feature, operator, threshold, window)
 
         # 5% Cross Gene (Event - "A crossed B")
-        elif rand_val < 0.85:
+        elif rand_val < 0.90:
             feature_left = random.choice(pool)
             feature_right = random.choice(pool)
             while feature_right == feature_left and len(pool) > 1:
@@ -1001,50 +1057,37 @@ class GenomeFactory:
             return CrossGene(feature_left, direction, feature_right)
 
         # 5% Regime Gene (Bounded Metrics)
-        elif rand_val < 0.90:
+        elif rand_val < 0.95:
             bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
             target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
-            if random.random() < 0.5:
-                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-                center = stats['mean'] + random.uniform(-0.5, 0.5) * stats['std']
-                width = random.uniform(0.5, 2.0) * stats['std']
-                return RangeGene(target_feature, center - width/2, center + width/2)
-            else:
-                op = random.choice(['>', '<'])
-                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-                window = random.randint(5, 20)
-                return PersistenceGene(target_feature, op, threshold, window)
+            
+            op = random.choice(['>', '<'])
+            stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+            threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
+            window = random.randint(5, 20)
+            return PersistenceGene(target_feature, op, threshold, window)
 
-        # 5% Extrema Gene (Breakout)
-        elif rand_val < 0.95:
+        # 3% Extrema Gene (Breakout)
+        elif rand_val < 0.98:
             feature = random.choice(pool)
             mode = random.choice(['max', 'min'])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ExtremaGene(feature, mode, window)
-
-        # 2% Consecutive Gene (Pattern - "3 Green Bars")
-        elif rand_val < 0.97:
-            direction = random.choice(['up', 'down'])
-            op = random.choice(['>', '=='])
-            count = random.randint(2, 6)
-            return ConsecutiveGene(direction, op, count)
-
-        # 3% Delta/Slope Gene (Momentum/Trend)
+        
+        # 2% Consecutive + Delta (Remaining)
         else:
             if random.random() < 0.5:
+                direction = random.choice(['up', 'down'])
+                op = random.choice(['>', '=='])
+                count = random.randint(2, 6)
+                return ConsecutiveGene(direction, op, count)
+            else:
                 feature = random.choice(pool)
                 operator = random.choice(['>', '<'])
                 stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
                 threshold = random.uniform(-0.5, 0.5) * stats['std']
                 lookback = random.choice(VALID_DELTA_LOOKBACKS) 
                 return DeltaGene(feature, operator, threshold, lookback)
-            else:
-                feature = random.choice(pool)
-                operator = random.choice(['>', '<'])
-                threshold = random.uniform(-0.02, 0.02)
-                window = random.choice(VALID_SLOPE_WINDOWS)
-                return SlopeGene(feature, operator, threshold, window)
 
     def create_random_gene(self):
         # Fallback now uses ZScore instead of Static
@@ -1077,16 +1120,10 @@ class GenomeFactory:
             
             stats = self.feature_stats.get(target_feature, {'mean': 0, 'std': 1})
             
-            if random.random() < 0.5:
-                # Range Gene (e.g. Hurst between 0.4 and 0.6)
-                center = stats['mean']
-                width = stats['std'] * random.uniform(0.5, 2.0)
-                regime_genes.append(RangeGene(target_feature, center - width/2, center + width/2))
-            else:
-                # Persistence Gene (e.g. Volatility > High for 10 bars)
-                op = random.choice(['>', '<'])
-                threshold = stats['mean'] + random.choice([-1, 1]) * stats['std']
-                regime_genes.append(PersistenceGene(target_feature, op, threshold, 10))
+            # Persistence Gene (e.g. Volatility > High for 10 bars)
+            op = random.choice(['>', '<'])
+            threshold = stats['mean'] + random.choice([-1, 1]) * stats['std']
+            regime_genes.append(PersistenceGene(target_feature, op, threshold, 10))
         
         # Concordance: For complex strategies, allow 1 outlier (Robustness)
         concordance = None
