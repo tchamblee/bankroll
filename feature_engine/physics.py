@@ -300,63 +300,6 @@ def calc_fractal_dimension(series, window=30):
     res = _jit_fdi_rolling(vals, window)
     return pd.Series(res, index=series.index)
 
-def calc_choppiness_index(df, window=14):
-    """
-    Choppiness Index (CHOP).
-    Values > 61.8 indicate consolidation (chop).
-    Values < 38.2 indicate trend.
-    Formula: 100 * LOG10( SUM(ATR(1), n) / ( Max(H,n) - Min(L,n) ) ) / LOG10(n)
-    """
-    # 1. True Range (TR)
-    # TR = Max(H-L, Abs(H-C_prev), Abs(L-C_prev))
-    high = df['high']
-    low = df['low']
-    close_prev = df['close'].shift(1)
-    
-    tr1 = high - low
-    tr2 = (high - close_prev).abs()
-    tr3 = (low - close_prev).abs()
-    
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    
-    # 2. Sum of TR over window
-    sum_tr = tr.rolling(window).sum()
-    
-    # 3. Range over window (Max H - Min L)
-    max_h = high.rolling(window).max()
-    min_l = low.rolling(window).min()
-    range_hl = max_h - min_l
-    
-    # Avoid division by zero
-    range_hl = range_hl.replace(0, np.nan)
-    
-    # 4. CHOP Calculation
-    # log10(sum_tr / range_hl) / log10(n) * 100
-    chop = 100 * np.log10(sum_tr / range_hl) / np.log10(window)
-    
-    return chop
-
-def calc_ulcer_index(series, window=14):
-    """
-    Ulcer Index (UI).
-    Measures downside risk (depth and duration of drawdowns).
-    """
-    # 1. Percentage Drawdown from Peak (within window? No, typically from rolling max)
-    # Standard UI uses rolling max over the period
-    roll_max = series.rolling(window).max()
-    drawdown = 100 * (series - roll_max) / roll_max
-    
-    # 2. Squared Drawdowns
-    dd_sq = drawdown ** 2
-    
-    # 3. Mean of Squared Drawdowns
-    mean_dd_sq = dd_sq.rolling(window).mean()
-    
-    # 4. Sqrt (Quadratic Mean)
-    ui = np.sqrt(mean_dd_sq)
-    
-    return ui
-
 
 # --- Feature Engineering Functions ---
 
@@ -387,10 +330,6 @@ def add_physics_features(df):
     df['hurst_roc_200'] = df['hurst_200'].diff()
     df['entropy_roc_100'] = df['entropy_100'].diff()
     df['entropy_roc_200'] = df['entropy_200'].diff()
-    
-    # NEW CRITICAL FEATURES: Choppiness & Ulcer Index
-    df['choppiness_100'] = calc_choppiness_index(df, window=100)
-    df['ulcer_100'] = calc_ulcer_index(df['close'], window=100)
     
     return df
 
