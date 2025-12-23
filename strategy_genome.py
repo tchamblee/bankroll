@@ -758,12 +758,13 @@ class ConsecutiveGene:
 
 class Strategy:
     """
-    Represents a Bidirectional Trading Strategy.
+    Represents a Bidirectional Trading Strategy with Regime Filtering.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, regime_genes=None, min_concordance=None):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
+        self.regime_genes = regime_genes if regime_genes else []
         self.min_concordance = min_concordance
         self.fitness = 0.0
         
@@ -780,8 +781,6 @@ class Strategy:
             if not genes: return np.zeros(n_rows, dtype=int)
             votes = np.zeros(n_rows, dtype=int)
             for gene in genes:
-                # Numpy handles bool -> int addition automatically (True=1, False=0)
-                # This avoids allocating a temporary int array for every gene
                 votes += gene.evaluate(context, cache)
             return votes
 
@@ -799,6 +798,16 @@ class Strategy:
         go_short = s_votes >= s_thresh if self.short_genes else np.zeros(n_rows, dtype=bool)
         
         net_signal = go_long.astype(int) - go_short.astype(int)
+        
+        # --- REGIME FILTER (VETO) ---
+        if self.regime_genes:
+            regime_mask = np.ones(n_rows, dtype=bool)
+            for gene in self.regime_genes:
+                regime_mask &= gene.evaluate(context, cache)
+            
+            # Apply Mask: If Regime is False, Signal is 0 (Flat)
+            net_signal = net_signal * regime_mask.astype(int)
+
         return net_signal * config.MAX_LOTS
 
     def to_dict(self):
@@ -806,6 +815,7 @@ class Strategy:
             'name': self.name,
             'long_genes': [g.to_dict() for g in self.long_genes],
             'short_genes': [g.to_dict() for g in self.short_genes],
+            'regime_genes': [g.to_dict() for g in self.regime_genes],
             'min_concordance': self.min_concordance,
             'fitness': self.fitness
         }
@@ -816,6 +826,7 @@ class Strategy:
             name=d.get('name', 'Strategy'),
             long_genes=[gene_from_dict(g) for g in d.get('long_genes', [])],
             short_genes=[gene_from_dict(g) for g in d.get('short_genes', [])],
+            regime_genes=[gene_from_dict(g) for g in d.get('regime_genes', [])],
             min_concordance=d.get('min_concordance')
         )
         s.fitness = d.get('fitness', 0.0)
@@ -824,7 +835,8 @@ class Strategy:
     def __repr__(self):
         l_str = f" + ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
         s_str = f" + ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str})"
+        r_str = f" & ".join([str(g) for g in self.regime_genes]) if self.regime_genes else "None"
+        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str}) | REGIME:({r_str})"
 
 class GenomeFactory:
     def __init__(self, survivors_file):
@@ -952,6 +964,7 @@ class GenomeFactory:
         num_genes = random.randint(num_genes_range[0], num_genes_range[1])
         long_genes = []
         short_genes = []
+        regime_genes = []
         
         for _ in range(num_genes):
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
@@ -960,6 +973,26 @@ class GenomeFactory:
         for _ in range(num_genes):
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
             short_genes.append(self.create_gene_from_pool(pool))
+            
+        # --- REGIME GENE INJECTION (20% Chance) ---
+        if random.random() < 0.20:
+            # Create a Regime Gene (Gate)
+            # Use Range or Persistence on a Regime Feature
+            pool = self.regime_pool if self.regime_pool else self.features
+            target_feature = random.choice(pool)
+            
+            stats = self.feature_stats.get(target_feature, {'mean': 0, 'std': 1})
+            
+            if random.random() < 0.5:
+                # Range Gene (e.g. Hurst between 0.4 and 0.6)
+                center = stats['mean']
+                width = stats['std'] * random.uniform(0.5, 2.0)
+                regime_genes.append(RangeGene(target_feature, center - width/2, center + width/2))
+            else:
+                # Persistence Gene (e.g. Volatility > High for 10 bars)
+                op = random.choice(['>', '<'])
+                threshold = stats['mean'] + random.choice([-1, 1]) * stats['std']
+                regime_genes.append(PersistenceGene(target_feature, op, threshold, 10))
         
         # Concordance: For complex strategies, allow 1 outlier (Robustness)
         concordance = None
@@ -975,5 +1008,6 @@ class GenomeFactory:
             name=f"Strat_{random.randint(1000,9999)}",
             long_genes=long_genes,
             short_genes=short_genes,
+            regime_genes=regime_genes,
             min_concordance=concordance
         )

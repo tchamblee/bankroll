@@ -193,40 +193,66 @@ def main():
             # Sort by Robust Return (Primary) then Sortino OOS (Secondary)
             df = df.sort_values(by=['Robust%', 'Sortino(OOS)'], ascending=[False, False])
             
-            # --- CORRELATION FILTERING (Top 5 Unique) ---
-            print("  Performing Correlation Filter (Limit 5, Threshold 0.7)...")
+            # --- CORRELATION CLUSTERING (Hierarchical) ---
+            print("  Performing Hierarchical Correlation Clustering (Threshold 0.7)...")
+            from scipy.cluster.hierarchy import linkage, fcluster
+            from scipy.spatial.distance import squareform
             
             results_map = {res['Strategy'].name: res for res in all_horizon_results}
+            # Initial sort by Robust Return to prioritize better strategies within clusters
+            df = df.sort_values(by='Robust%', ascending=False)
             sorted_names = df['Name'].values
             candidates = [results_map[name]['Strategy'] for name in sorted_names]
             
-            top_candidates = candidates[:50]
+            # Use all candidates, not just top 50, but cap at 200 for performance if needed
+            top_candidates = candidates[:200]
             selected_strats = []
             
             if top_candidates:
-                sig_matrix = backtester.generate_signal_matrix(top_candidates)
-                selected_indices = []
-                
-                for i in range(len(top_candidates)):
-                    if len(selected_strats) >= 5: break
+                if len(top_candidates) == 1:
+                    selected_strats = top_candidates
+                else:
+                    sig_matrix = backtester.generate_signal_matrix(top_candidates)
                     
-                    is_uncorrelated = True
-                    current_sig = sig_matrix[:, i]
+                    # 1. Correlation Matrix
+                    # Handle constant signals (std=0) to avoid NaNs
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        corr_matrix = np.corrcoef(sig_matrix, rowvar=False)
                     
-                    for existing_idx in selected_indices:
-                        existing_sig = sig_matrix[:, existing_idx]
-                        if np.std(current_sig) == 0 or np.std(existing_sig) == 0:
-                            corr = 0 
-                        else:
-                            corr = np.corrcoef(current_sig, existing_sig)[0, 1]
-                            
-                        if abs(corr) > 0.7:
-                            is_uncorrelated = False
-                            break
+                    # Fix NaNs (0 variance signals usually uncorrelated with everything else, or perfectly correlated with other 0 var?)
+                    # If signal is constant 0, correlation is undefined. Treat as uncorrelated (0).
+                    corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
                     
-                    if is_uncorrelated:
-                        selected_indices.append(i)
-                        selected_strats.append(top_candidates[i])
+                    # 2. Distance Matrix (1 - |Correlation|)
+                    # We want to group strategies that are highly correlated (pos or neg)
+                    dist_matrix = 1.0 - np.abs(corr_matrix)
+                    
+                    # Ensure symmetry and zero diagonal for numerical stability
+                    np.fill_diagonal(dist_matrix, 0)
+                    dist_matrix = np.clip(dist_matrix, 0, 1)
+                    
+                    # Condensed matrix for linkage
+                    condensed_dist = squareform(dist_matrix, checks=False)
+                    
+                    # 3. Clustering
+                    # Complete linkage: max distance between clusters must be < threshold
+                    # Threshold 0.3 means correlations > 0.7 are grouped
+                    Z = linkage(condensed_dist, method='complete')
+                    cluster_labels = fcluster(Z, t=0.3, criterion='distance')
+                    
+                    # 4. Select Best per Cluster
+                    cluster_map = {}
+                    for i, label in enumerate(cluster_labels):
+                        if label not in cluster_map:
+                            cluster_map[label] = []
+                        cluster_map[label].append(top_candidates[i])
+                    
+                    for label, cluster_members in cluster_map.items():
+                        # Pick member with highest Robust Return
+                        best_in_cluster = max(cluster_members, key=lambda s: results_map[s.name]['Robust_Ret'])
+                        selected_strats.append(best_in_cluster)
+
+            print(f"  Found {len(selected_strats)} distinct strategy clusters.")
             
             # Create DF for display
             selected_names = {s.name for s in selected_strats}
@@ -240,7 +266,7 @@ def main():
                 
             print(display_df.to_string(index=False))
             
-            # Save Top 5 Unique to JSON
+            # Save ALL Unique to JSON
             top_unique_strategies = []
             for s in selected_strats:
                 res = results_map[s.name]
@@ -259,7 +285,7 @@ def main():
             out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
             with open(out_path, "w") as f:
                 json.dump(top_unique_strategies, f, indent=4)
-            print(f"  💾 Saved Top 5 Unique Strategies to: {out_path}")
+            print(f"  💾 Saved {len(top_unique_strategies)} Unique Cluster Champions to: {out_path}")
                 
         except Exception as e:
             print(f"  Error processing horizon {h}: {e}")

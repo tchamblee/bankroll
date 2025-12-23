@@ -22,29 +22,29 @@ def load_all_candidates():
             data = json.load(f)
             
         if data:
-            # STRICT SELECTION: Only take the #1 Top Dog
-            d = data[0]
-            try:
-                s = Strategy.from_dict(d)
-                s.horizon = h
-                s.training_id = d.get('training_id', 'legacy') # Capture ID
-                
-                # Load metrics for ranking
-                metrics = d.get('metrics', {})
-                s.sortino = metrics.get('sortino_oos', 0)
-                s.robust = metrics.get('robust_return', 0)
-                
-                # Filter: Must be PROFITABLE on the FULL dataset
-                # Since Mutex runs on the full history, we can't include strategies that lose money overall.
-                # using robust_return as proxy since full_return is not explicitly calculated/saved in top strategies
-                if s.sortino > 0 and s.robust > 0:
-                    candidates.append(s)
-                else:
-                    print(f"  Skipping Unprofitable Strategy: {s.name} (H{h}) | Sortino: {s.sortino:.2f} | Robust: {s.robust:.4f}")
+            # LOAD ALL CLUSTER CHAMPIONS (Not just the top 1)
+            for d in data:
+                try:
+                    s = Strategy.from_dict(d)
+                    s.horizon = h
+                    s.training_id = d.get('training_id', 'legacy') # Capture ID
+                    
+                    # Load metrics for ranking
+                    metrics = d.get('metrics', {})
+                    s.sortino = metrics.get('sortino_oos', 0)
+                    s.robust = metrics.get('robust_return', 0)
+                    
+                    # Filter: Must be PROFITABLE on the FULL dataset
+                    # using robust_return as proxy since full_return is not explicitly calculated/saved in top strategies
+                    if s.sortino > 2.0 and s.robust > 0:
+                        candidates.append(s)
+                    else:
+                        pass
+                        # print(f"  Skipping Unprofitable Strategy: {s.name} (H{h})")
 
-            except Exception as e:
-                # print(f"Error loading {h}: {e}")
-                pass
+                except Exception as e:
+                    # print(f"Error loading {h}: {e}")
+                    pass
             
     # Sort candidates globally by Sortino (Priority)
     candidates.sort(key=lambda x: x.sortino, reverse=True)
@@ -89,44 +89,32 @@ def filter_global_correlation(candidates, backtester, threshold=0.7):
 from numba import jit
 
 @jit(nopython=True)
-def _jit_simulate_mutex_portfolio(sig_matrix, warmup):
+def _jit_simulate_priority_portfolio(sig_matrix, warmup):
     n_bars, n_strats = sig_matrix.shape
     final_pos = np.zeros(n_bars)
-    active_strat_idx = -1 
-    current_lots = 0.0
     
-    # Simulation Loop
+    # Simulation Loop: Stateless Priority Mux
+    # At every bar, the highest ranked strategy (lowest index) 
+    # that has a non-zero signal gets to drive the car.
+    
     for t in range(warmup, n_bars):
-        if active_strat_idx == -1:
-            # IDLE
-            for i in range(n_strats):
-                sig = sig_matrix[t, i]
-                if sig != 0:
-                    active_strat_idx = i
-                    current_lots = float(sig)
-                    final_pos[t] = current_lots
-                    break
-        else:
-            # LOCKED
-            sig = sig_matrix[t, active_strat_idx]
-            if sig == 0:
-                final_pos[t] = 0.0
-                active_strat_idx = -1
-                current_lots = 0.0
-            else:
-                # We stay in the current strategy even if it changes sign (as per original logic)
-                # But original logic had: elif np.sign(sig) != np.sign(current_lots):
-                # Actually original logic always assigned final_pos[t] = sig
-                # So it was just:
-                final_pos[t] = float(sig)
-                current_lots = float(sig)
+        # Default to flat
+        chosen_sig = 0.0
+        
+        for i in range(n_strats):
+            sig = sig_matrix[t, i]
+            if sig != 0:
+                chosen_sig = float(sig)
+                break # Found the highest priority active signal
+        
+        final_pos[t] = chosen_sig
                 
     return final_pos
 
 def simulate_mutex_portfolio(backtester, unique_strats, sig_matrix):
     warmup = 3200
-    # Ensure sig_matrix is float64 for numba if needed, or int is fine if it matches
-    return _jit_simulate_mutex_portfolio(sig_matrix.astype(np.float64), warmup)
+    # Use the new Priority Preemption logic
+    return _jit_simulate_priority_portfolio(sig_matrix.astype(np.float64), warmup)
 
 def run_mutex_backtest():
     print("\n" + "="*80)
