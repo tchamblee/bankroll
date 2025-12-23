@@ -190,8 +190,36 @@ class EvolutionaryAlphaFactory:
             # 5. Next Gen
             new_population = elites[:50] # Keep top 50 unchanged (Elitism)
             
+            # --- ELITE MUTATION (Refinement) ---
+            # Take top 20% of elites and create slightly tweaked clones
+            # This allows fine-tuning without the destructive nature of crossover
+            n_mutants = int(self.pop_size * 0.20)
+            mutant_source = elites[:max(1, int(len(elites)*0.2))] # Top 20% of elites
+            
+            for _ in range(n_mutants):
+                if not mutant_source: break
+                parent = random.choice(mutant_source)
+                
+                # Clone
+                child = Strategy(name=f"Mutant_{random.randint(1000,9999)}")
+                child.long_genes = [g.copy() for g in parent.long_genes]
+                child.short_genes = [g.copy() for g in parent.short_genes]
+                child.regime_genes = [g.copy() for g in parent.regime_genes]
+                child.min_concordance = parent.min_concordance
+                
+                # Apply Mutation (Aggressive Fine-Tuning)
+                # Mutate 1-2 genes guaranteed
+                genes_to_mutate = child.long_genes + child.short_genes + child.regime_genes
+                if genes_to_mutate:
+                    target_genes = random.sample(genes_to_mutate, min(len(genes_to_mutate), 2))
+                    for g in target_genes:
+                        g.mutate(self.factory.features)
+                        
+                child.cleanup()
+                new_population.append(child)
+            
             # --- IMMIGRATION (Fresh Blood Injection) ---
-            # Prune the bottom and replace with 30% completely new random strategies
+            # Prune the bottom and replace with 10% completely new random strategies
             n_immigrants = int(self.pop_size * config.IMMIGRATION_PERCENTAGE)
             for _ in range(n_immigrants):
                 new_population.append(self.factory.create_strategy((2, 4)))
@@ -225,10 +253,15 @@ class EvolutionaryAlphaFactory:
         
         # Sort HOF by Robust Score (Validation) - STRICTLY BLIND TO TEST SET
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
-            s_str = str(s)
-            if s_str not in seen:
+            # Create a Gene-Only Signature (Ignore Name) to remove clones
+            l_sig = "|".join(sorted([str(g) for g in s.long_genes]))
+            s_sig = "|".join(sorted([str(g) for g in s.short_genes]))
+            r_sig = "|".join(sorted([str(g) for g in s.regime_genes]))
+            gene_signature = f"L:{l_sig}_S:{s_sig}_R:{r_sig}"
+            
+            if gene_signature not in seen:
                 unique_hof.append(s)
-                seen.add(s_str)
+                seen.add(gene_signature)
         
         # Select Top 100 Candidates based on VALIDATION ROBUSTNESS
         top_candidates = unique_hof[:100]
@@ -236,6 +269,9 @@ class EvolutionaryAlphaFactory:
         if top_candidates:
             # 7. OOS Reporting (Test Phase) on SELECTED CANDIDATES ONLY
             # print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
+            
+            # PRESERVE Validation Fitness (Backtester overwrites s.fitness)
+            val_fitness_map = {s.name: s.fitness for s in top_candidates}
             
             # Evaluate on Test Set (One-Shot)
             test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon)
@@ -256,7 +292,8 @@ class EvolutionaryAlphaFactory:
                 strat_data['test_sortino'] = t_sortino
                 strat_data['test_return'] = t_ret
                 strat_data['test_trades'] = t_trades
-                strat_data['robust_score'] = float(s.fitness) # Validation Score
+                # RETRIEVE preserved Validation Score
+                strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
                 strat_data['training_id'] = self.training_id
                 
                 output.append(strat_data)
