@@ -75,17 +75,18 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     # 3. Stability & Weakness Check (Walk-Forward Analysis)
     # if not silent: print("\n[Step 2] Checking for Weak & Unstable Features (Walk-Forward IC)...")
     
-    # Create 5 chronological fold INDICES (not copies of data)
+    # Create chronological fold INDICES (not copies of data)
     n = len(df)
-    fold_size = n // 5
+    folds = config.WFV_FOLDS
+    fold_size = n // folds
     fold_slices = []
-    for i in range(5):
+    for i in range(folds):
         start = i * fold_size
-        end = (i + 1) * fold_size if i < 4 else n
+        end = (i + 1) * fold_size if i < (folds - 1) else n
         fold_slices.append((start, end))
     
     # 1. Pre-calculate all Fold ICs using Ranked Data (Pearson on Ranks)
-    fold_ic_matrix = pd.DataFrame(index=survivors, columns=range(5))
+    fold_ic_matrix = pd.DataFrame(index=survivors, columns=range(folds))
     
     for i, (start, end) in enumerate(fold_slices):
         # Slice the PRE-RANKED data
@@ -323,9 +324,9 @@ if __name__ == "__main__":
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
     # --- FIX: DATA LEAKAGE PREVENTION ---
-    # Only use the Training Set (First 60%) for Feature Selection.
-    # The remaining 40% (Val/Test) must remain unseen by the "Hunger Games".
-    train_size = int(len(base_df) * 0.6)
+    # Only use the Training Set for Feature Selection.
+    # The remaining (Val/Test) must remain unseen by the "Hunger Games".
+    train_size = int(len(base_df) * config.TRAIN_SPLIT_RATIO)
     train_df = base_df.iloc[:train_size].copy()
     
     print(f"\n🔒 LOCKDOWN: Feature Selection restricted to TRAINING SET only.")

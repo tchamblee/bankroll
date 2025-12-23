@@ -70,8 +70,8 @@ class BacktestEngine:
         
         # Split Indices
         n = len(self.raw_data)
-        self.train_idx = int(n * 0.6)
-        self.val_idx = int(n * 0.8)
+        self.train_idx = int(n * config.TRAIN_SPLIT_RATIO)
+        self.val_idx = int(n * config.VAL_SPLIT_RATIO)
 
     def __del__(self):
         # Cleanup temp dir
@@ -205,8 +205,8 @@ class BacktestEngine:
             return (pd.DataFrame(), np.array([])) if return_series else pd.DataFrame()
         
         # --- CHUNKING TO PREVENT OOM ---
-        # Process strategies in batches of 2000
-        BATCH_SIZE = 2000
+        # Process strategies in batches
+        BATCH_SIZE = config.EVO_BATCH_SIZE
         n_strats = len(population)
         
         all_results = []
@@ -268,9 +268,9 @@ class BacktestEngine:
                 final_sortino = sortino[j]
                 
                 # Soft Penalty for Low Trades (Create Gradient)
-                # Increased to 25 to match Prop Desk Mandate (Moderate Stat Sig)
-                if trades_count[j] < 25:
-                    penalty = (25 - trades_count[j]) * 0.1
+                # Aligned with Prop Desk Mandate (Moderate Stat Sig)
+                if trades_count[j] < config.MIN_TRADES_FOR_METRICS:
+                    penalty = (config.MIN_TRADES_FOR_METRICS - trades_count[j]) * 0.1
                     final_sortino -= penalty
                 
                 if trades_count[j] == 0:
@@ -287,7 +287,7 @@ class BacktestEngine:
                      final_sortino -= 5.0
                 
                 # Volume Bonus
-                if trades_count[j] > 25:
+                if trades_count[j] > config.MIN_TRADES_FOR_METRICS:
                     final_sortino *= np.log10(max(trades_count[j], 1))
                 
                 strat.fitness = final_sortino
@@ -320,12 +320,12 @@ class BacktestEngine:
         else:
             return results_df
 
-    def evaluate_walk_forward(self, population: list[Strategy], folds=4, time_limit=None):
+    def evaluate_walk_forward(self, population: list[Strategy], folds=config.WFV_FOLDS, time_limit=None):
         if not population: return []
 
         full_signal_matrix = self.generate_signal_matrix(population)
         n_bars = len(self.raw_data)
-        dev_end_idx = int(n_bars * 0.8)
+        dev_end_idx = int(n_bars * config.VAL_SPLIT_RATIO)
         
         window_size = int(dev_end_idx * 0.55)
         step_size = int(dev_end_idx * 0.11)
@@ -368,9 +368,9 @@ class BacktestEngine:
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
             # Soft Penalty for WFV (Min Trades)
-            # Increased to 10 to force statistical significance (Prop Desk Mandate)
+            # Aligned with Prop Desk Mandate
             sortino = np.nan_to_num(sortino, nan=-2.0)
-            penalty = np.maximum(0, (30 - trades_count) * 0.2)
+            penalty = np.maximum(0, (config.VOLUME_BONUS_THRESHOLD - trades_count) * 0.2)
             sortino -= penalty
             
             # Stability Penalty: If one trade is > 60% of total return, penalize moderately
@@ -392,7 +392,7 @@ class BacktestEngine:
             # Reward strategies that trade more frequently to improve statistical significance
             # Safe log10 calculation
             safe_trades = np.maximum(trades_count, 1)
-            volume_bonus = np.where(trades_count > 30, np.log10(safe_trades), 1.0)
+            volume_bonus = np.where(trades_count > config.VOLUME_BONUS_THRESHOLD, np.log10(safe_trades), 1.0)
             sortino *= volume_bonus
             
             # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)

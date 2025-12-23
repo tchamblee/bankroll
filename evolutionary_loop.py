@@ -14,12 +14,12 @@ from validate_features import triple_barrier_labels
 import uuid
 
 class EvolutionaryAlphaFactory:
-    def __init__(self, data, survivors_file, population_size=2000, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
+    def __init__(self, data, survivors_file, population_size=None, generations=100, decay_rate=0.99, target_col='log_ret', prediction_mode=False):
         self.training_id = uuid.uuid4().hex[:8]  # Unique ID for this run
         print(f"🆔 Training Run ID: {self.training_id}")
         
         self.data = data
-        self.pop_size = population_size
+        self.pop_size = population_size if population_size else config.EVO_BATCH_SIZE
         self.generations = generations
         self.decay_rate = decay_rate
         self.survivors_file = survivors_file
@@ -192,7 +192,7 @@ class EvolutionaryAlphaFactory:
             
             # --- IMMIGRATION (Fresh Blood Injection) ---
             # Prune the bottom and replace with 30% completely new random strategies
-            n_immigrants = int(self.pop_size * 0.1)
+            n_immigrants = int(self.pop_size * config.IMMIGRATION_PERCENTAGE)
             for _ in range(n_immigrants):
                 new_population.append(self.factory.create_strategy((2, 4)))
             
