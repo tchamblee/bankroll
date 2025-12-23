@@ -63,7 +63,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # DROP REDUNDANT RESIDUALS 
     # (Keep Betas, Drop Residuals for TNX/DXY as they are redundant with SPY/Other)
     if engine.bars is not None:
-        drop_residuals = ['residual_tnx', 'residual_dxy']
+        drop_residuals = ['residual_tnx', 'residual_dxy', 'residual_bund']
         engine.bars.drop(columns=[c for c in drop_residuals if c in engine.bars.columns], inplace=True)
             
     # 5. Standard Features

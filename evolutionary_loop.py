@@ -106,7 +106,7 @@ class EvolutionaryAlphaFactory:
             # Log dominant features
             if dominant_features:
                 sorted_dom = sorted([(f, feature_counts[f]) for f in dominant_features], key=lambda x: x[1], reverse=True)[:3]
-                # print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
+                print(f"  ⚠️  Dominant Features: {', '.join([f'{f}({c})' for f, c in sorted_dom])}")
             
             # Penalties
             for i, strat in enumerate(self.population):
@@ -114,10 +114,10 @@ class EvolutionaryAlphaFactory:
                 
                 # Complexity Penalty
                 # This allows for slightly more complex strategies while still preventing bloat.
-                complexity_penalty = n_genes * 0.2
+                complexity_penalty = n_genes * config.COMPLEXITY_PENALTY_PER_GENE
                 
                 # Apply Dynamic Dominance Penalty
-                dom_penalty = 0.5
+                dom_penalty = 0.0
                 strat_features = set()
                 
                 for gene in strat.long_genes + strat.short_genes:
@@ -135,8 +135,8 @@ class EvolutionaryAlphaFactory:
                     # Penalty scales with popularity: Ruthless Diversification
                     # >20% usage triggers penalty (usage_ratio * 10.0)
                     usage_ratio = feature_counts.get(f, 0) / self.pop_size
-                    if usage_ratio > 0.20:
-                         dom_penalty += usage_ratio * 10.0
+                    if usage_ratio > config.DOMINANCE_PENALTY_THRESHOLD:
+                         dom_penalty += usage_ratio * config.DOMINANCE_PENALTY_MULTIPLIER
                 
                 total_penalty = complexity_penalty + dom_penalty
                 wfv_scores[i] -= total_penalty
@@ -160,12 +160,13 @@ class EvolutionaryAlphaFactory:
             else:
                 generations_without_improvement += 1
                 
-            if generations_without_improvement >= 20: # Increased patience for robust convergence
+            if generations_without_improvement >= 10: # Increased patience for robust convergence
                 print(f"🛑 Early Stopping Triggered (No Robust Improvement).")
                 break
             
             # 4. Selection (Elitism on Robust Fitness)
-            num_elite = int(self.pop_size * 0.2)
+            num_elite = int(self.pop_size * config.ELITE_PERCENTAGE)
+
             # Sort by ROBUST fitness
             sorted_indices = np.argsort(wfv_scores)[::-1]
             elites = [self.population[i] for i in sorted_indices[:num_elite]]
@@ -197,7 +198,7 @@ class EvolutionaryAlphaFactory:
                 child = self.crossover(p1, p2)
                 
                 # Mutation
-                mut_rate = 0.30 # Standardized exploration rate
+                mut_rate = config.MUTATION_RATE
 
                 for g in child.long_genes + child.short_genes:
                     if random.random() < mut_rate:
