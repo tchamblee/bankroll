@@ -6,7 +6,7 @@ import os
 import sys
 import re
 from feature_engine import FeatureEngine
-from strategy_genome import Strategy, StaticGene, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
+from strategy_genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
 from backtest_engine import BacktestEngine
 import config
 
@@ -36,8 +36,8 @@ def parse_gene_string(gene_str):
             return DeltaGene(feature, op, float(right), int(lookback))
         except: return None
     try:
-        threshold = float(right)
-        return StaticGene(left, op, threshold)
+        float(right) # Check if it is a number
+        return None # StaticGene is deprecated
     except ValueError:
         return RelationalGene(left, op, right)
 

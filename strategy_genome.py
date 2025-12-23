@@ -13,9 +13,7 @@ VALID_CORR_WINDOWS = [20, 50, 100, 200]
 
 def gene_from_dict(d):
     """Factory to restore gene from dictionary."""
-    if d['type'] == 'static':
-        return StaticGene(d['feature'], d['operator'], d['threshold'])
-    elif d['type'] == 'relational':
+    if d['type'] == 'relational':
         return RelationalGene(d['feature_left'], d['operator'], d['feature_right'])
     elif d['type'] == 'delta':
         return DeltaGene(d['feature'], d['operator'], d['threshold'], d['lookback'])
@@ -412,67 +410,7 @@ class PersistenceGene:
     def __repr__(self):
         return f"({self.feature} {self.operator} {self.threshold:.2f}) FOR {self.window} BARS"
 
-class StaticGene:
-    """
-    Classic 'Magic Number' Gene.
-    Format: Feature <Operator> Threshold
-    Example: frac_diff_02 > 0.45
-    """
-    def __init__(self, feature: str, operator: str, threshold: float):
-        self.feature = feature
-        self.operator = operator
-        self.threshold = threshold
-        self.type = 'static'
 
-    def evaluate(self, context: dict, cache: dict = None) -> np.array:
-        # Cache Key
-        if cache is not None:
-            key = (self.type, self.feature, self.operator, self.threshold)
-            if key in cache: return cache[key]
-
-        # Context is a dict of numpy arrays
-        if self.feature not in context:
-            # Fallback for safety, though precalc should handle this
-            res = np.zeros(context.get('__len__', 0), dtype=bool)
-        else:
-            data = context[self.feature]
-            if self.operator == '>': res = data > self.threshold
-            elif self.operator == '<': res = data < self.threshold
-            else: res = np.zeros(len(data), dtype=bool)
-            
-        if cache is not None: cache[key] = res
-        return res
-
-    def mutate(self, features_pool):
-        # 1. Mutate Threshold
-        if random.random() < 0.5:
-            change = self.threshold * 0.1 * (1 if random.random() > 0.5 else -1)
-            # Handle near-zero thresholds
-            if abs(self.threshold) < 0.001: 
-                change = 0.001 * (1 if random.random() > 0.5 else -1)
-            self.threshold += change
-            
-        # 2. Mutate Operator
-        if random.random() < 0.2: 
-            self.operator = '>' if self.operator == '<' else '<'
-            
-        # 3. Mutate Feature
-        if random.random() < 0.1: 
-            self.feature = random.choice(features_pool)
-
-    def copy(self):
-        return StaticGene(self.feature, self.operator, self.threshold)
-
-    def to_dict(self):
-        return {
-            'type': self.type,
-            'feature': self.feature,
-            'operator': self.operator,
-            'threshold': self.threshold
-        }
-
-    def __repr__(self):
-        return f"{self.feature} {self.operator} {self.threshold:.10f}"
 
 class RelationalGene:
     """
