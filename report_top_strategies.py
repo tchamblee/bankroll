@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import config
 from collections import Counter
-from backtest_engine import BacktestEngine
+from backtest import BacktestEngine
 from genome import Strategy
 
 class MockEngine:

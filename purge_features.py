@@ -299,7 +299,22 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     return final_survivors, kill_list
 
 if __name__ == "__main__":
+    marker_path = os.path.join(config.DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
+    if os.path.exists(marker_path):
+        os.remove(marker_path)
+
+    # Check if all survivor lists already exist
+    all_exist = True
+    for h in config.PREDICTION_HORIZONS:
+        p = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{h}.json")
+        if not os.path.exists(p):
+            all_exist = False
+            break
     
+    if all_exist:
+        print(f"⏩ Survivor lists for all horizons ({config.PREDICTION_HORIZONS}) already exist. Skipping.")
+        exit(0)
+
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found. Run generate_features.py first.")
@@ -403,3 +418,8 @@ if __name__ == "__main__":
             
     else:
         print("\n✅ Clean Feature Set! No completely useless features found.")
+
+    # Signal completion
+    with open(marker_path, 'w') as f:
+        f.write("Updated")
+    print(f"✅ Purge Complete. Marker saved to {marker_path}")

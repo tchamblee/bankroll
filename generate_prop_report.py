@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import config
 from genome import Strategy
-from backtest_engine import BacktestEngine
+from backtest import BacktestEngine
 import glob
 
 def load_and_rank_strategies(horizon):

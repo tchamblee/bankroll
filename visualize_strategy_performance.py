@@ -7,7 +7,7 @@ import sys
 import re
 from feature_engine import FeatureEngine
 from genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
-from backtest_engine import BacktestEngine
+from backtest import BacktestEngine
 import config
 
 def parse_gene_string(gene_str):

@@ -4,6 +4,16 @@ import config
 from feature_engine import create_full_feature_engine
 
 def generate_feature_matrix():
+    out_path = config.DIRS['FEATURE_MATRIX']
+    if os.path.exists(out_path):
+        print(f"⏩ Feature Matrix already exists at {out_path}. Skipping generation.")
+        return
+
+    # Remove verified marker if it exists (force re-verification)
+    verified_marker = out_path + ".verified"
+    if os.path.exists(verified_marker):
+        os.remove(verified_marker)
+
     print("==============================================")
     print("🏭 GENERATING FULL FEATURE MATRIX")
     print("==============================================")

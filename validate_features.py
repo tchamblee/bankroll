@@ -71,7 +71,14 @@ def triple_barrier_labels(df, lookahead=120, tp_pct=0.015, sl_pct=0.005):
     return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
+    marker_path = os.path.join(config.DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
+    if not os.path.exists(marker_path):
+        print(f"⏩ No new feature purge detected (Marker missing). Skipping Validation.")
+        exit(0)
     
+    # Consume marker
+    os.remove(marker_path)
+
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found. Run generate_features.py first.")

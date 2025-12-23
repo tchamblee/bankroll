@@ -7,7 +7,7 @@ import sys
 import shutil
 import config
 from genome import Strategy
-from backtest_engine import BacktestEngine
+from backtest import BacktestEngine
 from trade_simulator import TradeSimulator
 
 def load_and_rank_strategies(horizon):

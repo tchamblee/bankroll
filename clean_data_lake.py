@@ -7,6 +7,14 @@ from joblib import Parallel, delayed
 
 def _process_ticker(ticker, raw_dir, clean_dir):
     try:
+        out_name = f"CLEAN_{ticker}.parquet"
+        out_path = os.path.join(clean_dir, out_name)
+        
+        # Skip if already exists
+        if os.path.exists(out_path):
+            print(f"  ⏭️ {ticker}: Cleaned data already exists. Skipping.")
+            return
+
         if ticker == 'EURUSD':
             pattern = os.path.join(raw_dir, f"RAW_TICKS_{ticker}*.parquet")
         else:
