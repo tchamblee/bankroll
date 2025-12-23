@@ -62,6 +62,11 @@ def add_event_decay_features(df, high_windows=[100, 200, 400], shock_windows=[10
         
         df[f'bars_since_high_{w}'] = decay
         
+        # Exponential Decay (Normalized [0, 1])
+        # Value = 1.0 immediately, ~0.006 after 'w' bars
+        df[f'decay_high_{w}'] = np.exp(-5.0 * decay / w)
+        df[f'decay_high_{w}'].fillna(0.0, inplace=True)
+        
     # 2. Bars Since Shock
     # "Shock" = |Return| > 3 * Sigma
     abs_ret = df['log_ret'].abs()
@@ -80,5 +85,9 @@ def add_event_decay_features(df, high_windows=[100, 200, 400], shock_windows=[10
         
         decay = _jit_bars_since_true(is_shock.values)
         df[f'bars_since_shock_{w}'] = decay
+        
+        # Exponential Decay
+        df[f'decay_shock_{w}'] = np.exp(-5.0 * decay / w)
+        df[f'decay_shock_{w}'].fillna(0.0, inplace=True)
 
     return df

@@ -219,136 +219,89 @@ class EvolutionaryAlphaFactory:
             print(f"  Gen completed in {time.time()-start_time:.2f}s")
 
         # 6. Final Selection
-        # print(f"\n--- 🛡️ FINAL SELECTION (TEST PHASE: All Generations) ---")
+        # print(f"\n--- 🛡️ FINAL SELECTION (VALIDATION PHASE) ---")
         unique_hof = []
         seen = set()
         
-        # Sort HOF by Robust Score (Validation) initially
+        # Sort HOF by Robust Score (Validation) - STRICTLY BLIND TO TEST SET
         for s, v in sorted(self.hall_of_fame, key=lambda x: x[1], reverse=True):
             s_str = str(s)
             if s_str not in seen:
                 unique_hof.append(s)
                 seen.add(s_str)
         
-        # print(f"Testing {len(unique_hof)} unique robust strategies collected across all generations...")
-
-        if unique_hof:
-            # 7. OOS Reporting (Test Phase) on EVERYTHING
+        # Select Top 100 Candidates based on VALIDATION ROBUSTNESS
+        top_candidates = unique_hof[:100]
+        
+        if top_candidates:
+            # 7. OOS Reporting (Test Phase) on SELECTED CANDIDATES ONLY
             # print("\n--- 🏆 APEX TRADERS (OOS PERFORMANCE REPORT) ---")
             
-            # --- PROFITABILITY CHECK: TRAINING SET ---
-            # Strategies must be profitable in the initial Training Set (0-60%)
-            # Use return_series=False to save memory
-            train_res = self.backtester.evaluate_population(unique_hof, set_type='train', return_series=False, prediction_mode=False, time_limit=horizon)
+            # Evaluate on Test Set (One-Shot)
+            test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon)
             
-            valid_train_indices = train_res[train_res['total_return'] > 0].index.tolist()
-            unique_hof = [unique_hof[i] for i in valid_train_indices]
+            output = []
             
-            if not unique_hof:
-                 print("🛑 All strategies failed the Training Profitability Check (Ret > 0).")
-            else:
-                # Evaluate entire history on Test Set
-                test_res = self.backtester.evaluate_population(unique_hof, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon)
+            # Collect results (Preserve Order of Robustness)
+            for i, s in enumerate(top_candidates):
+                strat_data = s.to_dict()
                 
-                # Filter for OOS Profitability
-                profitable_indices = test_res[test_res['sortino'] > 0.0].index.tolist()
+                # Test Metrics (For Reporting Only)
+                t_sortino = float(test_res.iloc[i]['sortino'])
+                t_ret = float(test_res.iloc[i]['total_return'])
+                t_trades = int(test_res.iloc[i]['trades'])
                 
-                output = []
+                # Add Metadata
+                strat_data['generation'] = getattr(s, 'generation_found', -1)
+                strat_data['test_sortino'] = t_sortino
+                strat_data['test_return'] = t_ret
+                strat_data['test_trades'] = t_trades
+                strat_data['robust_score'] = float(s.fitness) # Validation Score
+                strat_data['training_id'] = self.training_id
                 
-                # If no profitable strategies, save top 5 by Sortino anyway for debugging
-                if not profitable_indices:
-                    print("No profitable OOS strategies found. Saving top 10 losers for analysis.")
-                    profitable_indices = test_res.sort_values('sortino', ascending=False).head(10).index.tolist()
-                
-                # Collect results
-                for i in profitable_indices:
-                    s = unique_hof[i]
-                    strat_data = s.to_dict()
-                    
-                    # Add Metadata
-                    strat_data['generation'] = getattr(s, 'generation_found', -1)
-                    strat_data['test_sortino'] = float(test_res.iloc[i]['sortino'])
-                    strat_data['test_return'] = float(test_res.iloc[i]['total_return'])
-                    strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
-                    strat_data['robust_score'] = float(s.fitness)
-                    strat_data['training_id'] = self.training_id # Attach Run ID
-                    
-                    output.append(strat_data)
-                
-                # Sort by TEST Sortino (Real Performance)
-                output.sort(key=lambda x: x['test_sortino'], reverse=True)
-                
-                # Save a reference to current run's best for display
-                current_run_strategies = output[:]
-                
-                os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
-                out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+                output.append(strat_data)
+            
+            # Save to Disk (Sorted by Robustness)
+            os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
+            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
 
-                # --- PERSISTENCE: MERGE WITH EXISTING CHAMPIONS ---
-                new_champion_found = False
-                prev_best_score = -999.0
-                current_champion = None
+            # --- PERSISTENCE: APPEND ONLY ---
+            # We append new robust strategies. We do not re-rank by Test Score globally.
+            existing_data = []
+            if os.path.exists(out_path):
+                try:
+                    with open(out_path, "r") as f:
+                        existing_data = json.load(f)
+                except Exception as e:
+                    print(f"⚠️ Failed to load existing strategies: {e}")
 
-                if os.path.exists(out_path):
-                    try:
-                        with open(out_path, "r") as f:
-                            existing_data = json.load(f)
-                        
-                        if existing_data:
-                            current_champion = existing_data[0]
-                            prev_best_score = current_champion.get('test_sortino', -999.0)
-
-                        # Merge lists
-                        combined = existing_data + output
-                        
-                        # Sort Descending by Sortino
-                        combined.sort(key=lambda x: x.get('test_sortino', -999), reverse=True)
-                        
-                        # Deduplicate by Name
-                        seen_names = set()
-                        unique_combined = []
-                        for s in combined:
-                            if s['name'] not in seen_names:
-                                unique_combined.append(s)
-                                seen_names.add(s['name'])
-                        
-                        output = unique_combined
-                        
-                        # Check for New Grand Champion
-                        if output and output[0].get('training_id') == self.training_id:
-                            if output[0].get('test_sortino') > prev_best_score:
-                                 new_champion_found = True
-                                 
-                        print(f"\n🔄 Merged with {len(existing_data)} existing champions. New Total: {len(output)}")
-                        
-                    except Exception as e:
-                        print(f"⚠️ Failed to merge with existing strategies: {e}")
-                else:
-                     # First run ever is automatically a champion
-                     if output: new_champion_found = True
-
-                # Limit to Top 100 as requested
-                output = output[:100]
-                
-                if current_champion:
-                    print("\n🏆 Current All-Time Champion (Before Merge):")
-                    print(f"  ID: {current_champion.get('training_id','legacy')} | Sortino: {current_champion.get('test_sortino',0):.2f} | Ret: {current_champion.get('test_return',0)*100:.2f}% | Name: {current_champion['name']}")
-
-                if new_champion_found:
-                     champ = output[0]
-                     print(f"\n" + "="*80)
-                     print(f"🚨 NEW GRAND CHAMPION DISCOVERED (H{horizon})! 🚨")
-                     print(f"   Training ID: {champ.get('training_id')} | Sortino: {champ.get('test_sortino'):.2f}")
-                     print(f"   Name: {champ.get('name')}")
-                     print("="*80 + "\n")
-                
-                # Print Top 5 (Current Run Only)
-                print("\nTop 5 OOS Performers (Current Run):")
-                for s in current_run_strategies[:5]:
-                    print(f"  Gen {s.get('generation','?'):<2} | Sortino: {s.get('test_sortino',0):.2f} | Ret: {s.get('test_return',0)*100:.2f}% | ID: {s['name']}")
-                
-                with open(out_path, "w") as f: json.dump(output, f, indent=4)
-                print(f"\n💾 Saved Top {len(output)} Profitable Strategies from All Generations to {out_path}")
+            # Merge
+            combined = existing_data + output
+            
+            # Deduplicate by Name (Strategy Structure)
+            seen_names = set()
+            unique_combined = []
+            # Prefer newer runs if duplicate? No, prefer higher robustness.
+            # Sort combined by Robust Score
+            combined.sort(key=lambda x: x.get('robust_score', -999), reverse=True)
+            
+            for s in combined:
+                if s['name'] not in seen_names:
+                    unique_combined.append(s)
+                    seen_names.add(s['name'])
+            
+            # Limit global file to top 1000 Robust Strategies
+            final_output = unique_combined[:1000]
+            
+            # Print Top 5 (Current Run)
+            print("\nTop 5 Robust Strategies (Current Run) & Their OOS Results:")
+            print(f"{'Rank':<4} | {'Robust (Val)':<12} | {'Sortino (Test)':<14} | {'Ret (Test)':<10} | {'Trades':<6} | {'ID'}")
+            print("-" * 80)
+            for i, s in enumerate(output[:5]):
+                print(f"{i+1:<4} | {s['robust_score']:<12.4f} | {s['test_sortino']:<14.4f} | {s['test_return']*100:<9.2f}% | {s['test_trades']:<6} | {s['name']}")
+            
+            with open(out_path, "w") as f: json.dump(final_output, f, indent=4)
+            print(f"\n💾 Saved {len(output)} Candidates to {out_path} (Merged Total: {len(final_output)})")
         else:
             print("No strategies survived robustness filter.")
 

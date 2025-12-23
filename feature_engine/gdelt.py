@@ -49,15 +49,19 @@ def add_gdelt_features(df, gdelt_df):
     # Derived Physics Features
     # 1. Attention Divergence (Mass Differential)
     merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
+    merged['news_vol_ratio'] = merged['news_vol_eur'] / (merged['news_vol_usd'] + 1.0)
+
+    # 2. Sentiment Divergence
+    merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
     
     # 4. Regime/Panic Features
     # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
     
     # Drop temp date column and Redundant Features
-    # REMOVED WEAK SIGNALS: central_bank_tone, news_tone_*, news_velocity_*, energy_crisis_eur
+    # REMOVED WEAK SIGNALS: central_bank_tone, news_velocity_*, energy_crisis_eur
+    # KEPT: news_tone_*, news_vol_* for derived feature calculation downstream if needed
     drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 
-                 'news_vol_usd', 'epu_usd', 'news_vol_eur', 'global_polarity', 
-                 'panic_score', 'central_bank_tone', 'news_tone_eur', 'news_tone_usd', 
+                 'global_polarity', 'panic_score', 'central_bank_tone', 
                  'energy_crisis_eur', 'news_vol_zscore']
     merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     
