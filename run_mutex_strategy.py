@@ -14,7 +14,7 @@ def load_all_candidates():
     print(f"Loading candidates from all horizons...")
     
     for h in config.PREDICTION_HORIZONS:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_portfolio_{h}.json")
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
         if not os.path.exists(file_path):
             continue
             
@@ -141,8 +141,49 @@ def run_mutex_backtest():
     
     # 2. Selection
     candidates = load_all_candidates()
-    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.5)
     
+    # --- RE-VALIDATION STEP ---
+    print(f"\nRe-Validating {len(candidates)} candidates under strict Safe Entry rules...")
+    if not candidates:
+        print("❌ No candidates to validate.")
+        return
+
+    # Generate signals for all (with new Safe Entry logic)
+    val_sig_matrix = backtester.generate_signal_matrix(candidates)
+    
+    # Shift for Next-Open Execution
+    val_sig_matrix = np.vstack([np.zeros((1, val_sig_matrix.shape[1]), dtype=val_sig_matrix.dtype), val_sig_matrix[:-1]])
+    
+    # Batch Simulate
+    val_rets, val_trades = backtester.run_simulation_batch(
+        val_sig_matrix, 
+        candidates, 
+        backtester.open_vec, 
+        backtester.times_vec,
+        highs=backtester.high_vec,
+        lows=backtester.low_vec,
+        atr=backtester.atr_vec
+    )
+    
+    valid_candidates = []
+    total_dropped = 0
+    
+    for i, strat in enumerate(candidates):
+        total_pnl = np.sum(val_rets[:, i])
+        if total_pnl > 0:
+            # Update internal metrics to reflect REALITY
+            strat.sortino = 1.0 # Placeholder, just needs to be positive to pass sort
+            valid_candidates.append(strat)
+        else:
+            total_dropped += 1
+            
+    print(f"  Dropped {total_dropped} strategies failing new safety rules.")
+    print(f"  Retained {len(valid_candidates)} profitable strategies.")
+    
+    candidates = valid_candidates
+    
+    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.5)
+
     if not unique_strats:
         print("❌ No unique strategies found.")
         return
@@ -150,23 +191,6 @@ def run_mutex_backtest():
     print("\nSelected Portfolio (Ranked Priority):")
     for i, s in enumerate(unique_strats):
         print(f"  {i+1}. {s.name} (H{s.horizon}) | ID: {getattr(s, 'training_id', 'legacy')} | Sortino: {s.sortino:.2f}")
-
-    # --- PRE-FILTER MUTEX INPUTS (Safe Entry) ---
-    print("  Applying Safe Entry Filters to Mutex Inputs...")
-    times = backtester.times_vec
-    if hasattr(times, 'dt'):
-        hours = times.dt.hour.values
-        weekdays = times.dt.dayofweek.values
-    else:
-        dt_idx = pd.to_datetime(times)
-        hours = dt_idx.hour.values
-        weekdays = dt_idx.dayofweek.values
-        
-    for i, strat in enumerate(unique_strats):
-        est_duration_hours = (strat.horizon * 2.0) / 60.0
-        cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
-        safe_mask = (hours < cutoff_hour) & (weekdays < 5)
-        sig_matrix[:, i] = sig_matrix[:, i] * safe_mask
 
     # 3. Execution (Raw Composite Signal)
     # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
@@ -178,7 +202,14 @@ def run_mutex_backtest():
 
     # Fast Simulation
     # TODO: Add Stop Loss from gene if supported?
-    net_rets, trades_count = simulator.simulate_fast(final_pos.reshape(-1, 1), take_profit_pct=config.DEFAULT_TAKE_PROFIT, time_limit_bars=config.DEFAULT_TIME_LIMIT)
+    net_rets, trades_count = simulator.simulate_fast(
+        final_pos, 
+        take_profit_pct=config.DEFAULT_TAKE_PROFIT, 
+        time_limit_bars=config.DEFAULT_TIME_LIMIT,
+        highs=backtester.high_vec,
+        lows=backtester.low_vec,
+        atr=backtester.atr_vec
+    )
     
     # Performance Metrics
     results = []
@@ -211,7 +242,7 @@ def run_mutex_backtest():
         'MaxDD%': max_dd * 100,
         'Sortino': sortino,
         'Sharpe': sharpe,
-        'Trades': int(trades_count) # Might be off due to warmup, but close enough
+        'Trades': int(trades_count) 
     })
     
     # 2. Individual Strategy Metrics
@@ -225,7 +256,10 @@ def run_mutex_backtest():
             [strat], 
             backtester.open_vec, 
             backtester.times_vec, 
-            time_limit=strat.horizon
+            time_limit=strat.horizon,
+            highs=backtester.high_vec,
+            lows=backtester.low_vec,
+            atr=backtester.atr_vec
         )
         
         s_net_rets = s_net_rets_batch[:, 0]
@@ -269,20 +303,13 @@ def run_mutex_backtest():
     for r in results:
         print(f"{r['Name']:<30} | {r['TrainID']:<8} | {r['Profit']:>12,.2f} | {r['Return%']:>8.2f} | {r['MaxDD%']:>8.2f} | {r['Sortino']:>8.2f} | {r['Sharpe']:>8.2f} | {r['Trades']:>6}")
     print("-" * 110)    
-    # 5. Visualize
-    # Need cumulative PnL series for plot
-    # Re-simulating Mutex is cheap, but we have metrics. 
-    # Just reconstructcumsum.
     
     # Mutex Curve
-    # We computed valid_cum_ret (percentage). 
-    # Profit Curve = valid_cum_ret * account_size.
-    # Start at 0.
     mutex_curve = valid_cum_ret * backtester.account_size
     
     plt.figure(figsize=(15, 8))
     plt.plot(range(len(mutex_curve)), mutex_curve, label='Mutex Portfolio', color='purple', linewidth=2)
-    plt.title(f"Mutex Portfolio Performance\nReturn: {results[0]['Return%']:.2f}% | Sortino: {results[0]['Sortino']:.2f} | Trades: {results[0]['Trades']}")
+    plt.title(f"Mutex Portfolio Performance\nReturn: {total_ret_pct*100:.2f}% | Sortino: {sortino:.2f} | Trades: {int(trades_count)}")
     plt.ylabel("Cumulative Profit ($)")
     plt.xlabel("Bars")
     plt.grid(True, alpha=0.3)

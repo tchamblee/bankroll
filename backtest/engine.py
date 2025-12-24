@@ -97,7 +97,7 @@ class BacktestEngine:
     def ensure_context(self, population: list[Strategy]):
         ensure_feature_context(population, self.temp_dir, self.existing_keys)
 
-    def generate_signal_matrix(self, population: list[Strategy]) -> np.array:
+    def generate_signal_matrix(self, population: list[Strategy], horizon=None) -> np.array:
         self.ensure_context(population)
         num_strats = len(population)
         if num_strats == 0:
@@ -117,22 +117,44 @@ class BacktestEngine:
         
         signal_matrix = np.hstack(results)
         
-        # --- TIME FILTER ---
-        # Need to load these from disk for mask
+        # --- TIME FILTER & SAFE ENTRY ---
         def load_vec(name):
              path = os.path.join(self.temp_dir, f"{name}.npy")
              if os.path.exists(path): return np.load(path)
              return None
 
         time_hour = load_vec('time_hour')
+        time_weekday = load_vec('time_weekday')
+        
         if time_hour is not None:
+            # 1. Basic Market Hours
             market_open = (time_hour >= config.TRADING_START_HOUR) & (time_hour < config.TRADING_END_HOUR)
-            time_weekday = load_vec('time_weekday')
             if time_weekday is not None:
-                is_weekday = time_weekday < 5
-                market_open = market_open & is_weekday
-                
-            signal_matrix = signal_matrix * market_open[:, np.newaxis]
+                market_open = market_open & (time_weekday < 5)
+            
+            # 2. Safe Entry Logic (Don't enter if we can't finish before close)
+            # Assumption: 2 minutes per bar for duration estimation
+            
+            if horizon is not None:
+                # Homogenous Batch (Training)
+                est_duration_hours = (horizon * 3.2) / 60.0
+                cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
+                safe_mask = (time_hour < cutoff_hour) & market_open
+                signal_matrix = signal_matrix * safe_mask[:, np.newaxis]
+            
+            else:
+                # Heterogenous Batch (Mutex / Portfolio)
+                # Apply per-strategy mask
+                for i, strat in enumerate(population):
+                    h = getattr(strat, 'horizon', 0)
+                    if h > 0:
+                        est_duration = (h * 3.2) / 60.0
+                        cutoff = config.TRADING_END_HOUR - est_duration
+                        strat_mask = (time_hour < cutoff) & market_open
+                        signal_matrix[:, i] *= strat_mask
+                    else:
+                        # Default to just market hours if horizon unknown
+                        signal_matrix[:, i] *= market_open
         
         return signal_matrix
 
@@ -158,7 +180,10 @@ class BacktestEngine:
 
         # ATR Fallback
         if atr is None:
-            atr = np.zeros_like(prices) # Should not happen if called correctly
+            if highs is not None and lows is not None:
+                atr = np.maximum(highs - lows, prices * 0.0005) # Min 5 bps
+            else:
+                atr = prices * 0.001 # 10 bps fallback
 
         # Parallelize Simulation
         import multiprocessing
@@ -232,7 +257,7 @@ class BacktestEngine:
             chunk_pop = population[i:i + BATCH_SIZE]
             
             # 1. Generate Signals for Chunk
-            full_signal_matrix = self.generate_signal_matrix(chunk_pop)
+            full_signal_matrix = self.generate_signal_matrix(chunk_pop, horizon=time_limit)
             signals = full_signal_matrix[start:end]
             
             # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
@@ -320,7 +345,7 @@ class BacktestEngine:
         
         target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
 
-        full_signal_matrix = self.generate_signal_matrix(population)
+        full_signal_matrix = self.generate_signal_matrix(population, horizon=time_limit)
         n_bars = len(self.raw_data)
         dev_end_idx = int(n_bars * config.VAL_SPLIT_RATIO)
         

@@ -105,6 +105,9 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             entry_atr = atr_vec[i] # Capture Volatility at Entry
             entry_idx = i
             
+        # Update realized signal to reflect held position
+        realized_signals[i] = position
+        
         # Update loop state...
         
     # --- COST & PNL CALCULATION ---
