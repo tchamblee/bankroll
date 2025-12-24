@@ -4,10 +4,17 @@ import matplotlib.pyplot as plt
 import json
 import os
 import sys
+import itertools
+import time
+from numba import jit
 import config
 from genome import Strategy
 from backtest import BacktestEngine
 from trade_simulator import TradeSimulator
+
+# ==============================================================================
+#  HELPER FUNCTIONS
+# ==============================================================================
 
 def load_all_candidates():
     candidates = []
@@ -22,73 +29,30 @@ def load_all_candidates():
             data = json.load(f)
             
         if data:
-            # LOAD ALL CLUSTER CHAMPIONS (Not just the top 1)
             for d in data:
                 try:
                     s = Strategy.from_dict(d)
                     s.horizon = h
-                    s.training_id = d.get('training_id', 'legacy') # Capture ID
-                    
-                    # Load metrics for ranking
-                    # 'test_sortino' might be missing in portfolio files, use 'fitness' (Validation Score)
-                    s.sortino = d.get('test_sortino', d.get('fitness', 0))
-                    s.robust = d.get('robust_score', 0)
-                    
-                    # Add to candidates (Trusting upstream selection, will Re-Validate later)
+                    s.training_id = d.get('training_id', 'legacy')
+                    # Use 'sortino_oos' if available, else fallback
+                    s.sortino = d.get('metrics', {}).get('sortino_oos', d.get('test_sortino', 0))
                     candidates.append(s)
-
                 except Exception as e:
-                    # print(f"Error loading {h}: {e}")
                     pass
             
-    # Sort candidates globally by Sortino (Priority)
+    # Initial Sort by Sortino (Best First)
     candidates.sort(key=lambda x: x.sortino, reverse=True)
     
-    # Print candidates per horizon
-    from collections import Counter
-    counts = Counter([c.horizon for c in candidates])
-    print(f"  Loaded {len(candidates)} total candidates. Counts per Horizon: {dict(counts)}")
+    print(f"  Loaded {len(candidates)} total candidates.")
     return candidates
-
-def filter_global_correlation(candidates, backtester, threshold=0.7):
-    print(f"\nRunning Global Correlation Filter (Threshold: {threshold})...")
-    
-    print("  Generating signal matrix...")
-    backtester.ensure_context(candidates)
-    sig_matrix = backtester.generate_signal_matrix(candidates)
-    
-    selected = []
-    selected_indices = []
-    
-    for i, candidate in enumerate(candidates):
-        is_unique = True
-        current_sig = sig_matrix[:, i]
-        
-        # Check against already selected
-        for existing_idx in selected_indices:
-            existing_sig = sig_matrix[:, existing_idx]
-            
-            # Fast correlation
-            if np.std(current_sig) == 0 or np.std(existing_sig) == 0:
-                corr = 0
-            else:
-                corr = np.corrcoef(current_sig, existing_sig)[0, 1]
-                
-            if abs(corr) > threshold:
-                is_unique = False
-                break
-        
-        if is_unique:
-            selected.append(candidate)
-            selected_indices.append(i)
-            
-    print(f"  Selected {len(selected)} globally unique strategies.")
-    return selected, sig_matrix[:, selected_indices]
-
-from numba import jit
 
 @jit(nopython=True)
 def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, weekdays, horizons, sl_mults, tp_mults, lot_size, spread_pct, comm_pct, account_size, end_hour):
+    """
+    JIT-compiled simulator for a Mutex Portfolio.
+    Priority Logic: The first strategy (column 0) has highest priority. 
+    If it signals, we take it. If not, check col 1, etc.
+    """
     n_bars, n_strats = sig_matrix.shape
     net_returns = np.zeros(n_bars, dtype=np.float64)
     trades_count = 0
@@ -152,7 +116,7 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
                     entry_price = prices[i]
                     entry_idx = i
                     entry_atr = atr[i]
-                    # Params remain same (same strategy)
+                    # Params remain same since it's the same strategy
                         
         if exit_trade:
             position = 0.0
@@ -204,13 +168,52 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
         
     return net_returns, trades_count
 
-def simulate_mutex_portfolio(backtester, unique_strats, sig_matrix, prices, highs, lows, atr, times):
-    # Extract Params
-    horizons = np.array([s.horizon for s in unique_strats], dtype=np.int64)
-    sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in unique_strats], dtype=np.float64)
-    tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in unique_strats], dtype=np.float64)
+def simulate_mutex_portfolio(subset_indices, sig_matrix, horizons, sl_mults, tp_mults, prices, highs, lows, atr, hours, weekdays, account_size):
+    """
+    Wrapper for JIT simulator. 
+    subset_indices: List of column indices in sig_matrix to use for this portfolio.
+    """
+    # Slice parameters
+    sub_sig = sig_matrix[:, subset_indices].astype(np.float64)
+    sub_horizons = horizons[subset_indices]
+    sub_sl = sl_mults[subset_indices]
+    sub_tp = tp_mults[subset_indices]
     
-    # Time Features
+    return _jit_simulate_mutex_custom(
+        sub_sig,
+        prices, highs, lows, atr, hours, weekdays,
+        sub_horizons, sub_sl, sub_tp,
+        config.STANDARD_LOT_SIZE,
+        config.SPREAD_BPS / 10000.0,
+        config.COST_BPS / 10000.0,
+        account_size,
+        config.TRADING_END_HOUR
+    )
+
+# ==============================================================================
+#  OPTIMIZATION LOGIC
+# ==============================================================================
+
+def optimize_mutex_portfolio(candidates, backtester):
+    print("\n" + "="*80)
+    print("🧠 MUTEX PORTFOLIO COMBINATORIAL OPTIMIZATION")
+    print("="*80)
+    
+    # 1. Prepare Data (OOS Slice)
+    oos_start = backtester.val_idx
+    print(f"Optimization Range: OOS Index {oos_start} to {len(backtester.open_vec)} ({len(backtester.open_vec) - oos_start} bars)")
+    
+    prices = backtester.open_vec[oos_start:].astype(np.float64)
+    highs = backtester.high_vec[oos_start:].astype(np.float64)
+    lows = backtester.low_vec[oos_start:].astype(np.float64)
+    atr = backtester.atr_vec[oos_start:].astype(np.float64)
+    
+    # Time
+    if hasattr(backtester.times_vec, 'iloc'):
+        times = backtester.times_vec.iloc[oos_start:]
+    else:
+        times = backtester.times_vec[oos_start:]
+        
     if hasattr(times, 'dt'):
         hours = times.dt.hour.values.astype(np.int8)
         weekdays = times.dt.dayofweek.values.astype(np.int8)
@@ -218,30 +221,103 @@ def simulate_mutex_portfolio(backtester, unique_strats, sig_matrix, prices, high
         dt_idx = pd.to_datetime(times)
         hours = dt_idx.hour.values.astype(np.int8)
         weekdays = dt_idx.dayofweek.values.astype(np.int8)
+
+    # 2. Limit Candidates
+    MAX_CANDIDATES = 14 # 2^14 = 16,384 combinations (Fast)
+    if len(candidates) > MAX_CANDIDATES:
+        print(f"⚠️  Too many candidates ({len(candidates)}). Truncating to top {MAX_CANDIDATES} by standalone Sortino.")
+        candidates = candidates[:MAX_CANDIDATES]
+    
+    n_c = len(candidates)
+    print(f"Evaluating {2**n_c - 1} combinations for {n_c} candidates...")
+    
+    # 3. Generate Master Signal Matrix
+    # We must ensure Next-Open execution logic here
+    print("  Generating signal matrix...")
+    backtester.ensure_context(candidates)
+    raw_sig_matrix = backtester.generate_signal_matrix(candidates)
+    
+    # Shift for Next-Open: Signal at T affects Position at T+1
+    # We insert a row of zeros at the top and remove the last row
+    shifted_sig_matrix = np.vstack([np.zeros((1, n_c), dtype=raw_sig_matrix.dtype), raw_sig_matrix[:-1]])
+    
+    # Slice OOS
+    oos_sig_matrix = shifted_sig_matrix[oos_start:]
+    
+    # 4. Pre-extract Strategy Params (Arrays)
+    horizons = np.array([s.horizon for s in candidates], dtype=np.int64)
+    sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in candidates], dtype=np.float64)
+    tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in candidates], dtype=np.float64)
+    
+    # 5. Combinatorial Search
+    best_combo = None
+    best_sortino = -999.0
+    best_stats = {}
+    
+    start_time = time.time()
+    tested_count = 0
+    
+    # Iterate all subset sizes (from 1 to N)
+    for r in range(1, n_c + 1):
+        for combo_indices in itertools.combinations(range(n_c), r):
+            # Convert tuple to list for indexing
+            idx_list = list(combo_indices)
+            
+            # Run Simulation
+            rets, trades = simulate_mutex_portfolio(
+                idx_list, 
+                oos_sig_matrix, 
+                horizons, sl_mults, tp_mults, 
+                prices, highs, lows, atr, hours, weekdays, 
+                backtester.account_size
+            )
+            
+            # Metric: Sortino
+            avg_ret = np.mean(rets)
+            if avg_ret <= 0 or trades < 10:
+                score = -1.0
+            else:
+                downside = np.sqrt(np.mean(np.minimum(rets, 0)**2)) + 1e-9
+                score = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+            
+            tested_count += 1
+            
+            if score > best_sortino:
+                best_sortino = score
+                best_combo = [candidates[i] for i in idx_list]
+                
+                # Full Stats
+                total_ret = np.sum(rets)
+                profit = total_ret * backtester.account_size
+                max_dd = np.min(np.cumsum(rets) - np.maximum.accumulate(np.cumsum(rets))) if len(rets) > 0 else 0
+                
+                best_stats = {
+                    'Sortino': score,
+                    'Profit': profit,
+                    'Trades': trades,
+                    'MaxDD': max_dd
+                }
+                
+    elapsed = time.time() - start_time
+    print(f"  Optimization complete in {elapsed:.2f}s ({tested_count} combos).")
+    
+    if best_combo:
+        print(f"\n🏆 WINNING COMBINATION FOUND!")
+        print(f"  Strategies: {len(best_combo)}")
+        print(f"  Sortino:    {best_stats['Sortino']:.2f}")
+        print(f"  Profit:     ${best_stats['Profit']:,.2f}")
+        print(f"  Trades:     {int(best_stats['Trades'])}")
         
-    return _jit_simulate_mutex_custom(
-        sig_matrix.astype(np.float64),
-        prices.astype(np.float64),
-        highs.astype(np.float64),
-        lows.astype(np.float64),
-        atr.astype(np.float64),
-        hours,
-        weekdays,
-        horizons,
-        sl_mults,
-        tp_mults,
-        config.STANDARD_LOT_SIZE,
-        config.SPREAD_BPS / 10000.0,
-        config.COST_BPS / 10000.0,
-        config.ACCOUNT_SIZE,
-        config.TRADING_END_HOUR
-    )
+        print("\nComposition:")
+        for s in best_combo:
+            print(f"  - {s.name} (H{s.horizon})")
+            
+        return best_combo, best_stats
+    else:
+        print("❌ No profitable combination found.")
+        return [], {}
 
 def run_mutex_backtest():
-    print("\n" + "="*80)
-    print("🔒 MUTEX STRATEGY EXECUTION (Single Slot) 🔒")
-    print("="*80 + "\n")
-    
     # 1. Setup
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix missing.")
@@ -250,82 +326,21 @@ def run_mutex_backtest():
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     backtester = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
     
-    # Initialize Simulator (reusing backtester configs)
-    simulator = TradeSimulator(
-        prices=backtester.open_vec.flatten(),
-        times=backtester.times_vec,
-        spread_bps=backtester.spread_bps,
-        cost_bps=backtester.effective_cost_bps,
-        lot_size=backtester.standard_lot,
-        account_size=backtester.account_size
-    )
-    
-    # 2. Selection
+    # 2. Load Candidates
     candidates = load_all_candidates()
-    
-    # --- RE-VALIDATION STEP ---
-    print(f"\nRe-Validating {len(candidates)} candidates under strict Safe Entry rules...")
     if not candidates:
-        print("❌ No candidates to validate.")
+        print("❌ No candidates found.")
         return
 
-    # Generate signals for all (with new Safe Entry logic)
-    full_sig_matrix = backtester.generate_signal_matrix(candidates)
+    # 3. Optimize Portfolio
+    best_portfolio, stats = optimize_mutex_portfolio(candidates, backtester)
     
-    # Shift for Next-Open Execution
-    full_sig_matrix = np.vstack([np.zeros((1, full_sig_matrix.shape[1]), dtype=full_sig_matrix.dtype), full_sig_matrix[:-1]])
-    
-    # Slice for OOS (Test) Data ONLY
-    split_idx = backtester.val_idx
-    val_sig_matrix = full_sig_matrix[split_idx:]
-
-    print(f"  Validating on OOS data (Indices {split_idx} to {len(df)})...")
-    
-    # Batch Simulate
-    val_rets, val_trades = backtester.run_simulation_batch(
-        val_sig_matrix, 
-        candidates, 
-        backtester.open_vec[split_idx:], 
-        backtester.times_vec.iloc[split_idx:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[split_idx:],
-        highs=backtester.high_vec[split_idx:],
-        lows=backtester.low_vec[split_idx:],
-        atr=backtester.atr_vec[split_idx:]
-    )
-    
-    valid_candidates = []
-    total_dropped = 0
-    
-    for i, strat in enumerate(candidates):
-        total_pnl = np.sum(val_rets[:, i])
-        n_trades = val_trades[i]
-        expectancy = total_pnl / n_trades if n_trades > 0 else 0
-
-        if total_pnl > 0 and expectancy > 0.0005:
-            # Update internal metrics to reflect REALITY
-            avg_ret = np.mean(val_rets[:, i])
-            downside = np.sqrt(np.mean(np.minimum(val_rets[:, i], 0)**2)) + 1e-9
-            real_sortino = (avg_ret / downside) * np.sqrt(backtester.annualization_factor)
-            
-            strat.sortino = real_sortino
-            valid_candidates.append(strat)
-        else:
-            total_dropped += 1
-            
-    print(f"  Dropped {total_dropped} strategies failing new safety rules.")
-    print(f"  Retained {len(valid_candidates)} profitable strategies.")
-    
-    candidates = valid_candidates
-    
-    unique_strats, sig_matrix = filter_global_correlation(candidates, backtester, threshold=0.5)
-
-    if not unique_strats:
-        print("❌ No unique strategies found.")
+    if not best_portfolio:
         return
 
-    print("\nSelected Portfolio (Ranked Priority):")
+    # 4. Save Result
     mutex_data = []
-    for i, s in enumerate(unique_strats):
-        print(f"  {i+1}. {s.name} (H{s.horizon}) | ID: {getattr(s, 'training_id', 'legacy')} | Sortino: {s.sortino:.2f}")
+    for s in best_portfolio:
         s_dict = s.to_dict()
         s_dict['horizon'] = s.horizon
         s_dict['training_id'] = getattr(s, 'training_id', 'legacy')
@@ -334,145 +349,59 @@ def run_mutex_backtest():
     mutex_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
     with open(mutex_path, 'w') as f:
         json.dump(mutex_data, f, indent=4)
-    print(f"💾 Saved Mutex Portfolio to {mutex_path}")
-
-    # 3. Execution (Raw Composite Signal)
-    # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
-    # Shift signals forward by 1
-    sig_matrix = np.vstack([np.zeros((1, sig_matrix.shape[1]), dtype=sig_matrix.dtype), sig_matrix[:-1]])
+    print(f"\n💾 Saved Optimized Mutex Portfolio to {mutex_path}")
     
-    # --- STRICT OOS REPORTING ---
+    # 5. Visual Validation (Re-run best for plotting)
+    # We do this to get the equity curve vector
     oos_start = backtester.val_idx
-    print(f"\nCalculating Performance on OOS Data ONLY (Index {oos_start}+)...")
+    prices = backtester.open_vec[oos_start:].astype(np.float64)
+    highs = backtester.high_vec[oos_start:].astype(np.float64)
+    lows = backtester.low_vec[oos_start:].astype(np.float64)
+    atr = backtester.atr_vec[oos_start:].astype(np.float64)
+    times = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
     
-    # Prepare OOS Data Slices
-    sig_matrix_oos = sig_matrix[oos_start:]
-    open_oos = backtester.open_vec[oos_start:]
-    highs_oos = backtester.high_vec[oos_start:]
-    lows_oos = backtester.low_vec[oos_start:]
-    atr_oos = backtester.atr_vec[oos_start:]
-    times_oos = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
+    if hasattr(times, 'dt'):
+        hours = times.dt.hour.values.astype(np.int8)
+        weekdays = times.dt.dayofweek.values.astype(np.int8)
+    else:
+        dt_idx = pd.to_datetime(times)
+        hours = dt_idx.hour.values.astype(np.int8)
+        weekdays = dt_idx.dayofweek.values.astype(np.int8)
+        
+    backtester.ensure_context(best_portfolio)
+    raw_sig = backtester.generate_signal_matrix(best_portfolio)
+    shifted_sig = np.vstack([np.zeros((1, len(best_portfolio)), dtype=raw_sig.dtype), raw_sig[:-1]])
+    oos_sig = shifted_sig[oos_start:]
     
-    # Run Mutex Simulator on OOS Slice
-    net_rets, trades_count = simulate_mutex_portfolio(
-        backtester, 
-        unique_strats, 
-        sig_matrix_oos,
-        open_oos,
-        highs_oos,
-        lows_oos,
-        atr_oos,
-        times_oos
+    horizons = np.array([s.horizon for s in best_portfolio], dtype=np.int64)
+    sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
+    tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
+    
+    # Use internal jit func for simplicity
+    rets, _ = _jit_simulate_mutex_custom(
+        oos_sig.astype(np.float64), 
+        prices, highs, lows, atr, hours, weekdays, 
+        horizons, sl_mults, tp_mults, 
+        config.STANDARD_LOT_SIZE, 
+        config.SPREAD_BPS / 10000.0, 
+        config.COST_BPS / 10000.0, 
+        config.ACCOUNT_SIZE, 
+        config.TRADING_END_HOUR
     )
     
-    # Performance Metrics
-    results = []
-    
-    # 1. Mutex Portfolio Metrics
-    valid_ret = net_rets
-    valid_cum_ret = np.cumsum(valid_ret)
-    
-    # Max Drawdown Calculation
-    running_max = np.maximum.accumulate(valid_cum_ret)
-    running_max = np.maximum(0, running_max)
-    drawdown = valid_cum_ret - running_max
-    max_dd = np.min(drawdown)
-    
-    total_ret_pct = np.sum(valid_ret)
-    total_profit = total_ret_pct * backtester.account_size
-    
-    avg_ret = np.mean(valid_ret)
-    downside_sq = np.mean(np.minimum(valid_ret, 0)**2)
-    downside = np.sqrt(downside_sq) + 1e-9
-    
-    sortino = (avg_ret / downside) * np.sqrt(backtester.annualization_factor)
-    sharpe = (np.mean(valid_ret) / np.std(valid_ret)) * np.sqrt(backtester.annualization_factor)
-    
-    results.append({
-        'Name': 'MUTEX PORTFOLIO',
-        'TrainID': 'N/A',
-        'Profit': total_profit,
-        'Return%': total_ret_pct * 100,
-        'MaxDD%': max_dd * 100,
-        'Sortino': sortino,
-        'Sharpe': sharpe,
-        'Trades': int(trades_count) 
-    })
-    
-    # 2. Individual Strategy Metrics
-    print("\nBenchmarking Individual Strategies (OOS Only)...")
-    
-    for i, strat in enumerate(unique_strats):
-        # Slice OOS Signals
-        single_sig_matrix_oos = sig_matrix_oos[:, [i]]
-        
-        s_net_rets_batch, s_trades_batch = backtester.run_simulation_batch(
-            single_sig_matrix_oos, 
-            [strat], 
-            open_oos, 
-            times_oos, 
-            time_limit=strat.horizon,
-            highs=highs_oos,
-            lows=lows_oos,
-            atr=atr_oos
-        )
-        
-        s_net_rets = s_net_rets_batch[:, 0]
-        s_trades = s_trades_batch[0]
-        
-        # Metrics
-        s_valid_ret = s_net_rets
-        s_valid_cum_ret = np.cumsum(s_valid_ret)
-        
-        s_running_max = np.maximum(0, np.maximum.accumulate(s_valid_cum_ret))
-        s_drawdown = s_valid_cum_ret - s_running_max
-        s_max_dd = np.min(s_drawdown)
-        
-        s_profit = np.sum(s_valid_ret) * backtester.account_size
-        s_ret_pct = np.sum(s_valid_ret)
-        s_avg = np.mean(s_valid_ret)
-        s_downside = np.sqrt(np.mean(np.minimum(s_valid_ret, 0)**2)) + 1e-9
-        s_sortino = (s_avg / s_downside) * np.sqrt(backtester.annualization_factor)
-        s_sharpe = (np.mean(s_valid_ret) / np.std(s_valid_ret)) * np.sqrt(backtester.annualization_factor)
-        
-        results.append({
-            'Name': f"{strat.name} (H{strat.horizon})",
-            'TrainID': getattr(strat, 'training_id', 'legacy'),
-            'Profit': s_profit,
-            'Return%': s_ret_pct * 100,
-            'MaxDD%': s_max_dd * 100,
-            'Sortino': s_sortino,
-            'Sharpe': s_sharpe,
-            'Trades': int(s_trades)
-        })
-        
-    # Print Table
-    results.sort(key=lambda x: x['Sortino'], reverse=True)
-    
-    print("\n" + "="*110)
-    print("🏆 PERFORMANCE LEADERBOARD (Mutex vs. Components)")
-    print("="*110)
-    print(f"{ 'Name':<30} | {'TrainID':<8} | {'Profit ($)':<12} | {'Ret %':<8} | {'MaxDD %':<8} | {'Sortino':<8} | {'Sharpe':<8} | {'Trades':<6}")
-    print("-" * 110)
-    
-    for r in results:
-        print(f"{r['Name']:<30} | {r['TrainID']:<8} | {r['Profit']:>12,.2f} | {r['Return%']:>8.2f} | {r['MaxDD%']:>8.2f} | {r['Sortino']:>8.2f} | {r['Sharpe']:>8.2f} | {r['Trades']:>6}")
-    print("-" * 110)    
-    
-    # Mutex Curve
-    mutex_curve = valid_cum_ret * backtester.account_size
+    cum_profit = np.cumsum(rets) * config.ACCOUNT_SIZE
     
     plt.figure(figsize=(15, 8))
-    plt.plot(range(len(mutex_curve)), mutex_curve, label='Mutex Portfolio', color='purple', linewidth=2)
-    plt.title(f"Mutex Portfolio Performance\nReturn: {total_ret_pct*100:.2f}% | Sortino: {sortino:.2f} | Trades: {int(trades_count)}")
+    plt.plot(range(len(cum_profit)), cum_profit, label='Optimized Mutex', color='green', linewidth=2)
+    plt.title(f"Optimized Mutex Portfolio (OOS)\nSortino: {stats['Sortino']:.2f} | Profit: ${stats['Profit']:,.0f} | Trades: {stats['Trades']}")
     plt.ylabel("Cumulative Profit ($)")
-    plt.xlabel("Bars")
+    plt.xlabel("Bars (OOS)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     
-    out_path = os.path.join(config.DIRS['PLOTS_DIR'], "mutex_performance.png")
+    out_path = os.path.join(config.DIRS['PLOTS_DIR'], "mutex_optimized.png")
     plt.savefig(out_path)
-    print(f"\n📸 Saved Chart to {out_path}")
+    print(f"📸 Saved Performance Chart to {out_path}")
 
 if __name__ == "__main__":
     run_mutex_backtest()
