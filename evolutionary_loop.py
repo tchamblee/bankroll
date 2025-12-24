@@ -40,8 +40,51 @@ class EvolutionaryAlphaFactory:
         # This list ensures DIVERSITY. We do not allow correlated strategies (>0.7) to coexist here.
         self.hall_of_fame = [] 
 
-    def initialize_population(self):
-        self.population = [self.factory.create_strategy((2, 4)) for _ in range(self.pop_size)]
+    def seed_population(self, horizon):
+        """
+        Loads top strategies from previous runs to seed the initial population.
+        """
+        seed_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+        seeds = []
+        
+        if os.path.exists(seed_file):
+            try:
+                with open(seed_file, 'r') as f:
+                    data = json.load(f)
+                
+                # Sort by robust_score if available
+                # (Logic assumes dictionary has 'metrics' or 'robust_score' keys, or we sort by list order if sorted)
+                
+                # Take top 20% of pop_size or all available
+                n_seeds = int(self.pop_size * 0.20)
+                
+                print(f"  🌱 Seeding from {seed_file}...")
+                count = 0
+                for d in data:
+                    if count >= n_seeds: break
+                    try:
+                        s = Strategy.from_dict(d)
+                        # Reset fitness so they have to prove themselves again in this run
+                        s.fitness = 0.0 
+                        seeds.append(s)
+                        count += 1
+                    except: pass
+                    
+                print(f"  ✅ Injected {len(seeds)} Veteran Strategies.")
+            except Exception as e:
+                print(f"  ⚠️ Seeding Failed: {e}")
+                
+        return seeds
+
+    def initialize_population(self, horizon=None):
+        seeds = []
+        if horizon:
+            seeds = self.seed_population(horizon)
+            
+        n_random = self.pop_size - len(seeds)
+        random_pop = [self.factory.create_strategy((2, 4)) for _ in range(n_random)]
+        
+        self.population = seeds + random_pop
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
@@ -136,7 +179,7 @@ class EvolutionaryAlphaFactory:
         random.seed(42)
         np.random.seed(42)
         
-        self.initialize_population()
+        self.initialize_population(horizon=horizon)
         
         generations_without_improvement = 0
         global_best_fitness = -999.0
