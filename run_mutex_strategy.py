@@ -14,7 +14,7 @@ def load_all_candidates():
     print(f"Loading candidates from all horizons...")
     
     for h in config.PREDICTION_HORIZONS:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_portfolio_{h}.json")
         if not os.path.exists(file_path):
             continue
             
@@ -30,17 +30,12 @@ def load_all_candidates():
                     s.training_id = d.get('training_id', 'legacy') # Capture ID
                     
                     # Load metrics for ranking
-                    metrics = d.get('metrics', {})
-                    s.sortino = metrics.get('sortino_oos', 0)
-                    s.robust = metrics.get('robust_return', 0)
+                    # 'test_sortino' might be missing in portfolio files, use 'fitness' (Validation Score)
+                    s.sortino = d.get('test_sortino', d.get('fitness', 0))
+                    s.robust = d.get('robust_score', 0)
                     
-                    # Filter: Must be PROFITABLE on the FULL dataset
-                    # using robust_return as proxy since full_return is not explicitly calculated/saved in top strategies
-                    if s.sortino > 0.0: # Relaxed filter for portfolio constituents
-                        candidates.append(s)
-                    else:
-                        pass
-                        # print(f"  Skipping Unprofitable Strategy: {s.name} (H{h})")
+                    # Add to candidates (Trusting upstream selection, will Re-Validate later)
+                    candidates.append(s)
 
                 except Exception as e:
                     # print(f"Error loading {h}: {e}")
@@ -48,7 +43,11 @@ def load_all_candidates():
             
     # Sort candidates globally by Sortino (Priority)
     candidates.sort(key=lambda x: x.sortino, reverse=True)
-    print(f"  Loaded {len(candidates)} total candidates.")
+    
+    # Print candidates per horizon
+    from collections import Counter
+    counts = Counter([c.horizon for c in candidates])
+    print(f"  Loaded {len(candidates)} total candidates. Counts per Horizon: {dict(counts)}")
     return candidates
 
 def filter_global_correlation(candidates, backtester, threshold=0.7):

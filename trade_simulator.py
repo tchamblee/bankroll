@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Tuple
 from numba import jit
 import config
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True, cache=True)
 def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
                        highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,

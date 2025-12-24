@@ -253,7 +253,7 @@ def generate_report(horizon):
     
     # Annualization
     # Let's use the engine's factor for annualization scalar.
-    ann_factor = 181440 # From code memory
+    ann_factor = config.ANNUALIZATION_FACTOR
     
     avg_ret = np.mean(returns)
     std_ret = np.std(returns)

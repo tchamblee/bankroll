@@ -89,40 +89,46 @@ def plot_performance(engine, strategies):
     # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
     # Shift signals forward by 1
     full_signal_matrix = np.vstack([np.zeros((1, full_signal_matrix.shape[1]), dtype=full_signal_matrix.dtype), full_signal_matrix[:-1]])
-    # Use Open prices
-    prices = backtester.open_vec.flatten()
     
-    times = backtester.times_vec
+    # Slice for OOS (Test Set)
+    test_start = backtester.val_idx
+    
+    oos_signals = full_signal_matrix[test_start:]
+    oos_prices = backtester.open_vec.flatten()[test_start:]
+    oos_times = backtester.times_vec.iloc[test_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[test_start:]
+    oos_highs = backtester.high_vec[test_start:]
+    oos_lows = backtester.low_vec[test_start:]
+    oos_atr = backtester.atr_vec[test_start:]
     
     # 2. Run Simulation via BacktestEngine's wrapper (consistent logic)
-    print(f"Running Full Simulation for Plotting (SL={config.DEFAULT_STOP_LOSS*100}%, TimeLimit={config.DEFAULT_TIME_LIMIT})")
+    print(f"Running OOS Simulation for Plotting (Bars: {len(oos_prices)})")
     net_returns, trades_count = backtester.run_simulation_batch(
-        full_signal_matrix, 
+        oos_signals, 
         strategies,
-        prices, 
-        times, 
-        time_limit=config.DEFAULT_TIME_LIMIT
+        oos_prices, 
+        oos_times, 
+        time_limit=config.DEFAULT_TIME_LIMIT,
+        highs=oos_highs,
+        lows=oos_lows,
+        atr=oos_atr
     )
     
-    # 3. Compute Cumulative Equity Curve
+    # 3. Compute Cumulative Equity Curve (Starting from 0)
     cumulative = np.cumsum(net_returns, axis=0)
     
     # Plotting
     plt.figure(figsize=(15, 8))
     
-    print(f"\n{'Strategy':<30} | {'Sortino':<8} | {'Total Ret %':<12} | {'Trades':<8}")
+    print(f"\n{'Strategy':<30} | {'Sortino':<8} | {'OOS Ret %':<12} | {'Trades':<8}")
     print("-" * 75)
     
     for i, strat in enumerate(strategies):
         total_ret_pct = cumulative[-1, i]
         n_trades = trades_count[i]
         
-        # We need Sortino for table. Use evaluation on test set for accuracy.
-        # Can extract from returns vec manually to avoid re-running backtester
-        test_start = backtester.val_idx
-        test_rets = net_returns[test_start:, i]
-        avg = np.mean(test_rets)
-        downside = np.std(np.minimum(test_rets, 0)) + 1e-9
+        # Calculate Sortino for OOS
+        avg = np.mean(net_returns[:, i])
+        downside = np.std(np.minimum(net_returns[:, i], 0)) + 1e-9
         sortino = (avg / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
         
         print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
@@ -130,26 +136,22 @@ def plot_performance(engine, strategies):
         label = f"{strat.name} (Sortino: {sortino:.1f} | Ret: {total_ret_pct*100:.1f}% | Tr: {int(n_trades)})"
         plt.plot(cumulative[:, i], label=label)
         
-    # Plot Buy & Hold
-    returns_vec = backtester.returns_vec.flatten()
+    # Plot Buy & Hold (Benchmarks)
+    # Using log returns for benchmark on same slice
+    returns_vec = backtester.raw_data[backtester.target_col].values[test_start:]
     asset_cum = np.cumsum(returns_vec)
     plt.plot(asset_cum, label="Market Bench (Log Ret)", color='black', alpha=0.3, linestyle='--')
     
-    # Shade Regions
-    plt.axvspan(0, backtester.train_idx, color='green', alpha=0.05, label="Train")
-    plt.axvspan(backtester.train_idx, backtester.val_idx, color='yellow', alpha=0.05, label="Val")
-    plt.axvspan(backtester.val_idx, len(cumulative), color='red', alpha=0.05, label="Test (OOS)")
-    
-    plt.title(f"Apex Trading Performance: ${int(config.ACCOUNT_SIZE/1000)}k Account, {config.MIN_LOTS}-{config.MAX_LOTS} Lots (Tiered Position Sizing)", fontsize=16)
-    plt.ylabel("Cumulative Account Return (%)")
-    plt.xlabel("Bar Index")
+    plt.title(f"Apex Trading OOS Performance (Test Set Only)\n${int(config.ACCOUNT_SIZE/1000)}k Account, {config.MIN_LOTS}-{config.MAX_LOTS} Lots", fontsize=16)
+    plt.ylabel("Cumulative OOS Return (%)")
+    plt.xlabel("Bar Index (OOS Period)")
     plt.legend(loc='upper left', fontsize='small')
     plt.grid(True, alpha=0.3)
     
     os.makedirs(config.DIRS['PLOTS_DIR'], exist_ok=True)
-    output_path = os.path.join(config.DIRS['PLOTS_DIR'], "strategy_performance.png")
+    output_path = os.path.join(config.DIRS['PLOTS_DIR'], "strategy_performance_oos.png")
     plt.savefig(output_path)
-    print(f"📸 Saved Performance Chart to {output_path}")
+    print(f"📸 Saved OOS Performance Chart to {output_path}")
 
 class MockEngine:
     def __init__(self, df):

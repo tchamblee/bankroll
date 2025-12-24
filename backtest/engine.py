@@ -199,7 +199,7 @@ class BacktestEngine:
         
         # Run in parallel using threads for Numba JIT (which releases GIL)
         # max_nbytes=None prevents joblib from memmapping arguments to temp files (Leaking folders fix)
-        results = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+        results = Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(_worker_simulate)(
                 chunk_s,
                 chunk_p,
