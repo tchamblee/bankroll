@@ -148,20 +148,26 @@ def run_mutex_backtest():
         return
 
     # Generate signals for all (with new Safe Entry logic)
-    val_sig_matrix = backtester.generate_signal_matrix(candidates)
+    full_sig_matrix = backtester.generate_signal_matrix(candidates)
     
     # Shift for Next-Open Execution
-    val_sig_matrix = np.vstack([np.zeros((1, val_sig_matrix.shape[1]), dtype=val_sig_matrix.dtype), val_sig_matrix[:-1]])
+    full_sig_matrix = np.vstack([np.zeros((1, full_sig_matrix.shape[1]), dtype=full_sig_matrix.dtype), full_sig_matrix[:-1]])
+    
+    # Slice for OOS (Test) Data ONLY
+    split_idx = backtester.val_idx
+    val_sig_matrix = full_sig_matrix[split_idx:]
+
+    print(f"  Validating on OOS data (Indices {split_idx} to {len(df)})...")
     
     # Batch Simulate
     val_rets, val_trades = backtester.run_simulation_batch(
         val_sig_matrix, 
         candidates, 
-        backtester.open_vec, 
-        backtester.times_vec,
-        highs=backtester.high_vec,
-        lows=backtester.low_vec,
-        atr=backtester.atr_vec
+        backtester.open_vec[split_idx:], 
+        backtester.times_vec.iloc[split_idx:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[split_idx:],
+        highs=backtester.high_vec[split_idx:],
+        lows=backtester.low_vec[split_idx:],
+        atr=backtester.atr_vec[split_idx:]
     )
     
     valid_candidates = []
