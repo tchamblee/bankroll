@@ -63,7 +63,7 @@ class EvolutionaryAlphaFactory:
         
         return child
 
-    def update_hall_of_fame(self, candidates, gen):
+    def update_hall_of_fame(self, candidates, gen, horizon=None):
         """
         Intelligently updates the Hall of Fame with new candidates.
         Enforces diversity: A new candidate is only added if it is UNCORRELATED with existing HOF entries,
@@ -88,6 +88,7 @@ class EvolutionaryAlphaFactory:
             candidates, 
             self.backtester.open_vec[:limit_idx], 
             self.backtester.times_vec[:limit_idx],
+            time_limit=horizon,
             highs=self.backtester.high_vec[:limit_idx],
             lows=self.backtester.low_vec[:limit_idx],
             atr=self.backtester.atr_vec[:limit_idx]
@@ -100,15 +101,18 @@ class EvolutionaryAlphaFactory:
             total_ret = np.sum(rets_batch[:, i])
 
             # Adaptive Expectancy Filter (Ramp up requirements)
-            # Gen 0-4: 1 bps (Survival)
-            # Gen 5-9: 2 bps (Growth)
-            # Gen 10+: 5 bps (Maturity)
-            if gen < 5:
+            # Phase 1 (0-10%): Just positive (Survival)
+            # Phase 2 (10-30%): 1 bps (Growth)
+            # Phase 3 (30%+): 2 bps (Maturity)
+            phase_1 = max(1, int(self.generations * 0.10))
+            phase_2 = max(2, int(self.generations * 0.30))
+            
+            if gen < phase_1:
+                thresh = 0.0
+            elif gen < phase_2:
                 thresh = 0.0001
-            elif gen < 10:
-                thresh = 0.0002
             else:
-                thresh = 0.0005
+                thresh = 0.0002
 
             if n_trades > 0:
                 avg_ret = total_ret / n_trades
@@ -248,7 +252,7 @@ class EvolutionaryAlphaFactory:
             for s in top_50_strats:
                 if not hasattr(s, 'generation_found'): s.generation_found = gen
             
-            self.update_hall_of_fame(top_50_strats, gen)
+            self.update_hall_of_fame(top_50_strats, gen, horizon=horizon)
 
             # 5. Selection for Next Gen
             num_elite = int(self.pop_size * config.ELITE_PERCENTAGE)
@@ -355,7 +359,7 @@ class EvolutionaryAlphaFactory:
             portfolio_indices = []
             
             for item in scored_candidates:
-                if len(portfolio) >= 5: break
+                # if len(portfolio) >= 5: break # REMOVED LIMIT per user request
                 
                 strat = item['strat']
                 orig_idx = item['orig_idx']

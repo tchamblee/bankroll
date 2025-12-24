@@ -22,7 +22,7 @@ DIRS = {
 # Prediction Horizons (in bars)
 # Target: 1h, 2h, 3h (assuming ~2 min per 250-tick bar)
 # Added 120 (4h) and 240 (8h) for cost efficiency
-PREDICTION_HORIZONS = [60, 120, 240]
+PREDICTION_HORIZONS = [60, 90, 120, 180]
 
 IBKR_HOST = "172.18.32.1"
 IBKR_PORT = 4001
