@@ -228,7 +228,12 @@ class BacktestEngine:
         if not population: 
             return (pd.DataFrame(), np.array([])) if return_series else pd.DataFrame()
         
-        target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
+        # target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
+        if min_trades is not None:
+            target_min_trades = min_trades
+        else:
+            h_ref = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
+            target_min_trades = max(10, int(config.MIN_TRADES_COEFFICIENT / h_ref + 5))
         
         # --- CHUNKING TO PREVENT OOM ---
         BATCH_SIZE = config.EVO_BATCH_SIZE
@@ -307,10 +312,6 @@ class BacktestEngine:
                 # if avg_trade_ret < cost_threshold:
                 #      final_sortino -= 5.0
                 
-                # Volume Bonus
-                if trades_count[j] > target_min_trades:
-                    final_sortino *= np.log10(max(trades_count[j], 1))
-                
                 strat.fitness = final_sortino
                 chunk_results.append({
                     'id': strat.name,
@@ -343,7 +344,12 @@ class BacktestEngine:
     def evaluate_walk_forward(self, population: list[Strategy], folds=config.WFV_FOLDS, time_limit=None, min_trades=None):
         if not population: return []
         
-        target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
+        # target_min_trades = min_trades if min_trades is not None else config.MIN_TRADES_FOR_METRICS
+        if min_trades is not None:
+            target_min_trades = min_trades
+        else:
+            h_ref = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
+            target_min_trades = max(10, int(config.MIN_TRADES_COEFFICIENT / h_ref + 5))
 
         full_signal_matrix = self.generate_signal_matrix(population, horizon=time_limit)
         n_bars = len(self.raw_data)
@@ -405,11 +411,6 @@ class BacktestEngine:
             
             # low_profit_mask = avg_trade_ret < cost_threshold
             # sortino[low_profit_mask] -= 5.0
-            
-            # --- VOLUME BONUS ---
-            safe_trades = np.maximum(trades_count, 1)
-            volume_bonus = np.where(trades_count > config.VOLUME_BONUS_THRESHOLD, np.log10(safe_trades), 1.0)
-            sortino *= volume_bonus
             
             # --- OVERFITTING CAP ---
             # Removed: With accurate costs, high Sortino scores are likely legitimate or naturally limited.

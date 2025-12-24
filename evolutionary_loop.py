@@ -144,10 +144,13 @@ class EvolutionaryAlphaFactory:
         for gen in range(self.generations):
             start_time = time.time()
             
-            # Dynamic Trade Filter
-            current_min_trades = 3
-            if gen >= 5: current_min_trades = 6
-            if gen >= 15: current_min_trades = 10
+            # Dynamic Trade Filter (Horizon-Aware Scaling)
+            target_final = max(10, int(config.MIN_TRADES_COEFFICIENT / horizon + 5))
+            scaling_factor = target_final / 10.0
+            
+            current_min_trades = int(3 * scaling_factor)
+            if gen >= 5: current_min_trades = int(6 * scaling_factor)
+            if gen >= 15: current_min_trades = target_final
             
             # 1. Evaluate using Rolling Walk-Forward Validation
             wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon, min_trades=current_min_trades)
