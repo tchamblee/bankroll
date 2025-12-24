@@ -194,12 +194,17 @@ if __name__ == "__main__":
     
     import glob
     apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
+    portfolio_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_portfolio_*.json"))
+    
     all_strategies_data = []
-    for fpath in apex_files:
+    for fpath in apex_files + portfolio_files:
         try:
             with open(fpath, "r") as f:
                 data = json.load(f)
-                all_strategies_data.extend(data)
+                if isinstance(data, list):
+                    all_strategies_data.extend(data)
+                elif isinstance(data, dict):
+                    all_strategies_data.append(data)
         except Exception as e:
             print(f"Error loading {fpath}: {e}")
             

@@ -14,7 +14,7 @@ def load_all_candidates():
     print(f"Loading candidates from all horizons...")
     
     for h in config.PREDICTION_HORIZONS:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_portfolio_{h}.json")
         if not os.path.exists(file_path):
             continue
             
@@ -36,7 +36,7 @@ def load_all_candidates():
                     
                     # Filter: Must be PROFITABLE on the FULL dataset
                     # using robust_return as proxy since full_return is not explicitly calculated/saved in top strategies
-                    if s.sortino > 2.0 and s.robust > 0:
+                    if s.sortino > 0.0: # Relaxed filter for portfolio constituents
                         candidates.append(s)
                     else:
                         pass
@@ -176,12 +176,11 @@ def run_mutex_backtest():
     final_pos = simulate_mutex_portfolio(backtester, unique_strats, sig_matrix)
     warmup = 3200
 
-        
-        # Fast Simulation
-        # TODO: Add Stop Loss from gene if supported?
-        net_rets, trades_count = simulator.simulate_fast(final_pos, take_profit_pct=config.DEFAULT_TAKE_PROFIT, time_limit_bars=config.DEFAULT_TIME_LIMIT)
-        
-        # Performance Metrics
+    # Fast Simulation
+    # TODO: Add Stop Loss from gene if supported?
+    net_rets, trades_count = simulator.simulate_fast(final_pos.reshape(-1, 1), take_profit_pct=config.DEFAULT_TAKE_PROFIT, time_limit_bars=config.DEFAULT_TIME_LIMIT)
+    
+    # Performance Metrics
     results = []
     
     # 1. Mutex Portfolio Metrics
