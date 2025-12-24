@@ -14,7 +14,7 @@ def load_all_candidates():
     print(f"Loading candidates from all horizons...")
     
     for h in config.PREDICTION_HORIZONS:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_portfolio_{h}.json")
+        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
         if not os.path.exists(file_path):
             continue
             
@@ -169,7 +169,10 @@ def run_mutex_backtest():
     
     for i, strat in enumerate(candidates):
         total_pnl = np.sum(val_rets[:, i])
-        if total_pnl > 0:
+        n_trades = val_trades[i]
+        expectancy = total_pnl / n_trades if n_trades > 0 else 0
+
+        if total_pnl > 0 and expectancy > 0.0005:
             # Update internal metrics to reflect REALITY
             strat.sortino = 1.0 # Placeholder, just needs to be positive to pass sort
             valid_candidates.append(strat)

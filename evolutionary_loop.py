@@ -124,8 +124,30 @@ class EvolutionaryAlphaFactory:
         cand_signals_full = self.backtester.generate_signal_matrix(candidates)
         cand_signals = cand_signals_full[:limit_idx]
         
+        # Expectancy Filter (Churn Prevention)
+        rets_batch, trades_batch = self.backtester.run_simulation_batch(
+            cand_signals, 
+            candidates, 
+            self.backtester.open_vec[:limit_idx], 
+            self.backtester.times_vec[:limit_idx],
+            highs=self.backtester.high_vec[:limit_idx],
+            lows=self.backtester.low_vec[:limit_idx],
+            atr=self.backtester.atr_vec[:limit_idx]
+        )
+
         for i, cand in enumerate(candidates):
             if cand.fitness < 0.1: continue # Ignore junk
+            
+            # 5 bps Expectancy Filter
+            n_trades = trades_batch[i]
+            total_ret = np.sum(rets_batch[:, i])
+            
+            if n_trades > 0:
+                avg_ret = total_ret / n_trades
+                if avg_ret < 0.0005: # < 5 bps per trade
+                    continue
+            else:
+                continue # No trades = No alpha
             
             cand_sig = cand_signals[:, i]
             cand_fit = cand.fitness
@@ -343,6 +365,15 @@ class EvolutionaryAlphaFactory:
             for i, strat in enumerate(top_candidates):
                 if len(portfolio) >= 5: break
                 
+                # OOS Sanity Check: Must be profitable in Test
+                if i < len(test_res):
+                    t_ret = float(test_res.iloc[i]['total_return'])
+                    t_sortino = float(test_res.iloc[i]['sortino'])
+                    if t_ret <= 0 or t_sortino <= 0:
+                        continue
+                else:
+                    continue
+
                 if not portfolio:
                     portfolio.append(strat)
                     portfolio_indices.append(i)
