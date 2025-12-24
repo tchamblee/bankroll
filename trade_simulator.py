@@ -122,13 +122,13 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             price_change = current_price - prices[i-1]
             gross_pnl = prev_pos * lot_size * price_change
             pos_change = abs(curr_pos - prev_pos)
-            cost = pos_change * lot_size * current_price * (spread_pct + comm_pct)
+            cost = pos_change * lot_size * current_price * (0.5 * spread_pct + comm_pct)
             net_pnl = gross_pnl - cost
             net_returns[i] = net_pnl / account_size
             if pos_change > 0: trade_count += 1
         else:
             pos_change = abs(curr_pos - 0.0)
-            cost = pos_change * lot_size * prices[i] * (spread_pct + comm_pct)
+            cost = pos_change * lot_size * prices[i] * (0.5 * spread_pct + comm_pct)
             net_returns[i] = -cost / account_size
             if pos_change > 0: trade_count += 1
                 
@@ -247,7 +247,7 @@ class TradeSimulator:
             
             if target_pos != position:
                 change = target_pos - position
-                cost = abs(change) * self.lot_size * price * (self.spread_pct + self.comm_pct)
+                cost = abs(change) * self.lot_size * price * (0.5 * self.spread_pct + self.comm_pct)
                 step_pnl -= cost
                 
                 if position != 0:

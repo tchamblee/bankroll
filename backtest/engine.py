@@ -276,10 +276,11 @@ class BacktestEngine:
                     final_sortino *= 0.6
                 
                 # --- COST COVERAGE PENALTY ---
-                avg_trade_ret = total_ret[j] / (trades_count[j] + 1e-9)
-                cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
-                if avg_trade_ret < cost_threshold:
-                     final_sortino -= 5.0
+                # Removed: Accurate cost model naturally penalizes low-profit trades.
+                # avg_trade_ret = total_ret[j] / (trades_count[j] + 1e-9)
+                # cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
+                # if avg_trade_ret < cost_threshold:
+                #      final_sortino -= 5.0
                 
                 # Volume Bonus
                 if trades_count[j] > target_min_trades:
@@ -373,25 +374,25 @@ class BacktestEngine:
             sortino[unstable_mask] *= 0.6
             
             # --- COST COVERAGE PENALTY ---
-            avg_trade_ret = total_ret / (trades_count + 1e-9)
-            cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
+            # Removed: Accurate cost model naturally penalizes low-profit trades.
+            # avg_trade_ret = total_ret / (trades_count + 1e-9)
+            # cost_threshold = (self.effective_cost_bps / 10000.0) * 1.1
             
-            low_profit_mask = avg_trade_ret < cost_threshold
-            sortino[low_profit_mask] -= 5.0
+            # low_profit_mask = avg_trade_ret < cost_threshold
+            # sortino[low_profit_mask] -= 5.0
             
             # --- VOLUME BONUS ---
             safe_trades = np.maximum(trades_count, 1)
             volume_bonus = np.where(trades_count > config.VOLUME_BONUS_THRESHOLD, np.log10(safe_trades), 1.0)
             sortino *= volume_bonus
             
-            # --- OVERFITTING CAP ("Too Good To Be True") ---
-            # Strategies with Sortino > 20 are likely exploiting noise/bugs.
-            # "Retire" them from the pool.
-            overfit_mask = sortino > 20.0
-            sortino[overfit_mask] = -10.0
+            # --- OVERFITTING CAP ---
+            # Removed: With accurate costs, high Sortino scores are likely legitimate or naturally limited.
+            # overfit_mask = sortino > 20.0
+            # sortino[overfit_mask] = -10.0
             
-            # Cap Sortino to prevent infinite skew (e.g. 24.0 -> 10.0)
-            sortino = np.minimum(sortino, 15.0) # Reverted cap for bonus
+            # Cap Sortino to prevent infinite skew
+            # sortino = np.minimum(sortino, 15.0)
             
             fold_scores[:, f] = sortino
             

@@ -180,8 +180,8 @@ class EvolutionaryAlphaFactory:
                 for f in strat_features:
                     count = feature_counts.get(f, 0)
                     ratio = count / self.pop_size
-                    if ratio > 0.20:
-                         dom_penalty += (ratio - 0.20) * 20.0
+                    if ratio > config.DOMINANCE_PENALTY_THRESHOLD:
+                         dom_penalty += (ratio - config.DOMINANCE_PENALTY_THRESHOLD) * config.DOMINANCE_PENALTY_MULTIPLIER
                 
                 wfv_scores[i] -= (complexity_penalty + dom_penalty)
                 strat.fitness = wfv_scores[i]
