@@ -197,5 +197,176 @@ def main():
                 
         print(f"  ✅ Saved {min(len(valid_trades), plot_limit)} plots to {strat_dir}")
 
+    # ==========================================================================
+    #  MUTEX COMBINED ATLAS
+    # ==========================================================================
+    print("\n" + "="*60)
+    print("🧩 GENERATING COMBINED MUTEX PORTFOLIO ATLAS")
+    print("="*60)
+    
+    # 1. Generate Signal Matrix for all
+    print("  Generating Combined Signal Matrix...")
+    # Shift signals for Next-Open Execution logic, matching run_mutex_strategy behavior
+    raw_sig_matrix = backtester.generate_signal_matrix(strategies)
+    sig_matrix = np.vstack([np.zeros((1, len(strategies)), dtype=raw_sig_matrix.dtype), raw_sig_matrix[:-1]])
+    
+    # 2. Extract Params
+    horizons = [getattr(s, 'horizon', 120) for s in strategies]
+    sl_mults = [getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in strategies]
+    tp_mults = [getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in strategies]
+    
+    # 3. Simulate Mutex Execution
+    print("  Simulating Mutex Priority Logic...")
+    from trade_simulator import Trade
+    
+    prices = backtester.open_vec.flatten() # Executing at Open
+    highs = backtester.high_vec.flatten()
+    lows = backtester.low_vec.flatten()
+    atr = backtester.atr_vec.flatten()
+    
+    if hasattr(times, 'dt'):
+        hours = times.dt.hour.values
+        weekdays = times.dt.dayofweek.values
+    else:
+        dt = pd.to_datetime(times)
+        hours = dt.hour.values
+        weekdays = dt.dayofweek.values
+        
+    n_bars = len(prices)
+    n_strats = len(strategies)
+    
+    mutex_trades = []
+    
+    # State
+    position = 0.0
+    active_strat_idx = -1
+    entry_idx = 0
+    entry_price = 0.0
+    entry_atr = 0.0
+    
+    current_horizon = 0
+    current_sl_mult = 0.0
+    current_tp_mult = 0.0
+    
+    for i in range(n_bars):
+        # 1. Check Exits
+        exit_trade = False
+        exit_reason = ""
+        barrier_price = 0.0
+        
+        # Force Close
+        if hours[i] >= config.TRADING_END_HOUR or weekdays[i] >= 5:
+            if position != 0:
+                exit_trade = True
+                exit_reason = "EOD"
+                
+        elif position != 0:
+            # Time Limit
+            if (i - entry_idx) >= current_horizon:
+                exit_trade = True
+                exit_reason = "TIME"
+            
+            # SL/TP
+            if not exit_trade:
+                h_prev = highs[i-1] if i > 0 else prices[i]
+                l_prev = lows[i-1] if i > 0 else prices[i]
+                
+                sl_dist = entry_atr * current_sl_mult
+                tp_dist = entry_atr * current_tp_mult
+                
+                if position > 0:
+                    if current_sl_mult > 0 and l_prev <= (entry_price - sl_dist):
+                        exit_trade = True
+                        exit_reason = "SL"
+                        barrier_price = entry_price - sl_dist
+                    elif current_tp_mult > 0 and h_prev >= (entry_price + tp_dist):
+                        exit_trade = True
+                        exit_reason = "TP"
+                        barrier_price = entry_price + tp_dist
+                else:
+                    if current_sl_mult > 0 and h_prev >= (entry_price + sl_dist):
+                        exit_trade = True
+                        exit_reason = "SL"
+                        barrier_price = entry_price + sl_dist
+                    elif current_tp_mult > 0 and l_prev <= (entry_price - tp_dist):
+                        exit_trade = True
+                        exit_reason = "TP"
+                        barrier_price = entry_price - tp_dist
+
+            # Reversal
+            if not exit_trade and active_strat_idx >= 0:
+                sig = sig_matrix[i, active_strat_idx]
+                if sig != 0 and np.sign(sig) != np.sign(position):
+                    # Close current to flip
+                    # We treat flip as Exit -> New Entry
+                    # Close first
+                    exit_trade = True
+                    exit_reason = "FLIP"
+                    # Note: We will re-enter in the Entry block below in same step if needed, 
+                    # but simplest is to close now and let next bar pick up or handle flip logic.
+                    # Actually, standard logic is atomic flip. 
+                    # For Atlas, let's just close.
+                    
+        if exit_trade:
+            # Record Trade
+            exit_p = barrier_price if barrier_price != 0 else prices[i]
+            pnl = (exit_p - entry_price) * abs(position) * np.sign(position) * config.STANDARD_LOT_SIZE
+            
+            t = Trade(
+                entry_idx=entry_idx,
+                entry_price=entry_price,
+                direction=int(position),
+                size=abs(position),
+                exit_idx=i,
+                exit_price=exit_p,
+                exit_reason=exit_reason,
+                pnl=pnl,
+                events=[
+                    {'idx': entry_idx, 'action': f"ENTRY (Strat {active_strat_idx})", 'size': abs(position)},
+                    {'idx': i, 'action': f"EXIT ({exit_reason})", 'price': exit_p}
+                ]
+            )
+            mutex_trades.append(t)
+            
+            position = 0.0
+            active_strat_idx = -1
+            
+        # 2. Check Entries
+        if position == 0.0 and not (hours[i] >= config.TRADING_END_HOUR or weekdays[i] >= 5):
+            for s_idx in range(n_strats):
+                sig = sig_matrix[i, s_idx]
+                if sig != 0:
+                    position = float(sig)
+                    entry_price = prices[i]
+                    entry_idx = i
+                    entry_atr = atr[i]
+                    active_strat_idx = s_idx
+                    
+                    current_horizon = horizons[s_idx]
+                    current_sl_mult = sl_mults[s_idx]
+                    current_tp_mult = tp_mults[s_idx]
+                    break
+                    
+    # Filter OOS
+    oos_start = backtester.val_idx
+    valid_mutex_trades = [t for t in mutex_trades if t.entry_idx >= oos_start]
+    
+    print(f"  Generated {len(mutex_trades)} Mutex trades. {len(valid_mutex_trades)} in OOS period.")
+    
+    if valid_mutex_trades:
+        mutex_dir = os.path.join(atlas_root, "MUTEX_PORTFOLIO_COMBINED")
+        if os.path.exists(mutex_dir): shutil.rmtree(mutex_dir)
+        os.makedirs(mutex_dir)
+        
+        plot_limit = 200
+        for j, trade in enumerate(valid_mutex_trades[:plot_limit]):
+            # Use 'Mutex' as horizon label for simplicity, or the specific trade horizon
+            # trade doesn't store horizon, but we can infer or just pass 'Mixed'
+            plot_trade(trade, backtester.close_vec.flatten(), times, mutex_dir, j+1, "MUTEX")
+            if (j+1) % 50 == 0:
+                print(f"    ... Plotted {j+1}/{min(len(valid_mutex_trades), plot_limit)} trades")
+                
+        print(f"  ✅ Saved {min(len(valid_mutex_trades), plot_limit)} Combined plots to {mutex_dir}")
+
 if __name__ == "__main__":
     main()
