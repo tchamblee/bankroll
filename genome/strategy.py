@@ -1,5 +1,6 @@
 import numpy as np
 import config
+import math
 from .genes import gene_from_dict
 
 class Strategy:
@@ -32,6 +33,18 @@ class Strategy:
         self.short_genes = _dedup(self.short_genes)
         self.regime_genes = _dedup(self.regime_genes)
         
+    def recalculate_concordance(self):
+        """
+        Updates min_concordance based on gene count.
+        Uses Majority Rule: >50% agreement required.
+        For small sets (<=2), allows 1 (OR logic) for diversity.
+        """
+        n = max(len(self.long_genes), len(self.short_genes))
+        if n <= 2:
+            self.min_concordance = 1
+        else:
+            self.min_concordance = math.ceil(n * 0.51)
+
     def generate_signal(self, context: dict, cache: dict = None) -> np.array:
         n_rows = context.get('__len__', 0)
         if n_rows == 0 and len(context) > 0:

@@ -22,7 +22,7 @@ DIRS = {
 # Prediction Horizons (in bars)
 # Target: 1h, 2h, 3h (assuming ~2 min per 250-tick bar)
 # Added 120 (4h) and 240 (8h) for cost efficiency
-PREDICTION_HORIZONS = [60, 90, 120, 180]
+PREDICTION_HORIZONS = [60, 120, 240]
 
 IBKR_HOST = "172.18.32.1"
 IBKR_PORT = 4001
@@ -32,8 +32,8 @@ ACCOUNT_SIZE = 30000.0  # USD
 STANDARD_LOT_SIZE = 100000.0 # Units of EUR/USD
 MIN_LOTS = 1
 MAX_LOTS = 3
-COST_BPS = 0.2
-SPREAD_BPS = 0.2
+COST_BPS = 0.25
+SPREAD_BPS = 0.25
 ANNUALIZATION_FACTOR = 114408 # ~454 bars/day * 252 days (Volume Threshold: 1B units)
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier

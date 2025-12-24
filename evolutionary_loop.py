@@ -61,6 +61,7 @@ class EvolutionaryAlphaFactory:
             n_regime = random.randint(0, min(len(combined_regime), 2))
             child.regime_genes = [g.copy() for g in random.sample(combined_regime, n_regime)]
         
+        child.recalculate_concordance()
         return child
 
     def update_hall_of_fame(self, candidates, gen, horizon=None):
@@ -276,6 +277,7 @@ class EvolutionaryAlphaFactory:
                     target_genes = random.sample(genes_to_mutate, min(len(genes_to_mutate), 2))
                     for g in target_genes: g.mutate(self.factory.features)
                 child.cleanup()
+                child.recalculate_concordance()
                 new_population.append(child)
             
             # Immigration
@@ -291,6 +293,7 @@ class EvolutionaryAlphaFactory:
                 for g in child.long_genes + child.short_genes:
                     if random.random() < mut_rate: g.mutate(self.factory.features)
                 child.cleanup()
+                child.recalculate_concordance()
                 new_population.append(child)
                 
             self.population = new_population
