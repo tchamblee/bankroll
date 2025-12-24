@@ -70,6 +70,24 @@ def get_gene_description(gene_dict):
         win = gene_dict['window']
         return f"({f} {op} {thresh}) FOR {win} BARS"
 
+    elif g_type == 'correlation':
+        return f"Corr({gene_dict['feature_left']}, {gene_dict['feature_right']}, {gene_dict['window']}) {gene_dict['operator']} {gene_dict['threshold']:.2f}"
+    
+    elif g_type == 'divergence':
+        return f"Divergence({gene_dict['feature_a']}, {gene_dict['feature_b']}) in last {gene_dict['window']} bars"
+    
+    elif g_type == 'efficiency':
+        return f"Efficiency({gene_dict['feature']}, {gene_dict['window']}) {gene_dict['operator']} {gene_dict['threshold']:.2f}"
+        
+    elif g_type == 'event':
+        return f"({gene_dict['feature']} {gene_dict['operator']} {gene_dict['threshold']:.2f}) occurred in last {gene_dict['window']} bars"
+        
+    elif g_type == 'extrema':
+        return f"{gene_dict['feature']} is {gene_dict['mode'].upper()} of last {gene_dict['window']} bars"
+        
+    elif g_type == 'flux':
+        return f"Flux({gene_dict['feature']}, {gene_dict['lag']}) {gene_dict['operator']} {gene_dict['threshold']:.4f}"
+
     elif g_type == 'squeeze':
         return f"{gene_dict['feature_short']} < {gene_dict['multiplier']:.4g} * {gene_dict['feature_long']}"
     elif g_type == 'range':

@@ -191,8 +191,18 @@ def run_mutex_backtest():
         return
 
     print("\nSelected Portfolio (Ranked Priority):")
+    mutex_data = []
     for i, s in enumerate(unique_strats):
         print(f"  {i+1}. {s.name} (H{s.horizon}) | ID: {getattr(s, 'training_id', 'legacy')} | Sortino: {s.sortino:.2f}")
+        s_dict = s.to_dict()
+        s_dict['horizon'] = s.horizon
+        s_dict['training_id'] = getattr(s, 'training_id', 'legacy')
+        mutex_data.append(s_dict)
+
+    mutex_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+    with open(mutex_path, 'w') as f:
+        json.dump(mutex_data, f, indent=4)
+    print(f"💾 Saved Mutex Portfolio to {mutex_path}")
 
     # 3. Execution (Raw Composite Signal)
     # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---

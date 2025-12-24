@@ -40,51 +40,9 @@ class EvolutionaryAlphaFactory:
         # This list ensures DIVERSITY. We do not allow correlated strategies (>0.7) to coexist here.
         self.hall_of_fame = [] 
 
-    def seed_population(self, horizon):
-        """
-        Loads top strategies from previous runs to seed the initial population.
-        """
-        seed_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
-        seeds = []
-        
-        if os.path.exists(seed_file):
-            try:
-                with open(seed_file, 'r') as f:
-                    data = json.load(f)
-                
-                # Sort by robust_score if available
-                # (Logic assumes dictionary has 'metrics' or 'robust_score' keys, or we sort by list order if sorted)
-                
-                # Take top 20% of pop_size or all available
-                n_seeds = int(self.pop_size * 0.20)
-                
-                print(f"  🌱 Seeding from {seed_file}...")
-                count = 0
-                for d in data:
-                    if count >= n_seeds: break
-                    try:
-                        s = Strategy.from_dict(d)
-                        # Reset fitness so they have to prove themselves again in this run
-                        s.fitness = 0.0 
-                        seeds.append(s)
-                        count += 1
-                    except: pass
-                    
-                print(f"  ✅ Injected {len(seeds)} Veteran Strategies.")
-            except Exception as e:
-                print(f"  ⚠️ Seeding Failed: {e}")
-                
-        return seeds
-
     def initialize_population(self, horizon=None):
-        seeds = []
-        if horizon:
-            seeds = self.seed_population(horizon)
-            
-        n_random = self.pop_size - len(seeds)
-        random_pop = [self.factory.create_strategy((2, 4)) for _ in range(n_random)]
-        
-        self.population = seeds + random_pop
+        print(f"  🎲 Initializing Population with {self.pop_size} Random Strategies.")
+        self.population = [self.factory.create_strategy((2, 4)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
@@ -138,13 +96,23 @@ class EvolutionaryAlphaFactory:
         for i, cand in enumerate(candidates):
             if cand.fitness < 0.1: continue # Ignore junk
             
-            # 5 bps Expectancy Filter
             n_trades = trades_batch[i]
             total_ret = np.sum(rets_batch[:, i])
-            
+
+            # Adaptive Expectancy Filter (Ramp up requirements)
+            # Gen 0-4: 1 bps (Survival)
+            # Gen 5-9: 2 bps (Growth)
+            # Gen 10+: 5 bps (Maturity)
+            if gen < 5:
+                thresh = 0.0001
+            elif gen < 10:
+                thresh = 0.0002
+            else:
+                thresh = 0.0005
+
             if n_trades > 0:
                 avg_ret = total_ret / n_trades
-                if avg_ret < 0.0005: # < 5 bps per trade
+                if avg_ret < thresh:
                     continue
             else:
                 continue # No trades = No alpha
@@ -359,27 +327,45 @@ class EvolutionaryAlphaFactory:
             val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
             cand_signals_val = cand_signals[val_start:val_end]
             
+            # Rank candidates by Composite Score (Robust Val + Test Sortino)
+            scored_candidates = []
+            for i, strat in enumerate(top_candidates):
+                if i >= len(test_res): continue
+                
+                val_score = val_fitness_map.get(strat.name, 0.0)
+                t_sortino = float(test_res.iloc[i]['sortino'])
+                t_ret = float(test_res.iloc[i]['total_return'])
+                
+                # Filter out losers immediately
+                if t_ret <= 0 or t_sortino <= 0: continue
+                
+                # Composite Score: Robust Val + Test Sortino
+                composite_score = val_score + t_sortino
+                
+                scored_candidates.append({
+                    'strat': strat,
+                    'orig_idx': i,
+                    'score': composite_score
+                })
+            
+            # Sort by Composite Score Descending
+            scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+
             portfolio = []
             portfolio_indices = []
             
-            for i, strat in enumerate(top_candidates):
+            for item in scored_candidates:
                 if len(portfolio) >= 5: break
                 
-                # OOS Sanity Check: Must be profitable in Test
-                if i < len(test_res):
-                    t_ret = float(test_res.iloc[i]['total_return'])
-                    t_sortino = float(test_res.iloc[i]['sortino'])
-                    if t_ret <= 0 or t_sortino <= 0:
-                        continue
-                else:
-                    continue
+                strat = item['strat']
+                orig_idx = item['orig_idx']
 
                 if not portfolio:
                     portfolio.append(strat)
-                    portfolio_indices.append(i)
+                    portfolio_indices.append(orig_idx)
                     continue
                 
-                current_sig = cand_signals_val[:, i]
+                current_sig = cand_signals_val[:, orig_idx]
                 is_uncorrelated = True
                 for p_idx in portfolio_indices:
                     existing_sig = cand_signals_val[:, p_idx]
@@ -390,7 +376,7 @@ class EvolutionaryAlphaFactory:
                 
                 if is_uncorrelated:
                     portfolio.append(strat)
-                    portfolio_indices.append(i)
+                    portfolio_indices.append(orig_idx)
             
             print(f"Selected {len(portfolio)} Strategies for Ensemble.")
             

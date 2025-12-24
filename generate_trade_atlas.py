@@ -10,43 +10,6 @@ from genome import Strategy
 from backtest import BacktestEngine
 from trade_simulator import TradeSimulator
 
-def load_and_rank_strategies(horizon):
-    # Prefer the Top 5 Unique file which contains pre-calculated metrics from report_top_strategies.py
-    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
-    if not os.path.exists(file_path):
-        # Fallback to Top 10 if Top 5 Unique doesn't exist (legacy support)
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
-    
-    if not os.path.exists(file_path):
-        # Final Fallback to raw file (metrics might be missing/defaulted to -999)
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
-        
-    if not os.path.exists(file_path):
-        return []
-    
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    
-    strategies = []
-    for d in data:
-        try:
-            strat = Strategy.from_dict(d)
-            # Hydrate metrics if available, or assume they are in the dict
-            metrics = d.get('metrics', {})
-            strat.robust_return = metrics.get('robust_return', -999)
-            strat.full_return = metrics.get('full_return', -999)
-            strat.val_return = metrics.get('val_return', -999)
-            strat.test_return = metrics.get('test_return', -999)
-            strat.sortino_oos = metrics.get('sortino_oos', -999)
-            strat.generation_found = d.get('generation', '?')
-            strategies.append(strat)
-        except Exception as e:
-            pass
-            
-    # Sort: Primary = Robust%, Secondary = Ret%(Full)
-    strategies.sort(key=lambda x: (x.robust_return, x.full_return), reverse=True)
-    return strategies
-
 def plot_trade(trade, prices, times, output_dir, trade_id, horizon):
     # Adapter for Trade object
     start_idx = trade.entry_idx
@@ -93,7 +56,7 @@ def plot_trade(trade, prices, times, output_dir, trade_id, horizon):
 
     # 3. Mark Events
     for event in trade.events:
-        idx = event['idx'] # Changed from get('idx') since Trade uses dataclass/list of dicts
+        idx = event['idx']
         if idx < start or idx >= end: continue
         
         local_idx = idx - start
@@ -135,12 +98,25 @@ def plot_trade(trade, prices, times, output_dir, trade_id, horizon):
 
 def main():
     print("======================================================")
-    print("🌍 GENERATING TRADE ATLAS (Consolidated Analysis) 🌍")
+    print("🌍 GENERATING TRADE ATLAS (Mutex Portfolio) 🌍")
     print("======================================================\n")
     
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix missing.")
         return
+
+    portfolio_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+    if not os.path.exists(portfolio_path):
+         print("❌ Mutex portfolio not found. Run 'run_mutex_strategy.py' first.")
+         return
+    
+    with open(portfolio_path, 'r') as f:
+         portfolio_data = json.load(f)
+         
+    strategies = [Strategy.from_dict(d) for d in portfolio_data]
+    # Re-attach horizon info if missing in Strategy object (it's not a standard field)
+    for s, d in zip(strategies, portfolio_data):
+        s.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
 
     # Load Full Data
     print("Loading Market Data...")
@@ -153,7 +129,6 @@ def main():
         times = pd.Series(df.index)
 
     # Initialize Simulator
-    # Reuse cost model from backtester
     simulator = TradeSimulator(
         prices=backtester.close_vec.flatten(),
         times=times,
@@ -164,55 +139,52 @@ def main():
     # Output Root
     atlas_root = os.path.join(config.DIRS['OUTPUT_DIR'], "trade_atlas")
     if not os.path.exists(atlas_root): os.makedirs(atlas_root)
+    
+    # Clean previous atlas
+    # shutil.rmtree(atlas_root)
+    # os.makedirs(atlas_root)
 
-    for h in config.PREDICTION_HORIZONS:
-        print(f"\nAnalyzing Horizon {h}...")
-        
-        # 1. Sort & Select
-        strategies = load_and_rank_strategies(h)
-        if not strategies:
-            print(f"  No strategies found for Horizon {h}")
-            continue
-            
-        # Print Top 10
-        print(f"  🏆 Top 10 Strategies:")
-        for i, s in enumerate(strategies[:10]):
-            print(f"  {i+1:<4} {s.name:<15} {s.robust_return*100:6.2f}%")
-            
-        top_strat = strategies[0]
-        print(f"\n  👑 Selected Champion: {top_strat.name}")
+    print(f"Generating Atlas for {len(strategies)} Strategies in Mutex Portfolio...")
+    print(f"NOTE: Only plotting trades in OOS period (Start Index: {backtester.val_idx})")
+
+    for i, strat in enumerate(strategies):
+        h = getattr(strat, 'horizon', 120)
+        print(f"\n[{i+1}/{len(strategies)}] Analyzing {strat.name} (H{h})...")
         
         # 2. Generate Signals
-        print("  Generating Signals (with Time Filters)...")
-        # Use backtester to apply liquid hours and weekend filters
-        signals = backtester.generate_signal_matrix([top_strat]).flatten()
+        signals = backtester.generate_signal_matrix([strat], horizon=h).flatten()
         
         # 3. Simulate Trades
-        # Barriers: Time = Horizon, SL = Default or Strategy
-        sl_pct = getattr(top_strat, 'stop_loss_pct', config.DEFAULT_STOP_LOSS)
-        tp_pct = getattr(top_strat, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)
-        print(f"  Simulating with TimeLimit={h}, SL={sl_pct*100:.2f}%, TP={tp_pct*100:.2f}%...")
+        sl_pct = getattr(strat, 'stop_loss_pct', config.DEFAULT_STOP_LOSS)
+        tp_pct = getattr(strat, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+        
         trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, take_profit_pct=tp_pct, time_limit_bars=h)
         
-        warmup = 3200
-        valid_trades = [t for t in trades if t.entry_idx >= warmup]
-        print(f"  Found {len(valid_trades)} valid trades. Generating plots...")
+        # FILTER: OOS Only
+        oos_start = backtester.val_idx
+        valid_trades = [t for t in trades if t.entry_idx >= oos_start]
         
+        print(f"  Found {len(trades)} total trades. {len(valid_trades)} in OOS period.")
+        
+        if not valid_trades:
+            print("  No OOS trades to plot.")
+            continue
+
         # 4. Generate Plots
-        h_dir = os.path.join(atlas_root, f"horizon_{h}")
-        if not os.path.exists(h_dir): os.makedirs(h_dir)
+        strat_dir = os.path.join(atlas_root, f"{strat.name}_H{h}")
+        if not os.path.exists(strat_dir): os.makedirs(strat_dir)
         else:
-            shutil.rmtree(h_dir)
-            os.makedirs(h_dir)
+            shutil.rmtree(strat_dir)
+            os.makedirs(strat_dir)
         
         # Limit to first 100 trades to prevent excessive rendering
         plot_limit = 100
-        for i, trade in enumerate(valid_trades[:plot_limit]):
-            plot_trade(trade, backtester.close_vec.flatten(), times, h_dir, i+1, h)
-            if (i+1) % 50 == 0:
-                print(f"    ... Plotted {i+1}/{min(len(valid_trades), plot_limit)} trades")
+        for j, trade in enumerate(valid_trades[:plot_limit]):
+            plot_trade(trade, backtester.close_vec.flatten(), times, strat_dir, j+1, h)
+            if (j+1) % 50 == 0:
+                print(f"    ... Plotted {j+1}/{min(len(valid_trades), plot_limit)} trades")
                 
-        print(f"  ✅ Saved {min(len(valid_trades), plot_limit)} plots to {h_dir}")
+        print(f"  ✅ Saved {min(len(valid_trades), plot_limit)} plots to {strat_dir}")
 
 if __name__ == "__main__":
     main()
