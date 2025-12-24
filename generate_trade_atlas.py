@@ -248,7 +248,15 @@ def main():
     current_sl_mult = 0.0
     current_tp_mult = 0.0
     
+    # Cooldown State
+    strat_cooldowns = np.zeros(n_strats, dtype=int)
+    
     for i in range(n_bars):
+        # Decrement Cooldowns
+        for s in range(n_strats):
+            if strat_cooldowns[s] > 0:
+                strat_cooldowns[s] -= 1
+                
         # 1. Check Exits
         exit_trade = False
         exit_reason = ""
@@ -328,12 +336,20 @@ def main():
             )
             mutex_trades.append(t)
             
+            # Apply Cooldown if SL
+            if exit_reason == "SL" and active_strat_idx >= 0:
+                strat_cooldowns[active_strat_idx] = config.STOP_LOSS_COOLDOWN_BARS
+            
             position = 0.0
             active_strat_idx = -1
             
         # 2. Check Entries
         if position == 0.0 and not (hours[i] >= config.TRADING_END_HOUR or weekdays[i] >= 5):
             for s_idx in range(n_strats):
+                # Check Cooldown
+                if strat_cooldowns[s_idx] > 0:
+                    continue
+                
                 sig = sig_matrix[i, s_idx]
                 if sig != 0:
                     position = float(sig)

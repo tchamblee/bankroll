@@ -47,7 +47,7 @@ def load_all_candidates():
     return candidates
 
 @jit(nopython=True)
-def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, weekdays, horizons, sl_mults, tp_mults, lot_size, spread_pct, comm_pct, account_size, end_hour):
+def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, weekdays, horizons, sl_mults, tp_mults, lot_size, spread_pct, comm_pct, account_size, end_hour, cooldown_bars):
     """
     JIT-compiled simulator for a Mutex Portfolio.
     Priority Logic: The first strategy (column 0) has highest priority. 
@@ -70,19 +70,30 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
     
     prev_pos = 0.0
     
+    # Cooldown State
+    strat_cooldowns = np.zeros(n_strats, dtype=np.int64)
+    
     for i in range(n_bars):
+        # Decrement Cooldowns
+        for s in range(n_strats):
+            if strat_cooldowns[s] > 0:
+                strat_cooldowns[s] -= 1
+                
         # 1. Check Barriers / Exits
         exit_trade = False
         barrier_price = 0.0
+        exit_reason = 0 # 0: None, 1: Time/EOD, 2: SL, 3: TP
         
         # Force Close (Time/EOD)
         if hours[i] >= end_hour or weekdays[i] >= 5:
             exit_trade = True
+            exit_reason = 1
             
         elif position != 0:
             # Time Limit
             if (i - entry_idx) >= current_horizon:
                 exit_trade = True
+                exit_reason = 1
             
             # SL/TP
             if not exit_trade:
@@ -96,35 +107,53 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
                     if current_sl_mult > 0 and l_prev <= (entry_price - sl_dist):
                         exit_trade = True
                         barrier_price = entry_price - sl_dist
+                        exit_reason = 2 # SL
                     elif current_tp_mult > 0 and h_prev >= (entry_price + tp_dist):
                         exit_trade = True
                         barrier_price = entry_price + tp_dist
+                        exit_reason = 3 # TP
                 else:
                     if current_sl_mult > 0 and h_prev >= (entry_price + sl_dist):
                         exit_trade = True
                         barrier_price = entry_price + sl_dist
+                        exit_reason = 2 # SL
                     elif current_tp_mult > 0 and l_prev <= (entry_price - tp_dist):
                         exit_trade = True
                         barrier_price = entry_price - tp_dist
+                        exit_reason = 3 # TP
             
             # Reversal Check (Active Strategy Only)
             if not exit_trade and active_strat_idx >= 0:
                 sig = sig_matrix[i, active_strat_idx]
+                # Check for Reversal Signal
                 if sig != 0 and np.sign(sig) != np.sign(position):
-                    # Reversal!
-                    position = float(sig)
-                    entry_price = prices[i]
-                    entry_idx = i
-                    entry_atr = atr[i]
-                    # Params remain same since it's the same strategy
+                     # Reversal!
+                     # Effectively close current and open new
+                     # No cooldown on reversal usually, unless we consider it an exit?
+                     # Let's treat reversal as atomic: Exit + Entry. 
+                     # If the exit would have been a loss, should we cooldown?
+                     # Usually reversals are intentional logic, so NO cooldown.
+                     position = float(sig)
+                     entry_price = prices[i]
+                     entry_idx = i
+                     entry_atr = atr[i]
+                     # Params remain same since it's the same strategy
                         
         if exit_trade:
+            # Apply Cooldown if SL
+            if exit_reason == 2 and active_strat_idx >= 0:
+                strat_cooldowns[active_strat_idx] = cooldown_bars
+                
             position = 0.0
             active_strat_idx = -1
             
         # 2. Check Entries (Priority Mux)
         if position == 0.0 and not (hours[i] >= end_hour or weekdays[i] >= 5):
             for s_idx in range(n_strats):
+                # Check Cooldown
+                if strat_cooldowns[s_idx] > 0:
+                    continue
+                    
                 sig = sig_matrix[i, s_idx]
                 if sig != 0:
                     position = float(sig)
@@ -187,7 +216,8 @@ def simulate_mutex_portfolio(subset_indices, sig_matrix, horizons, sl_mults, tp_
         config.SPREAD_BPS / 10000.0,
         config.COST_BPS / 10000.0,
         account_size,
-        config.TRADING_END_HOUR
+        config.TRADING_END_HOUR,
+        config.STOP_LOSS_COOLDOWN_BARS
     )
 
 # ==============================================================================
@@ -431,7 +461,8 @@ def run_mutex_backtest():
         config.SPREAD_BPS / 10000.0, 
         config.COST_BPS / 10000.0, 
         config.ACCOUNT_SIZE, 
-        config.TRADING_END_HOUR
+        config.TRADING_END_HOUR,
+        config.STOP_LOSS_COOLDOWN_BARS
     )
     
     cum_profit = np.cumsum(rets) * config.ACCOUNT_SIZE
