@@ -49,10 +49,21 @@ def plot_trade(trade, prices, times, output_dir, trade_id, horizon):
         e_loc = min(len(section_times), end_idx - start + 1)
         active_mask[s_loc:e_loc] = True
     
+    # Calculate dynamic Y-limits
+    p_min = section_prices.min()
+    p_max = section_prices.max()
+    p_range = p_max - p_min
+    if p_range == 0: p_range = p_min * 0.001
+    
+    y_bottom = p_min - (p_range * 0.15) # 15% padding
+    y_top = p_max + (p_range * 0.15)
+    
+    plt.ylim(y_bottom, y_top)
+    
     if trade_type == 'Long':
-        plt.fill_between(section_times, section_prices, min(section_prices)*0.99, where=active_mask, color='green', alpha=0.1)
+        plt.fill_between(section_times, section_prices, y_bottom, where=active_mask, color='green', alpha=0.1)
     else:
-        plt.fill_between(section_times, section_prices, max(section_prices)*1.01, where=active_mask, color='red', alpha=0.1)
+        plt.fill_between(section_times, section_prices, y_top, where=active_mask, color='red', alpha=0.1)
 
     # 3. Mark Events
     for event in trade.events:

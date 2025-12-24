@@ -98,6 +98,7 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
     entry_price = 0.0
     entry_idx = 0
     entry_atr = 0.0
+    active_strat_idx = -1
     
     current_horizon = 0
     current_sl_mult = 0.0
@@ -141,9 +142,21 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
                     elif current_tp_mult > 0 and l_prev <= (entry_price - tp_dist):
                         exit_trade = True
                         barrier_price = entry_price - tp_dist
+            
+            # Reversal Check (Active Strategy Only)
+            if not exit_trade and active_strat_idx >= 0:
+                sig = sig_matrix[i, active_strat_idx]
+                if sig != 0 and np.sign(sig) != np.sign(position):
+                    # Reversal!
+                    position = float(sig)
+                    entry_price = prices[i]
+                    entry_idx = i
+                    entry_atr = atr[i]
+                    # Params remain same (same strategy)
                         
         if exit_trade:
             position = 0.0
+            active_strat_idx = -1
             
         # 2. Check Entries (Priority Mux)
         if position == 0.0 and not (hours[i] >= end_hour or weekdays[i] >= 5):
@@ -154,6 +167,7 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
                     entry_price = prices[i]
                     entry_idx = i
                     entry_atr = atr[i]
+                    active_strat_idx = s_idx
                     
                     # Capture Params from active strategy
                     current_horizon = horizons[s_idx]

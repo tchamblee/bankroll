@@ -96,14 +96,28 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         position = 0.0
                         realized_signals[i] = 0.0
 
-        # --- 3. NEW ENTRY ---
+        # --- 3. NEW ENTRY / REVERSAL / HOLD ---
         if force_close:
             realized_signals[i] = 0.0
-        elif position == 0.0 and realized_signals[i] != 0.0:
-            position = realized_signals[i]
-            entry_price = prices[i]
-            entry_atr = atr_vec[i] # Capture Volatility at Entry
-            entry_idx = i
+            position = 0.0
+        elif position == 0.0:
+            # New Entry
+            if realized_signals[i] != 0.0:
+                position = realized_signals[i]
+                entry_price = prices[i]
+                entry_atr = atr_vec[i]
+                entry_idx = i
+        else:
+            # Position Active: Check for Reversal
+            # We ignore 0 signals (Latching/Holding)
+            # We only act if signal is non-zero and opposite sign
+            sig = realized_signals[i]
+            if sig != 0.0 and np.sign(sig) != np.sign(position):
+                # Reversal
+                position = sig
+                entry_price = prices[i]
+                entry_atr = atr_vec[i]
+                entry_idx = i
             
         # Update realized signal to reflect held position
         realized_signals[i] = position
@@ -240,6 +254,9 @@ class TradeSimulator:
                         exit_reason = "TP"
             
             target_pos = signals[i]
+            
+            # --- LATCHING LOGIC ---
+            # If barrier exit or force close, we must go to 0.
             if force_close:
                 target_pos = 0 
                 if position != 0:
@@ -247,6 +264,18 @@ class TradeSimulator:
                     exit_reason = "EOD"
             elif exit_signal:
                 target_pos = 0
+            else:
+                # Normal state: Check for Hold or Reversal
+                if position != 0:
+                    if target_pos == 0:
+                        # Signal Flat -> HOLD
+                        target_pos = position
+                    elif np.sign(target_pos) == np.sign(position):
+                         # Signal Same -> HOLD
+                         target_pos = position
+                    else:
+                        # Signal Flip -> REVERSE (Allow target_pos to be different)
+                        pass
             
             if target_pos != position:
                 change = target_pos - position
