@@ -195,20 +195,36 @@ if __name__ == "__main__":
     engine = MockEngine(df)
     
     import glob
-    apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
-    portfolio_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_portfolio_*.json"))
+    mutex_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
     
     all_strategies_data = []
-    for fpath in apex_files + portfolio_files:
+    
+    if os.path.exists(mutex_path):
+        print(f"Loading Mutex Portfolio from {mutex_path}...")
         try:
-            with open(fpath, "r") as f:
+            with open(mutex_path, "r") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     all_strategies_data.extend(data)
                 elif isinstance(data, dict):
                     all_strategies_data.append(data)
         except Exception as e:
-            print(f"Error loading {fpath}: {e}")
+            print(f"Error loading mutex portfolio: {e}")
+    else:
+        print("Mutex Portfolio not found. Scanning for Apex strategies...")
+        apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
+        portfolio_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_portfolio_*.json"))
+        
+        for fpath in apex_files + portfolio_files:
+            try:
+                with open(fpath, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        all_strategies_data.extend(data)
+                    elif isinstance(data, dict):
+                        all_strategies_data.append(data)
+            except Exception as e:
+                print(f"Error loading {fpath}: {e}")
             
     strategies = []
     seen = set()

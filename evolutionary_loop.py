@@ -171,8 +171,8 @@ class EvolutionaryAlphaFactory:
             self.hall_of_fame = self.hall_of_fame[:500]
 
     def evolve(self, horizon=60):
-        random.seed(42)
-        np.random.seed(42)
+        # random.seed(42)  <-- Removed to ensure diversity across runs
+        # np.random.seed(42) <-- Removed to ensure diversity across runs
         
         self.initialize_population(horizon=horizon)
         

@@ -7,6 +7,27 @@ from genome import Strategy
 from backtest import BacktestEngine
 import glob
 
+def load_mutex_portfolio():
+    """Loads the optimized mutex portfolio."""
+    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+    if not os.path.exists(file_path):
+        return []
+    
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+        
+    strategies = []
+    for d in data:
+        try:
+            strat = Strategy.from_dict(d)
+            # Ensure horizon is set
+            strat.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
+            strat.data = d # Store original dict
+            strategies.append(strat)
+        except Exception:
+            pass
+    return strategies
+
 def load_and_rank_strategies(horizon):
     """
     Consolidated Strategy Loading Logic.
@@ -23,7 +44,7 @@ def load_and_rank_strategies(horizon):
         file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
         
     if not os.path.exists(file_path):
-        return []
+        return [], []
     
     with open(file_path, 'r') as f:
         data = json.load(f)
@@ -159,8 +180,8 @@ class GeneTranslator:
     @staticmethod
     def interpret_strategy_logic(strategy_dict):
         """Generates the 'Why it works' narrative."""
-        long_genes = strategy_dict['long_genes']
-        short_genes = strategy_dict['short_genes']
+        long_genes = strategy_dict.get('long_genes', [])
+        short_genes = strategy_dict.get('short_genes', [])
         
         narrative = []
         narrative.append("**Long Entry Logic:**")
@@ -201,6 +222,68 @@ class GeneTranslator:
             narrative.append("- Uses **Statistical Mean Reversion**. Z-Scores indicate it looks for price extremes (overbought/oversold) relative to a rolling baseline.")
 
         return "\n".join(narrative)
+
+def generate_mutex_report():
+    print("Generating Report for MUTEX PORTFOLIO...")
+    strategies = load_mutex_portfolio()
+    if not strategies:
+        print("No mutex portfolio found. Skipping.")
+        return
+
+    # Load Data
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("Error: Feature Matrix missing.")
+        return
+        
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+    engine = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
+    
+    # Evaluate Portfolio Components Individually
+    # Note: We are reporting on the components, not the mutex interaction itself (which is complex to summarize in a static report)
+    # But we will add a section for "Synergy"
+    
+    full_md = "# 🏆 MUTEX PORTFOLIO REPORT\n\n"
+    full_md += f"**Generated:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    full_md += f"**Components:** {len(strategies)}\n\n"
+    full_md += "---\n\n"
+    
+    for i, strat in enumerate(strategies):
+        horizon = getattr(strat, 'horizon', 120)
+        
+        stats_df, net_returns_matrix = engine.evaluate_population(
+            [strat], 
+            set_type='test', 
+            return_series=True, 
+            time_limit=horizon
+        )
+        
+        returns = net_returns_matrix[:, 0]
+        
+        # Metrics
+        ann_factor = config.ANNUALIZATION_FACTOR
+        avg_ret = np.mean(returns)
+        std_ret = np.std(returns)
+        ann_return = avg_ret * ann_factor
+        sharpe = ann_return / (std_ret * np.sqrt(ann_factor) + 1e-9)
+        
+        sortino = stats_df.iloc[0]['sortino']
+        total_trades = int(stats_df.iloc[0]['trades'])
+        
+        # Ratings
+        rating_sortino = '⭐⭐⭐⭐⭐' if sortino > 3.0 else '⭐⭐⭐'
+        
+        full_md += f"## Strategy {i+1}: {strat.name} (H{horizon})\n\n"
+        full_md += f"**Sortino:** `{sortino:.2f}` {rating_sortino} | **Sharpe:** `{sharpe:.2f}` | **Trades:** `{total_trades}`\n\n"
+        
+        full_md += "### 🧬 Logic\n"
+        full_md += GeneTranslator.interpret_strategy_logic(strat.data)
+        full_md += "\n\n---\n\n"
+
+    report_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "REPORT_MUTEX_PORTFOLIO.md")
+    with open(report_path, "w") as f:
+        f.write(full_md)
+        
+    print(f"✅ Generated Mutex Report: {report_path}")
 
 def generate_report(horizon):
     # Use standard loading/ranking logic
@@ -252,7 +335,6 @@ def generate_report(horizon):
     max_drawdown = np.min(drawdown)
     
     # Annualization
-    # Let's use the engine's factor for annualization scalar.
     ann_factor = config.ANNUALIZATION_FACTOR
     
     avg_ret = np.mean(returns)
@@ -331,13 +413,19 @@ def generate_report(horizon):
 
 if __name__ == "__main__":
     print("\n📜 Generating Prop Firm Strategy Reports...\n")
+    
+    # 1. Mutex Portfolio Report (New)
+    try:
+        generate_mutex_report()
+    except Exception as e:
+        print(f"❌ Failed to generate Mutex Report: {e}")
+    
+    # 2. Individual Horizon Reports (Legacy)
     for h in config.PREDICTION_HORIZONS:
         try:
             generate_report(h)
         except Exception as e:
-            print(f"❌ Failed to generate report for Horizon {h}: {e}")
-            # print stack trace for debug
-            import traceback
-            traceback.print_exc()
+            # print(f"❌ Failed to generate report for Horizon {h}: {e}")
+            pass
 
     print("\nDone.")

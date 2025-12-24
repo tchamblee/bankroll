@@ -251,11 +251,23 @@ def optimize_mutex_portfolio(candidates, backtester):
     
     # 5. Combinatorial Search
     best_combo = None
-    best_sortino = -999.0
     best_stats = {}
+    
+    # Trackers for Fallback (Best Sortino)
+    fallback_best_sortino = -999.0
+    fallback_combo = None
+    fallback_stats = {}
+    
+    # Trackers for Primary Objective (Max Profit subject to Constraints)
+    best_profit = -999.0
+    
+    # Constraints
+    MIN_SORTINO = 2.0
+    MAX_DD_LIMIT = -0.10 # -10%
     
     start_time = time.time()
     tested_count = 0
+    valid_portfolios_found = 0
     
     # Iterate all subset sizes (from 1 to N)
     for r in range(1, n_c + 1):
@@ -272,40 +284,58 @@ def optimize_mutex_portfolio(candidates, backtester):
                 backtester.account_size
             )
             
-            # Metric: Sortino
+            # Metrics
+            total_ret = np.sum(rets)
             avg_ret = np.mean(rets)
+            
             if avg_ret <= 0 or trades < 10:
-                score = -1.0
+                sortino = -1.0
+                max_dd = -1.0
             else:
                 downside = np.sqrt(np.mean(np.minimum(rets, 0)**2)) + 1e-9
-                score = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+                sortino = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+                
+                # Max DD
+                cum_ret = np.cumsum(rets)
+                peak = np.maximum.accumulate(cum_ret)
+                dd_series = cum_ret - peak
+                max_dd = np.min(dd_series)
             
             tested_count += 1
             
-            if score > best_sortino:
-                best_sortino = score
-                best_combo = [candidates[i] for i in idx_list]
+            profit = total_ret * backtester.account_size
+            stats = {
+                'Sortino': sortino,
+                'Profit': profit,
+                'Trades': trades,
+                'MaxDD': max_dd
+            }
+            
+            # 1. Update Fallback (Best Sortino)
+            if sortino > fallback_best_sortino:
+                fallback_best_sortino = sortino
+                fallback_combo = [candidates[i] for i in idx_list]
+                fallback_stats = stats
                 
-                # Full Stats
-                total_ret = np.sum(rets)
-                profit = total_ret * backtester.account_size
-                max_dd = np.min(np.cumsum(rets) - np.maximum.accumulate(np.cumsum(rets))) if len(rets) > 0 else 0
-                
-                best_stats = {
-                    'Sortino': score,
-                    'Profit': profit,
-                    'Trades': trades,
-                    'MaxDD': max_dd
-                }
+            # 2. Check Primary Constraints
+            if sortino >= MIN_SORTINO and max_dd >= MAX_DD_LIMIT:
+                valid_portfolios_found += 1
+                # Maximize Profit
+                if profit > best_profit:
+                    best_profit = profit
+                    best_combo = [candidates[i] for i in idx_list]
+                    best_stats = stats
                 
     elapsed = time.time() - start_time
     print(f"  Optimization complete in {elapsed:.2f}s ({tested_count} combos).")
+    print(f"  Valid Portfolios (Sortino > {MIN_SORTINO}, MaxDD > {MAX_DD_LIMIT*100:.0f}%): {valid_portfolios_found}")
     
     if best_combo:
-        print(f"\n🏆 WINNING COMBINATION FOUND!")
+        print(f"\n🏆 WINNING COMBINATION FOUND (Max Profit Objective)!")
         print(f"  Strategies: {len(best_combo)}")
-        print(f"  Sortino:    {best_stats['Sortino']:.2f}")
         print(f"  Profit:     ${best_stats['Profit']:,.2f}")
+        print(f"  Sortino:    {best_stats['Sortino']:.2f}")
+        print(f"  MaxDD:      {best_stats['MaxDD']*100:.2f}%")
         print(f"  Trades:     {int(best_stats['Trades'])}")
         
         print("\nComposition:")
@@ -313,6 +343,21 @@ def optimize_mutex_portfolio(candidates, backtester):
             print(f"  - {s.name} (H{s.horizon})")
             
         return best_combo, best_stats
+        
+    elif fallback_combo:
+        print(f"\n⚠️  No portfolio met strict criteria. Falling back to Best Sortino.")
+        print(f"🏆 WINNING COMBINATION FOUND (Fallback Objective)!")
+        print(f"  Strategies: {len(fallback_combo)}")
+        print(f"  Sortino:    {fallback_stats['Sortino']:.2f}")
+        print(f"  Profit:     ${fallback_stats['Profit']:,.2f}")
+        print(f"  MaxDD:      {fallback_stats['MaxDD']*100:.2f}%")
+        
+        print("\nComposition:")
+        for s in fallback_combo:
+            print(f"  - {s.name} (H{s.horizon})")
+            
+        return fallback_combo, fallback_stats
+        
     else:
         print("❌ No profitable combination found.")
         return [], {}
