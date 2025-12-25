@@ -390,11 +390,16 @@ async def ingest_stream(ib: IB, stop_event: asyncio.Event):
     ib.pendingTickersEvent += on_new_tick
 
     # Main Loop with Stop Check
+    last_warning_time = datetime.min.replace(tzinfo=timezone.utc)
+    
     while not stop_event.is_set():
         await asyncio.sleep(1) 
         now_utc = datetime.now(timezone.utc)
         if (now_utc - last_data_time).total_seconds() > DATA_TIMEOUT:
-            logger.warning(f"⚠️ NO IBKR DATA received for {DATA_TIMEOUT}s.")
+            # Throttle warning to every 5 minutes
+            if (now_utc - last_warning_time).total_seconds() > 300:
+                logger.warning(f"⚠️ NO IBKR DATA received for {DATA_TIMEOUT}s (Market likely closed or idle).")
+                last_warning_time = now_utc
 
         for name, buffer in buffers.items():
             if len(buffer) >= CHUNK_SIZE:
