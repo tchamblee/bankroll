@@ -178,7 +178,7 @@ def download_gkg_daily(date_: dt.date) -> Optional[pl.DataFrame]:
     return df
 
 def ensure_gkg_recent():
-    today = dt.datetime.utcnow().date()
+    today = dt.datetime.now(timezone.utc).date()
     start_day = today - dt.timedelta(days=1)
     
     for i in range(GKG_BACKFILL_DAYS):
@@ -300,7 +300,7 @@ def save_chunk(df: pd.DataFrame, filename: str) -> bool:
         logger.error(f"Write Error {filename}: {e}")
         return False
 
-async def ingest_stream(ib: IB):
+async def ingest_stream(ib: IB, stop_event: asyncio.Event):
     global last_data_time
 
     logger.info("🔌 Setting up Market Data Subscriptions...")
@@ -389,7 +389,8 @@ async def ingest_stream(ib: IB):
 
     ib.pendingTickersEvent += on_new_tick
 
-    while True:
+    # Main Loop with Stop Check
+    while not stop_event.is_set():
         await asyncio.sleep(1) 
         now_utc = datetime.now(timezone.utc)
         if (now_utc - last_data_time).total_seconds() > DATA_TIMEOUT:
@@ -416,7 +417,7 @@ async def ingest_stream(ib: IB):
 def run_gdelt_cycle_sync():
     """Blocking GDELT cycle to be run in executor."""
     try:
-        now_utc = dt.datetime.utcnow()
+        now_utc = dt.datetime.now(timezone.utc)
         cutoff = now_utc - dt.timedelta(minutes=GDELT_LAG_MINUTES)
         
         # logger.info(f"--- GDELT Sync Cycle @ {now_utc.strftime('%H:%M:%S')} ---")
@@ -433,14 +434,21 @@ def run_gdelt_cycle_sync():
     except Exception as e:
         logger.error(f"GDELT Cycle Error: {e}", exc_info=True)
 
-async def gdelt_monitor():
+async def gdelt_monitor(stop_event: asyncio.Event):
     """Async wrapper for GDELT monitoring."""
     logger.info("🌍 GDELT Monitor Started")
     loop = asyncio.get_running_loop()
     
-    while True:
+    while not stop_event.is_set():
+        # Check stop before running long sync task
+        if stop_event.is_set(): break
+        
         await loop.run_in_executor(None, run_gdelt_cycle_sync)
-        await asyncio.sleep(GDELT_POLL_INTERVAL_SEC)
+        
+        # Sleep in small chunks to be responsive to stop_event
+        for _ in range(GDELT_POLL_INTERVAL_SEC):
+            if stop_event.is_set(): break
+            await asyncio.sleep(1)
 
 # --------------------------------------------------------------------------------------
 # MAIN
@@ -450,31 +458,53 @@ async def main_loop():
     logger.info(f"📂 IBKR Data Lake: {DATA_DIR}")
     logger.info(f"📂 GDELT Data Lake: {GDELT_ROOT}")
     
+    stop_event = asyncio.Event()
+    
     # Start GDELT Monitor as separate task
-    gdelt_task = asyncio.create_task(gdelt_monitor())
+    gdelt_task = asyncio.create_task(gdelt_monitor(stop_event))
 
-    while True:
-        ib = IB()
-        ib.errorEvent += on_error
+    ib = IB()
+    ib.errorEvent += on_error
+    
+    try:
+        logger.info("🔄 Connecting to IBKR...")
+        await asyncio.wait_for(ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=10)
+        ib.reqMarketDataType(3) 
         
-        try:
-            logger.info("🔄 Connecting to IBKR...")
-            await asyncio.wait_for(ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=10)
-            ib.reqMarketDataType(3) 
-            await ingest_stream(ib)
-        except (OSError, ConnectionError) as e:
-            logger.error(f"⚠️ Connection Drop: {e}")
-            logger.info(f"⏳ Reconnecting IBKR in {RECONNECT_DELAY}s...")
-        except Exception as e:
-            logger.error(f"🔥 Error: {e}", exc_info=True)
-            logger.info(f"⏳ Reconnecting IBKR in {RECONNECT_DELAY}s...")
-        finally:
-            try: ib.disconnect()
-            except: pass
-            await asyncio.sleep(RECONNECT_DELAY)
+        # Run IBKR Ingestion
+        await ingest_stream(ib, stop_event)
+        
+    except (OSError, ConnectionError) as e:
+        logger.error(f"⚠️ Connection Drop: {e}")
+    except asyncio.CancelledError:
+        logger.info("🛑 Main Loop Cancelled")
+    except Exception as e:
+        logger.error(f"🔥 Error: {e}", exc_info=True)
+    finally:
+        logger.info("🛑 Shutting down...")
+        stop_event.set() # Signal GDELT to stop
+        
+        try: 
+            ib.disconnect()
+            logger.info("🔌 IBKR Disconnected")
+        except: pass
+        
+        # Wait for GDELT task to finish gracefully
+        if not gdelt_task.done():
+            logger.info("⏳ Waiting for GDELT task to finish...")
+            try:
+                await asyncio.wait_for(gdelt_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ GDELT task timed out, cancelling...")
+                gdelt_task.cancel()
+                try: await gdelt_task
+                except: pass
 
 if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        logger.info("🛑 Stopped by User")
+        # Pass here, the finally block in main_loop won't run if run() is interrupted directly
+        # But asyncio.run handles signal handlers in newer python...
+        # Ideally we catch it inside the coroutine or let asyncio.run finish
+        logger.info("👋 Keyboard Interrupt received. Exiting.")
