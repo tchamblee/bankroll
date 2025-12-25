@@ -224,6 +224,12 @@ class EvolutionaryAlphaFactory:
                     if ratio > config.DOMINANCE_PENALTY_THRESHOLD:
                          dom_penalty += (ratio - config.DOMINANCE_PENALTY_THRESHOLD) * config.DOMINANCE_PENALTY_MULTIPLIER
                 
+                # Quadratic Complexity Penalty: Punish bloat progressively harder
+                # 4 genes -> 16 * C (Small)
+                # 8 genes -> 64 * C (Huge)
+                # We scale by 0.5 to keep the base impact reasonable for small strategies
+                complexity_penalty = 0.5 * (n_genes ** 2) * config.COMPLEXITY_PENALTY_PER_GENE
+                
                 wfv_scores[i] -= (complexity_penalty + dom_penalty)
                 strat.fitness = wfv_scores[i]
 
