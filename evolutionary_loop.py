@@ -349,11 +349,11 @@ class EvolutionaryAlphaFactory:
                 t_sortino = float(test_res.iloc[i]['sortino'])
                 t_ret = float(test_res.iloc[i]['total_return'])
                 
-                # Filter out losers immediately
-                if t_ret <= 0 or t_sortino <= 0: continue
-                
-                # Composite Score: Robust Val + Test Sortino
-                composite_score = val_score + t_sortino
+                # Filter out losers based on Validation Score (Robustness)
+                if val_score <= 0: continue
+
+                # Composite Score: Robust Val ONLY (Blind to Test)
+                composite_score = val_score 
                 
                 scored_candidates.append({
                     'strat': strat,

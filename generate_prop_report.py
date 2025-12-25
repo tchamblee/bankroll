@@ -174,6 +174,21 @@ class GeneTranslator:
             min_v = gene_dict['min_val']
             max_v = gene_dict['max_val']
             return f"{f} is inside range [{min_v:.4f}, {max_v:.4f}]"
+
+        elif g_type == 'correlation':
+            f_left = GeneTranslator.translate_feature(gene_dict['feature_left'])
+            f_right = GeneTranslator.translate_feature(gene_dict['feature_right'])
+            win = gene_dict['window']
+            op = gene_dict['operator']
+            thresh = f"{gene_dict['threshold']:.2f}"
+            return f"Correlation({f_left}, {f_right}, {win}) is {op} {thresh}"
+
+        elif g_type == 'efficiency':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            win = gene_dict['window']
+            op = gene_dict['operator']
+            thresh = f"{gene_dict['threshold']:.2f}"
+            return f"Efficiency({f}, {win}) is {op} {thresh}"
             
         return "Unknown Rule"
 

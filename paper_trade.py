@@ -150,23 +150,38 @@ class ExecutionEngine:
         if not hasattr(self, 'last_atr'): return
         sl_dist, tp_dist = self.last_atr * strat.stop_loss_pct, self.last_atr * strat.take_profit_pct
         exit_signal, reason = False, ""
+        
+        # Check Long
         if self.position > 0:
             if current_price <= (self.entry_price - sl_dist): exit_signal, reason = True, "SL"
             elif current_price >= (self.entry_price + tp_dist): exit_signal, reason = True, "TP"
+        # Check Short
         else:
             if current_price >= (self.entry_price + sl_dist): exit_signal, reason = True, "SL"
             elif current_price <= (self.entry_price - tp_dist): exit_signal, reason = True, "TP"
+            
         if exit_signal:
             logger.info(f"📝 VIRTUAL EXIT: {reason} @ {current_price:.5f}")
+            # Capture index BEFORE resetting
+            idx_to_cool = self.active_strat_idx
+            
             self.position, self.active_strat_idx, self.entry_price = 0, -1, 0.0
-            if reason == "SL": self.cooldowns[self.active_strat_idx] = cfg.STOP_LOSS_COOLDOWN_BARS
+            
+            if reason == "SL":
+                self.cooldowns[idx_to_cool] = cfg.STOP_LOSS_COOLDOWN_BARS
+                logger.info(f"❄️ Strategy {idx_to_cool} cooling down for {cfg.STOP_LOSS_COOLDOWN_BARS} bars")
+
+    def decrement_cooldowns(self):
+        self.cooldowns = np.maximum(0, self.cooldowns - 1)
 
     async def execute_signal(self, signal, strat_idx, price, atr):
         self.last_atr = atr
         if signal == self.position: return
+        
         if self.position != 0:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
             self.position = 0
+            
         if signal != 0:
             action = 'BUY' if signal > 0 else 'SELL'
             logger.info(f"📝 VIRTUAL ENTRY: {action} {abs(signal)} lots (Strat {strat_idx}) @ {price:.5f}")
@@ -235,6 +250,9 @@ class PaperTradeApp:
             else: self.data_manager.add_tick(t, conf)
 
     async def process_new_bar(self):
+        # 1. Decrement cooldowns at the start of each new bar
+        self.executor.decrement_cooldowns()
+
         full_df = self.data_manager.compute_features_full()
         if full_df is None: return
         context = {c: full_df[c].values for c in full_df.columns}

@@ -18,32 +18,38 @@ from trade_simulator import TradeSimulator
 
 def load_all_candidates():
     candidates = []
-    print(f"Loading candidates from all horizons...")
+    cand_file = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+    print(f"Loading candidates from master list: {cand_file}")
     
-    for h in config.PREDICTION_HORIZONS:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
-        if not os.path.exists(file_path):
-            continue
+    if not os.path.exists(cand_file):
+        print("⚠️  No candidate list found. Use 'python manage_candidates.py add <name>' first.")
+        return []
+        
+    with open(cand_file, 'r') as f:
+        data = json.load(f)
+        
+    for d in data:
+        try:
+            s = Strategy.from_dict(d)
+            s.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
+            s.training_id = d.get('training_id', 'legacy')
+            # Use 'sortino_oos' if available, else fallback
+            s.sortino = d.get('metrics', {}).get('sortino_oos', d.get('test_sortino', 0))
             
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            
-        if data:
-            for d in data:
-                try:
-                    s = Strategy.from_dict(d)
-                    s.horizon = h
-                    s.training_id = d.get('training_id', 'legacy')
-                    # Use 'sortino_oos' if available, else fallback
-                    s.sortino = d.get('metrics', {}).get('sortino_oos', d.get('test_sortino', 0))
-                    candidates.append(s)
-                except Exception as e:
-                    pass
+            # Hydrate SL/TP if missing from object but in dict (legacy support)
+            if not hasattr(s, 'stop_loss_pct'):
+                s.stop_loss_pct = d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS)
+            if not hasattr(s, 'take_profit_pct'):
+                s.take_profit_pct = d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+
+            candidates.append(s)
+        except Exception as e:
+            print(f"  Error loading strategy {d.get('name')}: {e}")
             
     # Initial Sort by Sortino (Best First)
     candidates.sort(key=lambda x: x.sortino, reverse=True)
     
-    print(f"  Loaded {len(candidates)} total candidates.")
+    print(f"  Loaded {len(candidates)} manually selected candidates.")
     return candidates
 
 @jit(nopython=True)
@@ -229,20 +235,21 @@ def optimize_mutex_portfolio(candidates, backtester):
     print("🧠 MUTEX PORTFOLIO COMBINATORIAL OPTIMIZATION")
     print("="*80)
     
-    # 1. Prepare Data (OOS Slice)
-    oos_start = backtester.val_idx
-    print(f"Optimization Range: OOS Index {oos_start} to {len(backtester.open_vec)} ({len(backtester.open_vec) - oos_start} bars)")
+    # 1. Prepare Data (Validation Slice for Optimization)
+    opt_start = backtester.train_idx
+    opt_end = backtester.val_idx
+    print(f"Optimization Range: Validation Index {opt_start} to {opt_end} ({opt_end - opt_start} bars)")
     
-    prices = backtester.open_vec[oos_start:].astype(np.float64)
-    highs = backtester.high_vec[oos_start:].astype(np.float64)
-    lows = backtester.low_vec[oos_start:].astype(np.float64)
-    atr = backtester.atr_vec[oos_start:].astype(np.float64)
+    prices = backtester.open_vec[opt_start:opt_end].astype(np.float64)
+    highs = backtester.high_vec[opt_start:opt_end].astype(np.float64)
+    lows = backtester.low_vec[opt_start:opt_end].astype(np.float64)
+    atr = backtester.atr_vec[opt_start:opt_end].astype(np.float64)
     
     # Time
     if hasattr(backtester.times_vec, 'iloc'):
-        times = backtester.times_vec.iloc[oos_start:]
+        times = backtester.times_vec.iloc[opt_start:opt_end]
     else:
-        times = backtester.times_vec[oos_start:]
+        times = backtester.times_vec[opt_start:opt_end]
         
     if hasattr(times, 'dt'):
         hours = times.dt.hour.values.astype(np.int8)
@@ -271,8 +278,8 @@ def optimize_mutex_portfolio(candidates, backtester):
     # We insert a row of zeros at the top and remove the last row
     shifted_sig_matrix = np.vstack([np.zeros((1, n_c), dtype=raw_sig_matrix.dtype), raw_sig_matrix[:-1]])
     
-    # Slice OOS
-    oos_sig_matrix = shifted_sig_matrix[oos_start:]
+    # Slice Validation
+    opt_sig_matrix = shifted_sig_matrix[opt_start:opt_end]
     
     # 4. Pre-extract Strategy Params (Arrays)
     horizons = np.array([s.horizon for s in candidates], dtype=np.int64)
@@ -308,7 +315,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             # Run Simulation
             rets, trades = simulate_mutex_portfolio(
                 idx_list, 
-                oos_sig_matrix, 
+                opt_sig_matrix, 
                 horizons, sl_mults, tp_mults, 
                 prices, highs, lows, atr, hours, weekdays, 
                 backtester.account_size
