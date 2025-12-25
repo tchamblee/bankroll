@@ -583,6 +583,10 @@ class EvolutionaryAlphaFactory:
             
             new_inbox_count = 0
             for s_data in output:
+                # Check return threshold (2%)
+                if s_data.get('test_return', 0) < 0.02:
+                    continue
+
                 # Deduplicate by name against existing inbox
                 if not any(x['name'] == s_data['name'] for x in inbox_data):
                      s_data['horizon'] = horizon # Stamp with horizon

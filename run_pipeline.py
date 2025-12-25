@@ -40,7 +40,7 @@ def main():
 
     # Ensure all directories exist
     for dir_path in config.DIRS.values():
-        if isinstance(dir_path, str) and not dir_path.endswith('.parquet'):
+        if isinstance(dir_path, str) and not dir_path.endswith('.parquet') and not dir_path.endswith('.json'):
             os.makedirs(dir_path, exist_ok=True)
 
     run_step("clean_data_lake.py", "Data Cleaning & Normalization")
@@ -57,7 +57,7 @@ def main():
     # 4. Strategy Evolution (The Brain)
     for horizon in config.PREDICTION_HORIZONS:
         survivors_file = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
-        run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 5000 --gens 3", 
+        run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 5000 --gens 5", 
                  f"Evolutionary Strategy Discovery (Horizon: {horizon})")
     
     # 5. Analysis & Visualization

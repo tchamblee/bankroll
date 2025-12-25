@@ -426,9 +426,111 @@ def generate_report(horizon):
         
     print(f"✅ Generated Prop Report: {report_path}")
 
+def load_inbox_strategies():
+    """Loads the strategies from the inbox."""
+    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json")
+    if not os.path.exists(file_path):
+        return []
+    
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+        
+    strategies = []
+    for d in data:
+        try:
+            strat = Strategy.from_dict(d)
+            # Ensure horizon is set
+            strat.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
+            strat.data = d # Store original dict
+            strategies.append(strat)
+        except Exception:
+            pass
+    return strategies
+
+def generate_inbox_report():
+    print("Generating Report for INBOX STRATEGIES...")
+    strategies = load_inbox_strategies()
+    if not strategies:
+        print("No inbox strategies found. Skipping.")
+        return
+
+    # Load Data
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("Error: Feature Matrix missing.")
+        return
+        
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+    engine = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
+    
+    full_md = "# 📥 INBOX STRATEGY AUDIT\n\n"
+    full_md += f"**Generated:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    full_md += f"**Strategies:** {len(strategies)}\n\n"
+    full_md += "---\n\n"
+    
+    for i, strat in enumerate(strategies):
+        horizon = getattr(strat, 'horizon', 120)
+        
+        stats_df, net_returns_matrix = engine.evaluate_population(
+            [strat], 
+            set_type='test', 
+            return_series=True, 
+            time_limit=horizon
+        )
+        
+        returns = net_returns_matrix[:, 0]
+        
+        # Metrics
+        ann_factor = config.ANNUALIZATION_FACTOR
+        avg_ret = np.mean(returns)
+        std_ret = np.std(returns)
+        ann_return = avg_ret * ann_factor
+        ann_vol = std_ret * np.sqrt(ann_factor)
+        sharpe = ann_return / (ann_vol + 1e-9)
+        
+        # Drawdown
+        cum_pnl = np.cumsum(returns * config.ACCOUNT_SIZE)
+        equity_curve = config.ACCOUNT_SIZE + cum_pnl
+        peak = np.maximum.accumulate(equity_curve)
+        drawdown = (equity_curve - peak) / peak
+        max_drawdown = np.min(drawdown)
+        
+        sortino = stats_df.iloc[0]['sortino']
+        total_trades = int(stats_df.iloc[0]['trades'])
+        
+        # Ratings
+        rating_sortino = '⭐⭐⭐⭐⭐' if sortino > 3.0 else '⭐⭐⭐'
+        rating_return = '⭐⭐⭐⭐⭐' if ann_return > 0.5 else '⭐⭐⭐'
+        rating_dd = '⭐⭐⭐⭐⭐' if max_drawdown > -0.10 else '⭐⭐'
+        
+        full_md += f"## {i+1}. {strat.name} (H{horizon})\n\n"
+        full_md += f"### 📊 Performance\n"
+        full_md += f"| Metric | Value | Rating |\n"
+        full_md += f"| :--- | :--- | :--- |\n"
+        full_md += f"| **Annualized Return** | `{ann_return*100:.2f}%` | {rating_return} |\n"
+        full_md += f"| **Sortino Ratio** | `{sortino:.2f}` | {rating_sortino} |\n"
+        full_md += f"| **Max Drawdown** | `{max_drawdown*100:.2f}%` | {rating_dd} |\n"
+        full_md += f"| **Sharpe Ratio** | `{sharpe:.2f}` | |\n"
+        full_md += f"| **Trades** | `{total_trades}` | |\n\n"
+        
+        full_md += "### 🧬 Logic\n"
+        full_md += GeneTranslator.interpret_strategy_logic(strat.data)
+        full_md += "\n\n---\n\n"
+
+    report_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "REPORT_INBOX_AUDIT.md")
+    with open(report_path, "w") as f:
+        f.write(full_md)
+        
+    print(f"✅ Generated Inbox Report: {report_path}")
+
 if __name__ == "__main__":
     print("\n📜 Generating Prop Firm Strategy Reports...\n")
     
+    # 0. Inbox Audit (New)
+    try:
+        generate_inbox_report()
+    except Exception as e:
+        print(f"❌ Failed to generate Inbox Report: {e}")
+
     # 1. Mutex Portfolio Report (New)
     try:
         generate_mutex_report()
