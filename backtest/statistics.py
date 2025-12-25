@@ -17,44 +17,58 @@ def deflated_sharpe_ratio(
     var_returns: float, 
     skew_returns: float, 
     kurt_returns: float,
-    annualization_factor: int = 114408 # From memory (5-min bars)
+    annualization_factor: int = 114408
 ) -> float:
     """
     Calculates the Probabilistic Sharpe Ratio (PSR) adjusted for multiple testing (DSR).
+    Reference: Bailey, D. H., & Lopez de Prado, M. (2014). The Deflated Sharpe Ratio.
     
-    :param observed_sr: The annualized Sharpe Ratio of the strategy to test.
+    :param observed_sr: The annualized Sharpe Ratio of the strategy.
     :param returns: The array of strategy returns.
-    :param n_trials: Total number of strategies backtested/rejected (The 'Trial Factor').
-    :param var_returns: Variance of the returns.
-    :param skew_returns: Skewness of the returns.
-    :param kurt_returns: Kurtosis of the returns.
-    :return: The probability (0.0 - 1.0) that the true SR is > 0.
+    :param n_trials: Number of independent trials (strategies tested).
+    :return: Probability that true SR > 0, adjusted for selection bias.
     """
-    # 1. Estimate the Expected Maximum Sharpe Ratio given N independent trials
-    # This represents the "Hurdle" - how high the SR needs to be just to be "lucky"
-    # Euler-Mascheroni constant approx 0.5772
-    emc = 0.5772156649
-    # Expected Max SR = Expected[Max(Z)] * StdDev(SR_distribution)
-    # For simplicity in many DSR implementations, we focus on the hurdle derived from n_trials
+    # 1. Standard Deviation of the Sharpe Ratio Estimator (for ONE strategy)
+    # Under the Null Hypothesis (SR=0), the standard deviation of the SR estimator is:
+    # sigma_SR = sqrt( (1 - skew*SR + (kurt-1)/4 * SR^2) / (T-1) )
+    # Since we test H0: SR=0, the terms with SR vanish, simplifying to:
+    # sigma_SR = sqrt(1 / (T-1))
+    # BUT, we are comparing against the "Max SR" distribution.
     
-    # Standard deviation of the Sharpe Ratio estimator
     T = len(returns)
-    sr_std = np.sqrt((1 - skew_returns * observed_sr + (kurt_returns - 1) / 4 * observed_sr**2) / (T - 1))
-
-    # The "Hurdle" SR (Expected Maximum SR under the Null Hypothesis of SR=0)
-    # Using the approximation for independent trials: E[max] approx sqrt(2 * log(N))
-    # Note: In practice, strategies are correlated, so N should be 'effective N'. 
-    # Using raw N is conservative.
+    if T < 2: return 0.0
+    
+    # 2. Expected Maximum Sharpe Ratio (The Hurdle)
+    # E[max_SR] = E[SR] + sqrt(2 * log(N)) * sigma_SR_trial
+    # Where sigma_SR_trial is the std dev of the underlying SR distribution across trials.
+    # We approximate sigma_SR_trial using the variance of the returns' moments.
+    
+    # Bailey-Lopez de Prado (2012) Approximation for SR Variance:
+    # Var(SR) approx (1 - skew*SR + (kurt-1)/4 * SR^2) / (T - 1)
+    
+    # We use the Observed SR to estimate the variance of the SR estimator itself
+    sr_var = (1 - skew_returns * observed_sr + (kurt_returns - 1) / 4 * observed_sr**2) / (T - 1)
+    sr_std = np.sqrt(sr_var)
+    
+    # Expected Max SR (Hurdle)
+    # Euler-Mascheroni constant (emc) for precise E[max]
+    emc = 0.5772156649
+    
     if n_trials < 2:
-        expected_max_sr = 0
+        expected_max_sr = 0 # No multiple testing penalty
     else:
-        expected_max_sr = np.sqrt(2 * np.log(n_trials)) # Simplified approach for the hurdle
+        # The expected maximum of N independent Gaussian variables with variance sr_var
+        # E[Max] = sigma * ((1 - gamma)*Z_1 + gamma*Z_N) ... simplified to:
+        expected_max_sr = sr_std * ((1 - emc) * norm.ppf(1 - 1/n_trials) + emc * norm.ppf(1 - 1/(n_trials * np.e)))
+        # Or standard approximation:
+        expected_max_sr = sr_std * np.sqrt(2 * np.log(n_trials))
 
-    # Deflated Sharpe Ratio (Probabilistic)
-    # We test: Is Observed SR > Expected Max SR (Hurdle)?
+    # 3. Deflated Sharpe Ratio (Probabilistic Test)
+    # We test: Is (Observed_SR - Hurdle) > 0 significantly?
+    # DSR = CDF( (Observed_SR - Expected_Max_SR) / sr_std )
+    
     dsr_stat = (observed_sr - expected_max_sr) / sr_std
     
-    # CDF of the test statistic
     return norm.cdf(dsr_stat)
 
 

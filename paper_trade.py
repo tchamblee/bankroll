@@ -37,7 +37,6 @@ logger = logging.getLogger("PaperTrade")
 # --------------------------------------------------------------------------------------
 
 CLIENT_ID = 2
-VOLUME_THRESHOLD = 250
 WINDOW_SIZE = 4000 
 WARMUP_DAYS = 5
 
@@ -48,6 +47,7 @@ WARMUP_DAYS = 5
 class LiveDataManager:
     def __init__(self):
         self.ticks_buffer = []
+        self.current_vol = 0
         self.primary_bars = pd.DataFrame()
         self.correlator_snapshot = {t['name']: np.nan for t in cfg.TARGETS if t['name'] != 'EURUSD'}
         
@@ -73,7 +73,7 @@ class LiveDataManager:
             full_ticks = full_ticks.sort_values('ts_event')
             
         from feature_engine.bars import create_volume_bars
-        bars = create_volume_bars(full_ticks, volume_threshold=VOLUME_THRESHOLD)
+        bars = create_volume_bars(full_ticks, volume_threshold=cfg.VOLUME_THRESHOLD)
         if bars is not None and not bars.empty:
             self.primary_bars = bars.tail(WINDOW_SIZE).reset_index(drop=True)
             logger.info(f"  ✅ Warmup complete. Loaded {len(self.primary_bars)} bars.")
@@ -82,11 +82,20 @@ class LiveDataManager:
         name = target_conf['name']
         if name == 'EURUSD':
             ts = tick_obj.time.replace(tzinfo=timezone.utc)
+            
+            # Calculate Tick Volume
+            tick_vol = 0
             if isinstance(tick_obj, TickByTickBidAsk):
+                # Use sum of sizes as proxy
+                tick_vol = tick_obj.bidSize + tick_obj.askSize
                 self.ticks_buffer.append({'ts_event': ts, 'pricebid': tick_obj.bidPrice, 'priceask': tick_obj.askPrice, 'sizebid': tick_obj.bidSize, 'sizeask': tick_obj.askSize, 'last_price': np.nan, 'last_size': np.nan})
             elif isinstance(tick_obj, (TickByTickAllLast, TickByTickLast)):
+                tick_vol = tick_obj.size
                 self.ticks_buffer.append({'ts_event': ts, 'pricebid': np.nan, 'priceask': np.nan, 'sizebid': np.nan, 'sizeask': np.nan, 'last_price': tick_obj.price, 'last_size': tick_obj.size})
-            if len(self.ticks_buffer) >= VOLUME_THRESHOLD:
+            
+            self.current_vol += tick_vol
+            
+            if self.current_vol >= cfg.VOLUME_THRESHOLD:
                 return self._create_bar()
         else:
             price = 0.0
@@ -100,6 +109,7 @@ class LiveDataManager:
     def _create_bar(self):
         df = pd.DataFrame(self.ticks_buffer)
         self.ticks_buffer = []
+        self.current_vol = 0
         if 'pricebid' in df.columns and 'priceask' in df.columns:
             df['mid_price'] = (df['pricebid'] + df['priceask']) / 2
             df['mid_price'] = df['mid_price'].fillna(df['last_price'])

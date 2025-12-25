@@ -51,13 +51,14 @@ class EvolutionaryAlphaFactory:
 
     def initialize_population(self, horizon=None):
         print(f"  🎲 Initializing Population with {self.pop_size} Random Strategies.")
-        self.population = [self.factory.create_strategy((2, 4)) for _ in range(self.pop_size)]
+        # SMALL DATA MODE: Max 2 genes to prevent overfitting
+        self.population = [self.factory.create_strategy((1, 2)) for _ in range(self.pop_size)]
 
     def crossover(self, p1, p2):
         child = Strategy(name=f"Child_{random.randint(1000,9999)}")
         
-        n_long = random.randint(1, 4)
-        n_short = random.randint(1, 4)
+        n_long = random.randint(1, 2)
+        n_short = random.randint(1, 2)
         
         combined_long = p1.long_genes + p2.long_genes
         combined_short = p1.short_genes + p2.short_genes
@@ -301,7 +302,7 @@ class EvolutionaryAlphaFactory:
             # Immigration
             n_immigrants = int(self.pop_size * config.IMMIGRATION_PERCENTAGE)
             for _ in range(n_immigrants):
-                new_population.append(self.factory.create_strategy((2, 4)))
+                new_population.append(self.factory.create_strategy((1, 2)))
             
             # Crossover
             while len(new_population) < self.pop_size:
