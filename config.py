@@ -98,11 +98,11 @@ TARGETS = [
         "mode": "BARS_TRADES_1MIN",
     },
     {
-        "name": "DXY",
-        "symbol": "DX",
-        "secType": "CONTFUT",
-        "currency": "USD",
-        "exchange": "NYBOT",
+        "name": "USDCHF",
+        "symbol": "USD",
+        "secType": "CASH",
+        "currency": "CHF",
+        "exchange": "IDEALPRO",
         "mode": "BARS_TRADES_1MIN",
     },
     {

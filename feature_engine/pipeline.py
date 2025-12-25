@@ -31,7 +31,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # Define Loading Specs
     load_specs = {
         'tnx': "CLEAN_TNX.parquet",
-        'dxy': "CLEAN_DXY.parquet",
+        'usdchf': "CLEAN_USDCHF.parquet",
         'bund': "CLEAN_BUND.parquet",
         'us2y': "CLEAN_US2Y.parquet",
         'schatz': "CLEAN_SCHATZ.parquet",
@@ -45,10 +45,10 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     for key, pattern in load_specs.items():
         data_cache[key] = engine.load_ticker_data(pattern)
 
-    # 3. Add Correlator Residuals (TNX, DXY, BUND)
+    # 3. Add Correlator Residuals (TNX, USDCHF, BUND)
     # Using cached data
     if data_cache['tnx'] is not None: engine.add_correlator_residual(data_cache['tnx'], suffix="_tnx")
-    if data_cache['dxy'] is not None: engine.add_correlator_residual(data_cache['dxy'], suffix="_dxy")
+    if data_cache['usdchf'] is not None: engine.add_correlator_residual(data_cache['usdchf'], suffix="_usdchf")
     if data_cache['bund'] is not None: engine.add_correlator_residual(data_cache['bund'], suffix="_bund")
 
     # 4. Intermarket Robust Features (ES, ZN, 6E)
@@ -61,9 +61,9 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     engine.add_intermarket_features(intermarket_dfs)
 
     # DROP REDUNDANT RESIDUALS 
-    # (Keep Betas, Drop Residuals for TNX/DXY as they are redundant with SPY/Other)
+    # (Keep Betas, Drop Residuals for TNX/USDCHF as they are redundant with SPY/Other)
     if engine.bars is not None:
-        drop_residuals = ['residual_tnx', 'residual_dxy', 'residual_bund']
+        drop_residuals = ['residual_tnx', 'residual_usdchf', 'residual_bund']
         engine.bars.drop(columns=[c for c in drop_residuals if c in engine.bars.columns], inplace=True)
             
     # 5. Standard Features

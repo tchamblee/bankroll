@@ -289,12 +289,17 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
     if end_dt.date() >= datetime.now(timezone.utc).date():
         req_end = ''
 
+    # Correct whatToShow for Asset Type
+    what_to_show = 'TRADES'
+    if contract.secType == 'CASH':
+        what_to_show = 'MIDPOINT'
+
     MAX_RETRIES = 3
     for retry in range(MAX_RETRIES + 1):
         try:
             bars = await ib.reqHistoricalDataAsync(
                 contract, endDateTime=req_end, durationStr=duration,
-                barSizeSetting='1 min', whatToShow='TRADES', useRTH=USE_RTH, formatDate=2,
+                barSizeSetting='1 min', whatToShow=what_to_show, useRTH=USE_RTH, formatDate=2,
                 timeout=300.0
             )
             
