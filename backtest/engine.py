@@ -4,7 +4,12 @@ import tempfile
 import os
 import shutil
 import config
+import warnings
 from joblib import Parallel, delayed
+
+# Suppress annoying joblib/loky cleanup warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="joblib.externals.loky.backend.resource_tracker")
+
 from genome import Strategy
 from .workers import _worker_generate_signals, _worker_simulate
 from .feature_computation import precompute_base_features, ensure_feature_context
@@ -92,7 +97,14 @@ class BacktestEngine:
 
     def shutdown(self):
         """Explicitly cleans up resources."""
-        # Unset env var to avoid side effects
+        # 0. Shut down parallel workers to release semaphores/locks
+        try:
+            from joblib.externals.loky import stop_reusable_executor
+            stop_reusable_executor()
+        except:
+            pass
+
+        # 1. Unset env var to avoid side effects
         if 'JOBLIB_TEMP_FOLDER' in os.environ and os.environ['JOBLIB_TEMP_FOLDER'] == self.temp_dir:
             del os.environ['JOBLIB_TEMP_FOLDER']
 

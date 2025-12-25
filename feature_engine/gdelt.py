@@ -57,11 +57,10 @@ def add_gdelt_features(df, gdelt_df):
     # 4. Regime/Panic Features
     # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
     
-    # Drop temp date column and Redundant Features
-    # REMOVED WEAK SIGNALS: central_bank_tone, news_velocity_*, energy_crisis_eur
-    # KEPT: news_tone_*, news_vol_* for derived feature calculation downstream if needed
-    drop_cols = ['date', 'total_vol', 'conflict_intensity', 'inflation_vol', 'epu_diff', 'global_tone', 
-                 'global_polarity', 'panic_score', 'central_bank_tone', 
+    # Drop temp date column and Redundant/Weak Features
+    # Keeping 'panic_score' and 'global_polarity' per request, letting purge_features.py validate them.
+    # Dropping 'central_bank_tone', 'energy_crisis_eur' as they were flagged weak.
+    drop_cols = ['date', 'total_vol', 'inflation_vol', 'central_bank_tone', 
                  'energy_crisis_eur', 'news_vol_zscore']
     merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     

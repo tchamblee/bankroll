@@ -36,7 +36,12 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', target_col,
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread',
-               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf']
+               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
+               # BLACKLIST (Suspicious Leakage)
+               'rel_strength_z_6e', 
+               'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
+               'divergence_50_6e',
+               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
     candidates = [c for c in df.columns if c not in exclude]
     
     kill_list = []
@@ -338,7 +343,12 @@ if __name__ == "__main__":
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', 
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread',
-               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf']
+               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
+               # BLACKLIST
+               'rel_strength_z_6e', 
+               'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
+               'divergence_50_6e',
+               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
     all_candidates = set([c for c in train_df.columns if c not in exclude])
     
     useful_features = set()

@@ -1,6 +1,7 @@
 import random
 import json
 import math
+import config
 from .constants import (
     VALID_DELTA_LOOKBACKS,
     VALID_ZSCORE_WINDOWS,
@@ -193,7 +194,7 @@ class GenomeFactory:
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 
-    def create_strategy(self, num_genes_range=(2, 4)):
+    def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
         num_genes = random.randint(num_genes_range[0], num_genes_range[1])
         long_genes = []
         short_genes = []
