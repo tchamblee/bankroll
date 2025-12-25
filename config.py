@@ -14,6 +14,7 @@ DIRS = {
     "OUTPUT_DIR": os.path.join(BASE_DIR, "output"),
     "FEATURES_DIR": os.path.join(BASE_DIR, "output", "features"),
     "STRATEGIES_DIR": os.path.join(BASE_DIR, "output", "strategies"),
+    "STRATEGY_INBOX": os.path.join(BASE_DIR, "output", "strategies", "found_strategies.json"),
     "PLOTS_DIR": os.path.join(BASE_DIR, "output", "plots"),
     
     "LOGS": os.path.join(BASE_DIR, "logs"),

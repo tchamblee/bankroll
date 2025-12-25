@@ -115,8 +115,8 @@ def evaluate_batch(backtester, batch, horizon):
         # Robust Return: Mean of Val + Test (Excluding Train)
         robust_ret = np.mean([ret_val, ret_test])
         
-        # STRICT FILTER: Must be profitable in OOS (Test) and Robust > 0, AND profitable in Training
-        if ret_test <= 0 or res_test.iloc[i]['sortino'] <= 0.5 or robust_ret <= 0 or ret_train <= 0:
+        # STRICT FILTER: Must be profitable in OOS (Test) and Robust > 0, AND profitable in Training AND Validation
+        if ret_test <= 0 or res_test.iloc[i]['sortino'] <= 0.5 or robust_ret <= 0 or ret_train <= 0 or ret_val <= 0:
            continue
 
         results.append({

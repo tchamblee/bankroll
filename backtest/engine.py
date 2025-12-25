@@ -391,6 +391,7 @@ class BacktestEngine:
         step_size = int(dev_end_idx * 0.11)
         
         fold_scores = np.zeros((len(population), folds))
+        fold_trades = np.zeros((len(population), folds))
         
         limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
         
@@ -417,6 +418,8 @@ class BacktestEngine:
             # Use Simulator
             net_returns, trades_count = self.run_simulation_batch(signals, population, prices, times, time_limit=limit, highs=highs, lows=lows, atr=atr)
             
+            fold_trades[:, f] = trades_count
+
             total_ret = np.sum(net_returns, axis=0)
             max_win = np.max(net_returns, axis=0)
             stability_ratio = max_win / (total_ret + 1e-9)
@@ -457,6 +460,7 @@ class BacktestEngine:
         avg_sortino = np.mean(fold_scores, axis=1)
         min_sortino = np.min(fold_scores, axis=1)
         fold_std = np.std(fold_scores, axis=1)
+        avg_trades = np.mean(fold_trades, axis=1)
         
         robust_score = avg_sortino - (fold_std * 0.5)
         
@@ -468,7 +472,8 @@ class BacktestEngine:
                 'sortino': robust_score[i],
                 'avg_sortino': avg_sortino[i],
                 'min_sortino': min_sortino[i],
-                'fold_std': fold_std[i]
+                'fold_std': fold_std[i],
+                'avg_trades': avg_trades[i]
             })
             
         return pd.DataFrame(results)

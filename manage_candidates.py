@@ -24,6 +24,7 @@ def save_candidates(candidates):
 def find_strategy_in_files(strategy_name):
     """Searches all strategy output files for a strategy with the given name."""
     search_patterns = [
+        "found_strategies.json",
         "apex_strategies_*_top5_unique.json",
         "apex_strategies_*_top10.json",
         "apex_strategies_*.json"
@@ -112,11 +113,46 @@ def clear_list():
     save_candidates([])
     print("🧹 Candidate list cleared.")
 
+def list_inbox():
+    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    if not os.path.exists(inbox_path):
+        print("Inbox is empty (no file found).")
+        return
+
+    with open(inbox_path, 'r') as f:
+        try:
+            strategies = json.load(f)
+        except:
+            print("Inbox is corrupted.")
+            return
+
+    if not strategies:
+        print("Inbox is empty.")
+        return
+
+    # Sort by Sortino
+    strategies.sort(key=lambda x: x.get('test_sortino', 0), reverse=True)
+
+    print(f"\n📥 INBOX STRATEGIES ({len(strategies)} found)")
+    print(f"{'Name':<20} | {'Horizon':<8} | {'Sortino':<8} | {'Ret(Test)':<10} | {'Found(Gen)'}")
+    print("-" * 75)
+    
+    for s in strategies:
+        name = s.get('name', 'Unknown')
+        horizon = s.get('horizon', '?')
+        sortino = s.get('test_sortino', 0)
+        ret = s.get('test_return', 0)
+        gen = s.get('generation', '?')
+        
+        print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {ret*100:<9.2f}% | {gen}")
+    print("-" * 75)
+
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
     
     subparsers.add_parser('list', help='List current candidates')
+    subparsers.add_parser('inbox', help='List found strategies in inbox')
     
     add_parser = subparsers.add_parser('add', help='Add a strategy by name')
     add_parser.add_argument('name', type=str, help='Name of the strategy (e.g., Child_2080)')
@@ -130,6 +166,8 @@ def main():
     
     if args.command == 'list':
         list_candidates()
+    elif args.command == 'inbox':
+        list_inbox()
     elif args.command == 'add':
         add_strategy(args.name)
     elif args.command == 'remove':

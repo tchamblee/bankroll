@@ -120,19 +120,27 @@ class EvolutionaryAlphaFactory:
             # Phase 1 (0-10%): Just positive (Survival)
             # Phase 2 (10-30%): 1 bps (Growth)
             # Phase 3 (30%+): 2 bps (Maturity)
-            phase_1 = max(1, int(self.generations * 0.10))
-            phase_2 = max(2, int(self.generations * 0.30))
+            phase_1 = max(5, int(self.generations * 0.30)) # Extended Phase 1
+            phase_2 = max(10, int(self.generations * 0.60))
             
+            # Relaxed HOF Entry for early generations
+            min_fitness = -10.0 if gen < phase_1 else 0.1
+            
+            if cand.fitness < min_fitness: 
+                # print(f"    Rejected {cand.name}: Fitness {cand.fitness:.4f} < {min_fitness}")
+                continue
+
             if gen < phase_1:
-                thresh = 0.0
+                thresh = -0.0005 # Allow loss (-5bps) in early game
             elif gen < phase_2:
-                thresh = 0.00005 # 0.5 bps
+                thresh = 0.0 # Breakeven
             else:
-                thresh = 0.0001  # 1.0 bps
+                thresh = 0.00005  # 0.5 bps
 
             if n_trades > 0:
                 avg_ret = total_ret / n_trades
                 if avg_ret < thresh:
+                    # print(f"    Rejected {cand.name}: Avg Ret {avg_ret:.6f} < {thresh}")
                     continue
             else:
                 continue # No trades = No alpha
@@ -212,6 +220,14 @@ class EvolutionaryAlphaFactory:
             wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon, min_trades=current_min_trades)
             wfv_scores = wfv_results['sortino'].values
             
+            # DEBUG: Print Stats
+            avg_wfv = np.mean(wfv_scores)
+            avg_trades_debug = wfv_results.get('avg_trades', pd.Series([0]*len(self.population))).mean()
+            # Calculate roughly average return from wfv_results if possible, or just skip it.
+            # wfv_results doesn't return raw returns.
+            # Let's just print what we have.
+            print(f"  DEBUG Gen {gen}: Avg Raw WFV: {avg_wfv:.2f} | Avg Trades: {avg_trades_debug:.1f}")
+
             # 2. Penalties (Dominance & Complexity)
             feature_counts = {}
             for strat in self.population:
@@ -373,6 +389,13 @@ class EvolutionaryAlphaFactory:
                 
                 # 1. Validation DSR (Did we mine this result?)
                 val_r = val_rets_batch[:, i]
+                
+                # --- STRICT VALIDATION FILTER ---
+                # Reject if Validation Return is Zero or Negative
+                if np.sum(val_r) <= 0: 
+                    continue
+                # -------------------------------
+
                 val_sr = estimated_sharpe_ratio(val_r, config.ANNUALIZATION_FACTOR)
                 val_skew = scipy.stats.skew(val_r)
                 val_kurt = scipy.stats.kurtosis(val_r)
@@ -549,6 +572,27 @@ class EvolutionaryAlphaFactory:
             
             with open(out_path, "w") as f: json.dump(unique[:1000], f, indent=4)
             print(f"\n💾 Saved results to {out_path}")
+
+            # --- Persist to Global Inbox (Accumulate ALL finds) ---
+            inbox_path = config.DIRS['STRATEGY_INBOX']
+            inbox_data = []
+            if os.path.exists(inbox_path):
+                try:
+                    with open(inbox_path, "r") as f: inbox_data = json.load(f)
+                except: pass
+            
+            new_inbox_count = 0
+            for s_data in output:
+                # Deduplicate by name against existing inbox
+                if not any(x['name'] == s_data['name'] for x in inbox_data):
+                     s_data['horizon'] = horizon # Stamp with horizon
+                     inbox_data.append(s_data)
+                     new_inbox_count += 1
+            
+            if new_inbox_count > 0:
+                with open(inbox_path, "w") as f: json.dump(inbox_data, f, indent=4)
+                print(f"📦 Added {new_inbox_count} new strategies to Inbox: {inbox_path}")
+            # -------------------------------
         else:
             print("No strategies survived.")
 

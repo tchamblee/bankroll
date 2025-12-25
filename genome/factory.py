@@ -1,6 +1,7 @@
 import random
 import json
 import math
+import os
 import config
 from .constants import (
     VALID_DELTA_LOOKBACKS,
@@ -18,21 +19,40 @@ from .genes import (
 from .strategy import Strategy
 
 class GenomeFactory:
-    def __init__(self, survivors_file):
-        with open(survivors_file, 'r') as f:
-            self.features = json.load(f)
+    def __init__(self, survivors_file=None):
+        self.features = []
+        if survivors_file and os.path.exists(survivors_file):
+            try:
+                with open(survivors_file, 'r') as f:
+                    content = json.load(f)
+                    # basic check if it's a list of strings (features) or dicts (strategies)
+                    if isinstance(content, list) and len(content) > 0 and isinstance(content[0], str):
+                        self.features = content
+            except Exception as e:
+                print(f"⚠️ Warning: Could not load features from {survivors_file}: {e}")
+
         self.feature_stats = {} 
         
         # Categorize Features for Gated Logic
         self.regime_keywords = ['hurst', 'volatility', 'efficiency', 'entropy', 'skew', 'trend_strength', 
                                'yang_zhang', 'lambda', 'force', 'fdi',
                                'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol']
+        
+        self.update_pools()
+
+    def update_pools(self):
         self.regime_pool = [f for f in self.features if any(k in f for k in self.regime_keywords)]
         self.trigger_pool = [f for f in self.features if f not in self.regime_pool]
-        
-        # print(f"Factory Loaded: {len(self.regime_pool)} Regime Features | {len(self.trigger_pool)} Trigger Features")
 
     def set_stats(self, df):
+        # If no features loaded (first run), populate from dataframe
+        if not self.features:
+            ignore_cols = {'open', 'high', 'low', 'close', 'volume', 'time_start', 'time_end', 
+                          'time_hour', 'time_weekday', 'log_ret', 'target', 'symbol'}
+            self.features = [c for c in df.columns if c not in ignore_cols and not c.startswith('metadata_')]
+            self.update_pools()
+            print(f"  GenomeFactory: Auto-detected {len(self.features)} features from Dataframe.")
+
         for f in self.features:
             if f in df.columns:
                 self.feature_stats[f] = {'mean': df[f].mean(), 'std': df[f].std()}
