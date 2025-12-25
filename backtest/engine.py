@@ -21,7 +21,15 @@ class BacktestEngine:
         self.annualization_factor = annualization_factor if annualization_factor else config.ANNUALIZATION_FACTOR
         
         # Temp dir for individual npy files
-        self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_")
+        # We use the project's configured temp dir to keep everything contained
+        base_temp = config.DIRS.get('TEMP_DIR', tempfile.gettempdir())
+        os.makedirs(base_temp, exist_ok=True)
+        self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_", dir=base_temp)
+        
+        # Force Joblib to use this directory for its own temp files (memmapping)
+        # This ensures that when we delete self.temp_dir, we delete joblib's mess too.
+        os.environ['JOBLIB_TEMP_FOLDER'] = self.temp_dir
+        
         self.existing_keys = set()
         
         # --- CONFIGURATION ---
@@ -82,10 +90,21 @@ class BacktestEngine:
         self.train_idx = int(n * config.TRAIN_SPLIT_RATIO)
         self.val_idx = int(n * config.VAL_SPLIT_RATIO)
 
-    def __del__(self):
+    def shutdown(self):
+        """Explicitly cleans up resources."""
+        # Unset env var to avoid side effects
+        if 'JOBLIB_TEMP_FOLDER' in os.environ and os.environ['JOBLIB_TEMP_FOLDER'] == self.temp_dir:
+            del os.environ['JOBLIB_TEMP_FOLDER']
+
         # Cleanup temp dir
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+            try:
+                shutil.rmtree(self.temp_dir)
+            except Exception as e:
+                print(f"⚠️ Warning: Could not fully clean temp dir {self.temp_dir}: {e}")
+
+    def __del__(self):
+        self.shutdown()
 
     def precompute_context(self):
         precompute_base_features(self.raw_data, self.temp_dir, self.existing_keys)

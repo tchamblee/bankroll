@@ -38,8 +38,8 @@ ANNUALIZATION_FACTOR = 114408 # ~454 bars/day * 252 days (Volume Threshold: 1B u
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
-MIN_TRADES_FOR_METRICS = 10
-MIN_TRADES_COEFFICIENT = 1200 # target = max(10, coeff/horizon + 5)
+MIN_TRADES_FOR_METRICS = 50
+MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
 
 # --- DATA & VALIDATION SETTINGS ---

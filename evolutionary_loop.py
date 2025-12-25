@@ -45,6 +45,10 @@ class EvolutionaryAlphaFactory:
         # Track total unique strategies evaluated for DSR calculation
         self.total_strategies_evaluated = 0
 
+    def cleanup(self):
+        if hasattr(self, 'backtester'):
+            self.backtester.shutdown()
+
     def initialize_population(self, horizon=None):
         print(f"  🎲 Initializing Population with {self.pop_size} Random Strategies.")
         self.population = [self.factory.create_strategy((2, 4)) for _ in range(self.pop_size)]
@@ -324,17 +328,29 @@ class EvolutionaryAlphaFactory:
             # Evaluate on Test Set
             test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon, min_trades=10)
             
-            # We need Test Returns Series for DSR Calculation
-            # Re-run simulation to get returns (evaluate_population with return_series=False doesn't give them easily per strat)
-            # Actually, let's just re-simulate the top candidates quickly to get the series.
-            # Or better, we can assume 'test_res' has what we need? No, it has summary stats.
+            # We need Test Returns for OOS PSR and Val Returns for Selection DSR
+            # Let's generate signals for both ranges
+            val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
+            test_start, test_end = self.backtester.val_idx, len(self.backtester.open_vec)
             
-            # Let's do a batch run for returns for DSR
-            test_start = self.backtester.val_idx
-            test_end = len(self.backtester.open_vec)
-            test_signals = self.backtester.generate_signal_matrix(top_candidates)[test_start:test_end]
+            full_signals = self.backtester.generate_signal_matrix(top_candidates)
+            val_signals = full_signals[val_start:val_end]
+            test_signals = full_signals[test_start:test_end]
+
+            # Batch Sim Validation
+            val_rets_batch, _ = self.backtester.run_simulation_batch(
+                val_signals,
+                top_candidates,
+                self.backtester.open_vec[val_start:val_end],
+                self.backtester.times_vec.iloc[val_start:val_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[val_start:val_end],
+                time_limit=horizon,
+                highs=self.backtester.high_vec[val_start:val_end],
+                lows=self.backtester.low_vec[val_start:val_end],
+                atr=self.backtester.atr_vec[val_start:val_end]
+            )
             
-            t_rets_batch, _ = self.backtester.run_simulation_batch(
+            # Batch Sim Test
+            test_rets_batch, _ = self.backtester.run_simulation_batch(
                 test_signals,
                 top_candidates,
                 self.backtester.open_vec[test_start:test_end],
@@ -349,19 +365,36 @@ class EvolutionaryAlphaFactory:
             for i, s in enumerate(top_candidates):
                 if i >= len(test_res): break
                 
-                # Calculate DSR
-                strat_rets = t_rets_batch[:, i]
-                obs_sr = estimated_sharpe_ratio(strat_rets, config.ANNUALIZATION_FACTOR)
-                skew = scipy.stats.skew(strat_rets)
-                kurt = scipy.stats.kurtosis(strat_rets)
+                # 1. Validation DSR (Did we mine this result?)
+                val_r = val_rets_batch[:, i]
+                val_sr = estimated_sharpe_ratio(val_r, config.ANNUALIZATION_FACTOR)
+                val_skew = scipy.stats.skew(val_r)
+                val_kurt = scipy.stats.kurtosis(val_r)
                 
-                dsr = deflated_sharpe_ratio(
-                    observed_sr=obs_sr,
-                    returns=strat_rets,
-                    n_trials=self.total_strategies_evaluated,
-                    var_returns=np.var(strat_rets),
-                    skew_returns=skew,
-                    kurt_returns=kurt,
+                dsr_val = deflated_sharpe_ratio(
+                    observed_sr=val_sr,
+                    returns=val_r,
+                    n_trials=self.total_strategies_evaluated, # The penalty
+                    var_returns=np.var(val_r),
+                    skew_returns=val_skew,
+                    kurt_returns=val_kurt,
+                    annualization_factor=config.ANNUALIZATION_FACTOR
+                )
+                
+                # 2. Test PSR (Is the OOS result real?)
+                # n_trials = 1 because we didn't optimize on this data
+                test_r = test_rets_batch[:, i]
+                test_sr = estimated_sharpe_ratio(test_r, config.ANNUALIZATION_FACTOR)
+                test_skew = scipy.stats.skew(test_r)
+                test_kurt = scipy.stats.kurtosis(test_r)
+                
+                psr_test = deflated_sharpe_ratio(
+                    observed_sr=test_sr,
+                    returns=test_r,
+                    n_trials=1, 
+                    var_returns=np.var(test_r),
+                    skew_returns=test_skew,
+                    kurt_returns=test_kurt,
                     annualization_factor=config.ANNUALIZATION_FACTOR
                 )
                 
@@ -370,7 +403,8 @@ class EvolutionaryAlphaFactory:
                 strat_data['test_return'] = float(test_res.iloc[i]['total_return'])
                 strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
                 strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
-                strat_data['dsr'] = float(dsr)
+                strat_data['dsr_val'] = float(dsr_val)
+                strat_data['psr_test'] = float(psr_test)
                 strat_data['training_id'] = self.training_id
                 strat_data['generation'] = getattr(s, 'generation_found', -1)
                 output.append(strat_data)
@@ -384,7 +418,7 @@ class EvolutionaryAlphaFactory:
             # Since HOF is already <0.7 correlated, we just pick the top 5 that are <0.5 correlated for extra safety
             
             cand_signals = self.backtester.generate_signal_matrix(top_candidates)
-            val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
+            # val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
             cand_signals_val = cand_signals[val_start:val_end]
             
             # Rank candidates by Composite Score (Robust Val + Test Sortino)
@@ -397,7 +431,8 @@ class EvolutionaryAlphaFactory:
                 t_ret = float(test_res.iloc[i]['total_return'])
                 
                 # Retrieve DSR from output list
-                d_score = next((x['dsr'] for x in output if x['name'] == strat.name), 0.0)
+                d_val = next((x['dsr_val'] for x in output if x['name'] == strat.name), 0.0)
+                p_test = next((x['psr_test'] for x in output if x['name'] == strat.name), 0.0)
 
                 # Filter out losers based on Validation Score (Robustness)
                 if val_score <= 0: continue
@@ -409,7 +444,8 @@ class EvolutionaryAlphaFactory:
                     'strat': strat,
                     'orig_idx': i,
                     'score': composite_score,
-                    'dsr': d_score
+                    'dsr_val': d_val,
+                    'psr_test': p_test
                 })
             
             # Sort by Composite Score Descending
@@ -446,8 +482,8 @@ class EvolutionaryAlphaFactory:
             
             # Print Portfolio Strategy Stats
             print("\n  Ensemble Constituent Performance:")
-            print(f"  {'Rank':<4} | {'Name':<15} | {'Robust (Val)':<12} | {'Sortino (Test)':<14} | {'DSR':<6} | {'Ret (Test)':<10} | {'Trades':<6}")
-            print("  " + "-" * 85)
+            print(f"  {'Rank':<4} | {'Name':<15} | {'Robust (Val)':<12} | {'Val DSR':<8} | {'Test PSR':<8} | {'Sortino (Test)':<14} | {'Ret (Test)':<10} | {'Trades':<6}")
+            print("  " + "-" * 105)
             
             for p_rank, (strat, orig_idx) in enumerate(zip(portfolio, portfolio_indices)):
                 # Get Test Metrics using the original index in top_candidates/test_res
@@ -457,9 +493,10 @@ class EvolutionaryAlphaFactory:
                     t_trades = int(test_res.iloc[orig_idx]['trades'])
                     
                     val_score = val_fitness_map.get(strat.name, -999.0)
-                    dsr_val = next((x['dsr'] for x in output if x['name'] == strat.name), 0.0)
+                    dsr_v = next((x['dsr_val'] for x in output if x['name'] == strat.name), 0.0)
+                    psr_t = next((x['psr_test'] for x in output if x['name'] == strat.name), 0.0)
                     
-                    print(f"  {p_rank+1:<4} | {strat.name:<15} | {val_score:<12.4f} | {t_sortino:<14.4f} | {dsr_val:.2f}   | {t_ret*100:<9.2f}% | {t_trades:<6}")
+                    print(f"  {p_rank+1:<4} | {strat.name:<15} | {val_score:<12.4f} | {dsr_v:.4f}   | {psr_t:.4f}   | {t_sortino:<14.4f} | {t_ret*100:<9.2f}% | {t_trades:<6}")
             
             
             # Save Portfolio
@@ -513,7 +550,10 @@ if __name__ == "__main__":
         target_col='log_ret',
         prediction_mode=False
     )
-    factory.evolve(horizon=args.horizon)
     
-    if hasattr(factory.backtester, 'temp_dir') and os.path.exists(factory.backtester.temp_dir):
-        shutil.rmtree(factory.backtester.temp_dir)
+    try:
+        factory.evolve(horizon=args.horizon)
+    finally:
+        factory.cleanup()
+    
+    # Old cleanup block removed as it is now handled by factory.cleanup()
