@@ -232,6 +232,24 @@ def simulate_mutex_portfolio(subset_indices, sig_matrix, horizons, sl_mults, tp_
 #  OPTIMIZATION LOGIC
 # ==============================================================================
 
+def check_robustness(returns, n_folds=4):
+    """
+    Checks if the strategy is consistent across time by splitting returns into N folds.
+    Returns True if profitable in at least 75% of folds.
+    """
+    chunk_size = len(returns) // n_folds
+    wins = 0
+    
+    for i in range(n_folds):
+        start = i * chunk_size
+        end = (i + 1) * chunk_size if i < n_folds - 1 else len(returns)
+        chunk_ret = np.sum(returns[start:end])
+        if chunk_ret > 0:
+            wins += 1
+            
+    # Require 75% consistency (3 out of 4)
+    return wins >= (n_folds * 0.75)
+
 def optimize_mutex_portfolio(candidates, backtester):
     print("\n" + "="*80)
     print("🧠 MUTEX PORTFOLIO COMBINATORIAL OPTIMIZATION")
@@ -350,24 +368,27 @@ def optimize_mutex_portfolio(candidates, backtester):
                 'MaxDD': max_dd
             }
             
-            # 1. Update Fallback (Best Sortino)
+            # 1. Update Fallback (Best Sortino) - Must still pass Robustness
             if sortino > fallback_best_sortino:
-                fallback_best_sortino = sortino
-                fallback_combo = [candidates[i] for i in idx_list]
-                fallback_stats = stats
+                if check_robustness(rets):
+                    fallback_best_sortino = sortino
+                    fallback_combo = [candidates[i] for i in idx_list]
+                    fallback_stats = stats
                 
             # 2. Check Primary Constraints
             if sortino >= MIN_SORTINO and max_dd >= MAX_DD_LIMIT:
-                valid_portfolios_found += 1
-                # Maximize Profit
-                if profit > best_profit:
-                    best_profit = profit
-                    best_combo = [candidates[i] for i in idx_list]
-                    best_stats = stats
+                # 3. Robustness Check (K-Fold)
+                if check_robustness(rets):
+                    valid_portfolios_found += 1
+                    # Maximize Profit
+                    if profit > best_profit:
+                        best_profit = profit
+                        best_combo = [candidates[i] for i in idx_list]
+                        best_stats = stats
                 
     elapsed = time.time() - start_time
     print(f"  Optimization complete in {elapsed:.2f}s ({tested_count} combos).")
-    print(f"  Valid Portfolios (Sortino > {MIN_SORTINO}, MaxDD > {MAX_DD_LIMIT*100:.0f}%): {valid_portfolios_found}")
+    print(f"  Valid Portfolios (Sortino > {MIN_SORTINO}, MaxDD > {MAX_DD_LIMIT*100:.0f}%, Robust > 75%): {valid_portfolios_found}")
     
     if best_combo:
         # Calculate DSR Statistics

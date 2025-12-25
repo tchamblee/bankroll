@@ -65,4 +65,39 @@ def run_stress_test(strategy_file):
     print("🛡️  STRESS TEST REPORT (CPCV)")
     print("="*80)
     print(f"{ 'Name':<20} | {'P5 Sortino':<12} | {'Median':<10} | {'Std Dev':<10} | {'Min':<10} | {'Verdict'}")
-    print("-
+    print("-" * 80)
+    
+    passed_strategies = []
+    
+    for r in results:
+        name = r['name']
+        p5 = r['p5_sortino']
+        med = r['median_sortino']
+        std = r['std_sortino']
+        min_s = r['min_sortino']
+        
+        # Rating Logic
+        # P5 (5th Percentile) Sortino > 1.5 means in 95% of market splits, Sortino was > 1.5
+        if p5 > 1.5 and min_s > -1.0:
+            verdict = "✅ PASSED"
+            passed_strategies.append(name)
+        elif p5 > 0:
+            verdict = "⚠️  RISKY"
+        else:
+            verdict = "❌ FAILED"
+            
+        print(f"{name:<20} | {p5:<12.2f} | {med:<10.2f} | {std:<10.2f} | {min_s:<10.2f} | {verdict}")
+        
+    print("="*80)
+    
+    if passed_strategies:
+        print(f"\n🎉 {len(passed_strategies)}/{len(strategies)} strategies passed the Stress Test.")
+    else:
+        print("\n💀 No strategies passed the Stress Test.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("file", type=str, help="Path to strategy JSON file")
+    args = parser.parse_args()
+    
+    run_stress_test(args.file)

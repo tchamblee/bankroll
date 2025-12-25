@@ -53,7 +53,7 @@ def find_strategy_in_files(strategy_name):
                             if 'metrics' not in s_dict:
                                 s_dict['metrics'] = {
                                     'sortino_oos': s_dict.get('test_sortino', 0),
-                                    'robust_return': s_dict.get('robust_return', 0)
+                                    'robust_return': s_dict.get('test_return', s_dict.get('robust_return', 0))
                                 }
                                 
                             return s_dict
@@ -75,8 +75,11 @@ def list_candidates():
         name = c.get('name', 'Unknown')
         horizon = c.get('horizon', '?')
         metrics = c.get('metrics', {})
-        sortino = metrics.get('sortino_oos', 0)
+        sortino = metrics.get('sortino_oos', c.get('test_sortino', 0))
         ret = metrics.get('robust_return', 0)
+        
+        if ret == 0:
+            ret = c.get('test_return', 0)
         
         print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {ret*100:<7.2f}%")
     print("-" * 50)
