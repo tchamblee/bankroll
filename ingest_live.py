@@ -460,45 +460,45 @@ async def main_loop():
     
     stop_event = asyncio.Event()
     
-    # Start GDELT Monitor as separate task
+    # Start GDELT Monitor as separate task (Lives across IBKR reconnects)
     gdelt_task = asyncio.create_task(gdelt_monitor(stop_event))
 
-    ib = IB()
-    ib.errorEvent += on_error
-    
-    try:
-        logger.info("🔄 Connecting to IBKR...")
-        await asyncio.wait_for(ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=10)
-        ib.reqMarketDataType(3) 
+    while not stop_event.is_set():
+        ib = IB()
+        ib.errorEvent += on_error
         
-        # Run IBKR Ingestion
-        await ingest_stream(ib, stop_event)
+        try:
+            logger.info("🔄 Connecting to IBKR...")
+            await asyncio.wait_for(ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=15)
+            ib.reqMarketDataType(3) 
+            
+            logger.info("✅ Connected. Starting Stream...")
+            # Run IBKR Ingestion (Blocks until disconnect/error)
+            await ingest_stream(ib, stop_event)
+            
+        except (OSError, ConnectionError, asyncio.TimeoutError) as e:
+            logger.warning(f"⚠️ Connection Drop/Timeout: {e}")
+        except asyncio.CancelledError:
+            logger.info("🛑 Main Loop Cancelled")
+            stop_event.set()
+        except Exception as e:
+            logger.error(f"🔥 Error: {e}", exc_info=True)
+        finally:
+            try: 
+                ib.disconnect()
+                logger.info("🔌 IBKR Disconnected")
+            except: pass
         
-    except (OSError, ConnectionError) as e:
-        logger.error(f"⚠️ Connection Drop: {e}")
-    except asyncio.CancelledError:
-        logger.info("🛑 Main Loop Cancelled")
-    except Exception as e:
-        logger.error(f"🔥 Error: {e}", exc_info=True)
-    finally:
-        logger.info("🛑 Shutting down...")
-        stop_event.set() # Signal GDELT to stop
-        
-        try: 
-            ib.disconnect()
-            logger.info("🔌 IBKR Disconnected")
+        if not stop_event.is_set():
+            logger.info(f"⏳ Reconnecting in {RECONNECT_DELAY}s...")
+            await asyncio.sleep(RECONNECT_DELAY)
+
+    # Cleanup GDELT
+    if not gdelt_task.done():
+        logger.info("⏳ Waiting for GDELT task to finish...")
+        gdelt_task.cancel()
+        try: await gdelt_task
         except: pass
-        
-        # Wait for GDELT task to finish gracefully
-        if not gdelt_task.done():
-            logger.info("⏳ Waiting for GDELT task to finish...")
-            try:
-                await asyncio.wait_for(gdelt_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("⚠️ GDELT task timed out, cancelling...")
-                gdelt_task.cancel()
-                try: await gdelt_task
-                except: pass
 
 if __name__ == "__main__":
     try:
