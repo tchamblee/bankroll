@@ -8,6 +8,7 @@ from joblib import Parallel, delayed
 from genome import Strategy
 from .workers import _worker_generate_signals, _worker_simulate
 from .feature_computation import precompute_base_features, ensure_feature_context
+from .statistics import combinatorial_purged_cv
 
 class BacktestEngine:
     """
@@ -437,6 +438,101 @@ class BacktestEngine:
                 'avg_sortino': avg_sortino[i],
                 'min_sortino': min_sortino[i],
                 'fold_std': fold_std[i]
+            })
+            
+        return pd.DataFrame(results)
+
+    def evaluate_combinatorial_purged_cv(self, population: list[Strategy], n_folds=6, n_test_folds=2, time_limit=None):
+        """
+        Runs Combinatorial Purged Cross-Validation (CPCV).
+        Generates multiple 'alternative history' paths by splicing test blocks.
+        Returns detailed statistics for each strategy across all paths.
+        """
+        if not population: return pd.DataFrame()
+
+        # 1. Setup Data & Signals
+        # We use the full available dataset (Train + Val + potentially Test if verifying final)
+        # For rigorous testing, we usually use the entire dataset to see stability across ALL regimes.
+        n_bars = len(self.raw_data)
+        
+        # Pre-compute all signals once
+        full_signal_matrix = self.generate_signal_matrix(population, horizon=time_limit)
+        
+        # Shift for execution (Next-Open)
+        full_signal_matrix = np.vstack([np.zeros((1, full_signal_matrix.shape[1]), dtype=full_signal_matrix.dtype), full_signal_matrix[:-1]])
+
+        # 2. Generate Splits
+        splits = combinatorial_purged_cv(n_bars, n_folds=n_folds, n_test_folds=n_test_folds)
+        print(f"  CPCV: Evaluating {len(splits)} combinatorial paths...")
+        
+        path_scores = np.zeros((len(population), len(splits)))
+        
+        limit = time_limit if time_limit else config.DEFAULT_TIME_LIMIT
+
+        for i, (train_idx, test_idx) in enumerate(splits):
+            # We evaluate on the TEST portion of the split
+            # CPCV uses the 'Test' blocks as the OOS performance proxy for that specific path combination
+            
+            # Slice Data
+            # Note: test_idx might not be contiguous, but simulation supports arrays if we handle it carefully.
+            # However, run_simulation_batch expects contiguous arrays usually for speed/ATR calculation if passed.
+            # But since we pass full ATR vectors sliced by index, it works fine mathematically 
+            # as long as we treat them as a sequence of trades.
+            # The simulator iterates 0..N, so we construct a 'compressed' time series representing the path.
+            
+            signals = full_signal_matrix[test_idx]
+            prices = self.open_vec[test_idx]
+            highs = self.high_vec[test_idx]
+            lows = self.low_vec[test_idx]
+            atr = self.atr_vec[test_idx]
+            
+            # Handle timestamps (pandas vs numpy)
+            if hasattr(self.times_vec, 'iloc'):
+                times = self.times_vec.iloc[test_idx]
+            else:
+                times = self.times_vec[test_idx]
+            
+            # Run Simulation
+            net_returns, trades_count = self.run_simulation_batch(
+                signals, population, prices, times, 
+                time_limit=limit, highs=highs, lows=lows, atr=atr
+            )
+            
+            # Metrics
+            avg = np.mean(net_returns, axis=0)
+            downside = np.minimum(net_returns, 0)
+            downside_std = np.std(downside, axis=0) + 1e-9
+            
+            sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
+            
+            # Penalties
+            # If a strategy fails in this specific market combo, it gets punished
+            # Low trade count in this slice?
+            # Adjust target trades based on slice size relative to full data
+            slice_ratio = len(test_idx) / n_bars
+            min_trades_slice = max(3, int(10 * slice_ratio)) # Very lax, just needs to trade
+            
+            low_trades_mask = trades_count < min_trades_slice
+            sortino[low_trades_mask] = -1.0
+            
+            path_scores[:, i] = sortino
+            
+        # 3. Aggregate Results
+        # We want strategies that perform well across MANY paths.
+        # Metric: 5th Percentile Sortino (Worst 5% of market conditions)
+        
+        p5_sortino = np.percentile(path_scores, 5, axis=1)
+        median_sortino = np.median(path_scores, axis=1)
+        std_sortino = np.std(path_scores, axis=1)
+        
+        results = []
+        for i, strat in enumerate(population):
+            results.append({
+                'id': strat.name,
+                'cpcv_p5_sortino': p5_sortino[i],
+                'cpcv_median': median_sortino[i],
+                'cpcv_std': std_sortino[i],
+                'cpcv_min': np.min(path_scores[i])
             })
             
         return pd.DataFrame(results)

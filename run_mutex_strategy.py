@@ -7,9 +7,11 @@ import sys
 import itertools
 import time
 from numba import jit
+import scipy.stats
 import config
 from genome import Strategy
 from backtest import BacktestEngine
+from backtest.statistics import deflated_sharpe_ratio, estimated_sharpe_ratio
 from trade_simulator import TradeSimulator
 
 # ==============================================================================
@@ -368,13 +370,42 @@ def optimize_mutex_portfolio(candidates, backtester):
     print(f"  Valid Portfolios (Sortino > {MIN_SORTINO}, MaxDD > {MAX_DD_LIMIT*100:.0f}%): {valid_portfolios_found}")
     
     if best_combo:
+        # Calculate DSR Statistics
+        best_rets = np.zeros(len(opt_sig_matrix))
+        # We need to re-run the best combo to get the exact return vector for DSR calculation
+        # Or we could have stored it. Let's re-run it quickly.
+        best_indices = [candidates.index(c) for c in best_combo]
+        best_rets, _ = simulate_mutex_portfolio(
+            best_indices, opt_sig_matrix, horizons, sl_mults, tp_mults, 
+            prices, highs, lows, atr, hours, weekdays, backtester.account_size
+        )
+        
+        # DSR Calculation
+        obs_sr = estimated_sharpe_ratio(best_rets, config.ANNUALIZATION_FACTOR)
+        skew = scipy.stats.skew(best_rets)
+        kurt = scipy.stats.kurtosis(best_rets)
+        
+        dsr = deflated_sharpe_ratio(
+            observed_sr=obs_sr,
+            returns=best_rets,
+            n_trials=tested_count,
+            var_returns=np.var(best_rets),
+            skew_returns=skew,
+            kurt_returns=kurt,
+            annualization_factor=config.ANNUALIZATION_FACTOR
+        )
+
         print(f"\n🏆 WINNING COMBINATION FOUND (Max Profit Objective)!")
         print(f"  Strategies: {len(best_combo)}")
         print(f"  Profit:     ${best_stats['Profit']:,.2f}")
         print(f"  Sortino:    {best_stats['Sortino']:.2f}")
+        print(f"  DSR:        {dsr:.4f} (Probability > Random)")
         print(f"  MaxDD:      {best_stats['MaxDD']*100:.2f}%")
         print(f"  Trades:     {int(best_stats['Trades'])}")
         
+        if dsr < 0.95:
+             print("⚠️  WARNING: DSR < 0.95. This strategy might be a statistical fluke despite high profit.")
+
         print("\nComposition:")
         for s in best_combo:
             print(f"  - {s.name} (H{s.horizon})")

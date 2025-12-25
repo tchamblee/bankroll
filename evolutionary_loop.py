@@ -6,9 +6,11 @@ import json
 import random
 import time
 import config
+import scipy.stats
 from feature_engine import FeatureEngine
 from genome import GenomeFactory, Strategy
 from backtest import BacktestEngine
+from backtest.statistics import deflated_sharpe_ratio, estimated_sharpe_ratio
 import uuid
 
 class EvolutionaryAlphaFactory:
@@ -39,6 +41,9 @@ class EvolutionaryAlphaFactory:
         # HOF now stores dicts: {'strat': Strategy, 'fit': float, 'sig': np.array, 'gen': int}
         # This list ensures DIVERSITY. We do not allow correlated strategies (>0.7) to coexist here.
         self.hall_of_fame = [] 
+        
+        # Track total unique strategies evaluated for DSR calculation
+        self.total_strategies_evaluated = 0
 
     def initialize_population(self, horizon=None):
         print(f"  🎲 Initializing Population with {self.pop_size} Random Strategies.")
@@ -190,6 +195,9 @@ class EvolutionaryAlphaFactory:
             if gen >= 5: current_min_trades = int(6 * scaling_factor)
             if gen >= 15: current_min_trades = target_final
             
+            # Increment trial counter for DSR
+            self.total_strategies_evaluated += len(self.population)
+
             # 1. Evaluate using Rolling Walk-Forward Validation
             wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon, min_trades=current_min_trades)
             wfv_scores = wfv_results['sortino'].values
@@ -316,14 +324,53 @@ class EvolutionaryAlphaFactory:
             # Evaluate on Test Set
             test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon, min_trades=10)
             
+            # We need Test Returns Series for DSR Calculation
+            # Re-run simulation to get returns (evaluate_population with return_series=False doesn't give them easily per strat)
+            # Actually, let's just re-simulate the top candidates quickly to get the series.
+            # Or better, we can assume 'test_res' has what we need? No, it has summary stats.
+            
+            # Let's do a batch run for returns for DSR
+            test_start = self.backtester.val_idx
+            test_end = len(self.backtester.open_vec)
+            test_signals = self.backtester.generate_signal_matrix(top_candidates)[test_start:test_end]
+            
+            t_rets_batch, _ = self.backtester.run_simulation_batch(
+                test_signals,
+                top_candidates,
+                self.backtester.open_vec[test_start:test_end],
+                self.backtester.times_vec.iloc[test_start:test_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[test_start:test_end],
+                time_limit=horizon,
+                highs=self.backtester.high_vec[test_start:test_end],
+                lows=self.backtester.low_vec[test_start:test_end],
+                atr=self.backtester.atr_vec[test_start:test_end]
+            )
+
             output = []
             for i, s in enumerate(top_candidates):
                 if i >= len(test_res): break
+                
+                # Calculate DSR
+                strat_rets = t_rets_batch[:, i]
+                obs_sr = estimated_sharpe_ratio(strat_rets, config.ANNUALIZATION_FACTOR)
+                skew = scipy.stats.skew(strat_rets)
+                kurt = scipy.stats.kurtosis(strat_rets)
+                
+                dsr = deflated_sharpe_ratio(
+                    observed_sr=obs_sr,
+                    returns=strat_rets,
+                    n_trials=self.total_strategies_evaluated,
+                    var_returns=np.var(strat_rets),
+                    skew_returns=skew,
+                    kurt_returns=kurt,
+                    annualization_factor=config.ANNUALIZATION_FACTOR
+                )
+                
                 strat_data = s.to_dict()
                 strat_data['test_sortino'] = float(test_res.iloc[i]['sortino'])
                 strat_data['test_return'] = float(test_res.iloc[i]['total_return'])
                 strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
                 strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
+                strat_data['dsr'] = float(dsr)
                 strat_data['training_id'] = self.training_id
                 strat_data['generation'] = getattr(s, 'generation_found', -1)
                 output.append(strat_data)
@@ -349,6 +396,9 @@ class EvolutionaryAlphaFactory:
                 t_sortino = float(test_res.iloc[i]['sortino'])
                 t_ret = float(test_res.iloc[i]['total_return'])
                 
+                # Retrieve DSR from output list
+                d_score = next((x['dsr'] for x in output if x['name'] == strat.name), 0.0)
+
                 # Filter out losers based on Validation Score (Robustness)
                 if val_score <= 0: continue
 
@@ -358,7 +408,8 @@ class EvolutionaryAlphaFactory:
                 scored_candidates.append({
                     'strat': strat,
                     'orig_idx': i,
-                    'score': composite_score
+                    'score': composite_score,
+                    'dsr': d_score
                 })
             
             # Sort by Composite Score Descending
@@ -395,8 +446,8 @@ class EvolutionaryAlphaFactory:
             
             # Print Portfolio Strategy Stats
             print("\n  Ensemble Constituent Performance:")
-            print(f"  {'Rank':<4} | {'Name':<15} | {'Robust (Val)':<12} | {'Sortino (Test)':<14} | {'Ret (Test)':<10} | {'Trades':<6}")
-            print("  " + "-" * 75)
+            print(f"  {'Rank':<4} | {'Name':<15} | {'Robust (Val)':<12} | {'Sortino (Test)':<14} | {'DSR':<6} | {'Ret (Test)':<10} | {'Trades':<6}")
+            print("  " + "-" * 85)
             
             for p_rank, (strat, orig_idx) in enumerate(zip(portfolio, portfolio_indices)):
                 # Get Test Metrics using the original index in top_candidates/test_res
@@ -406,8 +457,10 @@ class EvolutionaryAlphaFactory:
                     t_trades = int(test_res.iloc[orig_idx]['trades'])
                     
                     val_score = val_fitness_map.get(strat.name, -999.0)
+                    dsr_val = next((x['dsr'] for x in output if x['name'] == strat.name), 0.0)
                     
-                    print(f"  {p_rank+1:<4} | {strat.name:<15} | {val_score:<12.4f} | {t_sortino:<14.4f} | {t_ret*100:<9.2f}% | {t_trades:<6}")
+                    print(f"  {p_rank+1:<4} | {strat.name:<15} | {val_score:<12.4f} | {t_sortino:<14.4f} | {dsr_val:.2f}   | {t_ret*100:<9.2f}% | {t_trades:<6}")
+            
             
             # Save Portfolio
             port_data = [s.to_dict() for s in portfolio]
