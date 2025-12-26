@@ -63,14 +63,13 @@ def main():
     # 5. Analysis & Visualization
     run_step("report_top_strategies.py", "Strategy Selection & Reporting")
     
-    # 5b. Robustness Stress Testing (CPCV)
-    # We run CPCV on the unique cluster champions found in the previous step
-    for horizon in config.PREDICTION_HORIZONS:
-        unique_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
-        if os.path.exists(unique_file):
-            run_step(f"verify_robustness.py {unique_file}", f"CPCV Robustness Audit (Horizon: {horizon})")
+    # 5b. Robustness Stress Testing (CPCV) - DISABLED (Using Mutex Robustness Instead)
+    # for horizon in config.PREDICTION_HORIZONS:
+    #     unique_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
+    #     if os.path.exists(unique_file):
+    #         run_step(f"verify_robustness.py {unique_file}", f"CPCV Robustness Audit (Horizon: {horizon})")
 
-    # run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest") # DISABLED: Manual Candidate Selection
+    run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
     run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
     run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")
     run_step("analyze_genome_dna.py", "Genome DNA Analysis")

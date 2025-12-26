@@ -147,9 +147,29 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
     date_str = end_dt.strftime("%Y%m%d")
     filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"RAW_TICKS_{name}_{date_str}.parquet")
 
+    existing_max_ts = None
+
     if os.path.exists(filename):
-        logger.info(f"   [SKIP] {name} {date_str} exists.")
-        return
+        # SMART SKIP: Check if file looks complete (ends near end of day)
+        try:
+            # Read just timestamp column to check coverage
+            existing_df = pd.read_parquet(filename, columns=["ts_event"])
+            if not existing_df.empty:
+                last_ts = existing_df["ts_event"].max()
+                if last_ts.tzinfo is None: last_ts = last_ts.replace(tzinfo=timezone.utc)
+                
+                existing_max_ts = last_ts
+
+                # If data goes up to within 4 hours of end_dt, consider it complete.
+                if (end_dt - last_ts).total_seconds() < 14400: 
+                    logger.info(f"   [SKIP] {name} {date_str} exists and looks complete (Last: {last_ts}).")
+                    return
+                else:
+                    logger.warning(f"   [REPAIR] {name} {date_str} ends early ({last_ts}). Fetching missing tail...")
+            else:
+                logger.warning(f"   [REPAIR] {name} {date_str} exists but is empty. Re-fetching...")
+        except Exception as e:
+             logger.warning(f"   [REPAIR] {name} {date_str} exists but could not be read ({e}). Re-fetching...")
 
     logger.info(f"   [TICK] Fetching {name} for {date_str}...")
     current_end = end_dt
@@ -166,13 +186,17 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
     
     # IBKR PACING: 60 requests per 10 minutes (approx 1 req every 10s).
     # We use 11s to be safe. 
-    # This makes backfilling ticks slow (~30-60m per day) but prevents Pacing Violations (Error 162).
     PACING_SLEEP = 11.0 
 
     while True:
+        # STOP CONDITION: If we've reached the point where we have data
+        if existing_max_ts and current_end <= existing_max_ts:
+            logger.info(f"      [MERGE] Reached existing data at {current_end}. Stopping fetch.")
+            break
+
         try:
             # Throttle BEFORE request to ensure spacing
-            if len(buffer) > 0: # Don't sleep on the very first request of the day
+            if len(buffer) > 0: 
                 await asyncio.sleep(PACING_SLEEP)
 
             ticks = await asyncio.wait_for(
@@ -196,6 +220,7 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
             buffer.extend(valid_ticks)
             current_end = ticks[0].time - timedelta(microseconds=1)
             
+            # Flush every 10k ticks
             if len(buffer) >= 10000:
                 data = []
                 for t in buffer:
@@ -214,6 +239,8 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
                 
                 if data:
                     df = pd.DataFrame(data).drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
+                    
+                    # LOAD & MERGE to keep file consistent during long fetches
                     if os.path.exists(filename):
                         existing_df = pd.read_parquet(filename)
                         combined_df = pd.concat([existing_df, df], ignore_index=True)
@@ -235,11 +262,10 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
                 logger.error(f"      MAX RETRIES EXCEEDED fetching ticks for {name} @ {current_end}. Error: {e}")
                 break
             
-            # Check for Pacing Violation (often Error 162 or 'cancelled')
             is_pacing_error = "162" in str(e) or "cancelled" in str(e).lower()
             
             if is_pacing_error:
-                wait_time = 600 # 10 minutes penalty box
+                wait_time = 600 
                 logger.warning(f"      PACING VIOLATION detected for {name}. Sleeping {wait_time}s to reset IBKR limits...")
             else:
                 wait_time = 5 * retries
@@ -247,6 +273,7 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
             
             await asyncio.sleep(wait_time)
             
+    # Final Flush
     if buffer:
         data = []
         for t in buffer:
@@ -280,8 +307,11 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
     date_str = end_dt.strftime("%Y%m%d")
     filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"RAW_BARS_{name}_{date_str}.parquet")
 
+    existing_len = 0
     if os.path.exists(filename):
-        return
+        try:
+            existing_len = len(pd.read_parquet(filename))
+        except: pass
 
     logger.info(f"   [BARS] Fetching {name} for {date_str}...")
     
@@ -309,9 +339,24 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
                     "pricebid": float("nan"), "priceask": float("nan"), "sizebid": float("nan"), "sizeask": float("nan"),
                     "last_price": b.close, "last_size": float("nan"), "volume": b.volume
                 } for b in bars]
-                df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
-                df = df.sort_values(by="ts_event").reset_index(drop=True)
-                save_chunk(df, filename)
+                
+                if existing_len > 0:
+                    if len(data) > existing_len:
+                         logger.warning(f"      [REPAIR] {name} {date_str}: Replaced {existing_len} rows with {len(data)} rows.")
+                         df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
+                         df = df.sort_values(by="ts_event").reset_index(drop=True)
+                         save_chunk(df, filename)
+                    elif len(data) == existing_len:
+                         logger.info(f"      [VERIFY OK] {name} {date_str}: Count matches ({existing_len}). Skipping write.")
+                         return
+                    else:
+                         logger.warning(f"      [IGNORE] {name} {date_str}: Fetched fewer rows ({len(data)}) than existing ({existing_len}). Keeping existing.")
+                         return
+                else:
+                    # New file
+                    df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
+                    df = df.sort_values(by="ts_event").reset_index(drop=True)
+                    save_chunk(df, filename)
             break # Success
 
         except (asyncio.TimeoutError, Exception) as e:
@@ -382,9 +427,9 @@ async def main():
 
         # 2. Iterate Days (Recent -> Oldest)
         days = 2 if TEST_PROBE else DAYS_TO_BACKFILL
-        logger.info(f"Starting backfill for {days} days...")
+        logger.info(f"Starting backfill for {days} days (skipping today)...")
 
-        for i in range(days):
+        for i in range(1, days + 1):
             target_date = datetime.now(timezone.utc).date() - timedelta(days=i)
             
             # Skip Weekends

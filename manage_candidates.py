@@ -125,6 +125,29 @@ def clear_inbox():
     else:
         print("⚠️  Inbox file not found.")
 
+def prune_inbox():
+    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    candidates = load_candidates()
+    candidate_names = {c['name'] for c in candidates}
+    
+    with open(inbox_path, 'r') as f:
+        inbox_strategies = json.load(f)
+        
+    initial_count = len(inbox_strategies)
+    pruned_strategies = [s for s in inbox_strategies if s['name'] not in candidate_names]
+    removed_count = initial_count - len(pruned_strategies)
+    
+    if removed_count > 0:
+        with open(inbox_path, 'w') as f:
+            json.dump(pruned_strategies, f, indent=4)
+        print(f"✂️  Pruned {removed_count} duplicates from Inbox. {len(pruned_strategies)} strategies remain.")
+    else:
+        print("✅ No duplicates found in Inbox.")
+
 def list_inbox():
     inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
     if not os.path.exists(inbox_path):
@@ -177,6 +200,7 @@ def main():
     
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
+    subparsers.add_parser('prune', help='Remove candidates from inbox')
     
     args = parser.parse_args()
     
@@ -192,6 +216,8 @@ def main():
         clear_list()
     elif args.command == 'clear-inbox':
         clear_inbox()
+    elif args.command == 'prune':
+        prune_inbox()
     else:
         parser.print_help()
 

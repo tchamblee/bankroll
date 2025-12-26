@@ -505,6 +505,10 @@ class EvolutionaryAlphaFactory:
             
             with open(out_path, "w") as f: json.dump(unique[:1000], f, indent=4)
             print(f"💾 Saved results to {out_path}")
+            
+            print("\n  Top Horizon Champions:")
+            for i, s in enumerate(unique[:5]):
+                print(f"    {i+1}. {s['name']} (Robust: {s['robust_score']:.2f} | Test: {s['test_return']*100:.2f}%)")
 
             # --- Persist to Global Inbox (Accumulate ALL finds) ---
             inbox_path = config.DIRS['STRATEGY_INBOX']
