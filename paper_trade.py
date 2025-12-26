@@ -132,7 +132,7 @@ class LiveDataManager:
 
     def compute_features_full(self):
         if len(self.primary_bars) < 200: return None
-        engine = FeatureEngine()
+        engine = FeatureEngine(cfg.DIRS["DATA_DIR"])
         engine.bars = self.primary_bars.copy()
         windows = [25, 50, 100, 200, 400, 800]
         engine.add_features_to_bars(windows=windows)

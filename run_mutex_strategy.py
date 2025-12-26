@@ -547,6 +547,15 @@ def run_mutex_backtest():
     downside_oos = np.sqrt(np.mean(np.minimum(rets, 0)**2)) + 1e-9
     sortino_oos = (avg_oos / downside_oos) * np.sqrt(config.ANNUALIZATION_FACTOR)
     
+    print("\n" + "="*80)
+    print("🧪 OUT-OF-SAMPLE (TEST SET) PERFORMANCE")
+    print("="*80)
+    print(f"  Range:      Index {oos_start} to End ({len(rets)} bars)")
+    print(f"  Profit:     ${total_oos_profit:,.2f}")
+    print(f"  Sortino:    {sortino_oos:.2f}")
+    print(f"  Return:     {(total_oos_profit/config.ACCOUNT_SIZE)*100:.1f}%")
+    print("="*80 + "\n")
+
     plt.figure(figsize=(15, 8))
     plt.plot(range(len(cum_profit)), cum_profit, label='Optimized Mutex', color='green', linewidth=2)
     plt.title(f"Optimized Mutex Portfolio (OOS)\nSortino: {sortino_oos:.2f} | Profit: ${total_oos_profit:,.0f}")
