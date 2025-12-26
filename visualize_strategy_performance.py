@@ -8,6 +8,7 @@ import re
 from feature_engine import FeatureEngine
 from genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
 from backtest import BacktestEngine
+from backtest.statistics import calculate_sortino_ratio
 import config
 
 def parse_gene_string(gene_str):
@@ -127,9 +128,7 @@ def plot_performance(engine, strategies):
         n_trades = trades_count[i]
         
         # Calculate Sortino for OOS
-        avg = np.mean(net_returns[:, i])
-        downside = np.std(np.minimum(net_returns[:, i], 0)) + 1e-9
-        sortino = (avg / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+        sortino = calculate_sortino_ratio(net_returns[:, i], config.ANNUALIZATION_FACTOR)
         
         print(f"{strat.name:<30} | {sortino:<8.2f} | {total_ret_pct*100:<12.2f}% | {int(n_trades):<8}")
         
@@ -378,6 +377,11 @@ def simulate_mutex_breakdown(strategies, backtester):
     print("="*80)
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description='Visualize Strategy Performance')
+    parser.add_argument('--file', type=str, help='Path to specific strategy JSON file')
+    args = parser.parse_args()
+
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
         print("❌ Feature Matrix not found.")
         sys.exit(1)
@@ -391,7 +395,19 @@ if __name__ == "__main__":
     all_strategies_data = []
     is_mutex_run = False
     
-    if os.path.exists(mutex_path):
+    if args.file:
+        print(f"Loading strategies from {args.file}...")
+        try:
+            with open(args.file, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    all_strategies_data.extend(data)
+                elif isinstance(data, dict):
+                    all_strategies_data.append(data)
+        except Exception as e:
+            print(f"Error loading {args.file}: {e}")
+            sys.exit(1)
+    elif os.path.exists(mutex_path):
         print(f"Loading Mutex Portfolio from {mutex_path}...")
         try:
             with open(mutex_path, "r") as f:

@@ -10,6 +10,22 @@ def estimated_sharpe_ratio(returns: np.ndarray, annualization_factor: int = 252)
         return 0.0
     return np.mean(returns) / np.std(returns) * np.sqrt(annualization_factor)
 
+def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = 189000, target_return: float = 0.0) -> float:
+    """
+    Calculates Annualized Sortino Ratio using Downside Deviation (LPM_2).
+    Clamps positive returns to zero (or target_return) for the deviation calculation.
+    """
+    if len(returns) < 2: return 0.0
+    
+    avg_ret = np.mean(returns)
+    
+    # Downside Deviation (LPM_2)
+    # Using target_return (usually 0) as the hurdle
+    downside = np.minimum(returns - target_return, 0.0)
+    downside_std = np.std(downside) + 1e-9
+    
+    return (avg_ret / downside_std) * np.sqrt(annualization_factor)
+
 def deflated_sharpe_ratio(
     observed_sr: float, 
     returns: np.ndarray, 

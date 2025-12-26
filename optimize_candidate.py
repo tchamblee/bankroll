@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import config
 from backtest import BacktestEngine
+from backtest.statistics import calculate_sortino_ratio
 from genome import Strategy, GenomeFactory
 
 class StrategyOptimizer:
@@ -113,9 +114,14 @@ class StrategyOptimizer:
         
         population = [self.parent_strategy] + self.variants
         
+        # Hydrate Horizon on Strategy Objects (Critical for Signal Generation Checks)
+        for s in population:
+            s.horizon = self.horizon
+        
         # 1. Generate Full Signal Matrix
         print("   Generating signals...")
-        full_signals = self.backtester.generate_signal_matrix(population)
+        # Pass horizon explicitly to enforce Safe Entry logic (Time Filter)
+        full_signals = self.backtester.generate_signal_matrix(population, horizon=self.horizon)
         
         # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
         # Signals generated at Close[t] must be executed at Open[t+1].
@@ -162,11 +168,6 @@ class StrategyOptimizer:
             time_limit=self.horizon, highs=self.backtester.high_vec[val_end:], lows=self.backtester.low_vec[val_end:], atr=self.backtester.atr_vec[val_end:]
         )
         
-        # Helper for Sortino
-        def get_sortino(r):
-            if len(r) < 2 or np.std(r[r<0]) == 0: return 0.0
-            return np.mean(r) / np.std(r[r<0]) * np.sqrt(config.ANNUALIZATION_FACTOR)
-
         # Process Results
         results_data = []
         for i, strat in enumerate(population):
@@ -175,9 +176,9 @@ class StrategyOptimizer:
             v_r = np.sum(val_rets[:, i])
             te_r = np.sum(test_rets[:, i])
             
-            t_s = get_sortino(train_rets[:, i])
-            v_s = get_sortino(val_rets[:, i])
-            te_s = get_sortino(test_rets[:, i])
+            t_s = calculate_sortino_ratio(train_rets[:, i], config.ANNUALIZATION_FACTOR)
+            v_s = calculate_sortino_ratio(val_rets[:, i], config.ANNUALIZATION_FACTOR)
+            te_s = calculate_sortino_ratio(test_rets[:, i], config.ANNUALIZATION_FACTOR)
             
             results_data.append({
                 'name': strat.name,
