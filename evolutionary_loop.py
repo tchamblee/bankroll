@@ -412,6 +412,32 @@ class EvolutionaryAlphaFactory:
                         best_rejected_details = f"Train: {train_ret*100:.2f}%, Val: {val_ret*100:.2f}%, Test: {test_ret*100:.2f}%"
                     continue
                 
+                # --- SENSITIVITY ANALYSIS (Jitter Test) ---
+                # Ensure strategy isn't overfit to specific parameters (5% noise test)
+                if val_ret > 0:
+                    clones = []
+                    for _ in range(3):
+                        clone = Strategy(name=f"{s.name}_jit", long_genes=[g.copy() for g in s.long_genes], short_genes=[g.copy() for g in s.short_genes], min_concordance=s.min_concordance)
+                        for g in clone.long_genes + clone.short_genes:
+                            if hasattr(g, 'threshold'): g.threshold *= random.uniform(0.95, 1.05)
+                            if hasattr(g, 'window') and isinstance(g.window, int): 
+                                g.window = max(2, int(g.window * random.uniform(0.95, 1.05)))
+                        clones.append(clone)
+                    
+                    try:
+                        # Evaluate clones on Validation set
+                        clone_stats = self.backtester.evaluate_population(clones, set_type='validation', return_series=False, time_limit=horizon)
+                        if not clone_stats.empty:
+                            min_clone_ret = clone_stats['total_return'].min()
+                            # Requirement: Worst case scenario must retain 50% of performance (or strictly positive if margin is thin)
+                            jitter_thresh = val_ret * 0.5
+                            if min_clone_ret < jitter_thresh:
+                                # print(f"    Rejected {s.name}: Failed Jitter Test (Val: {val_ret:.4f} -> Worst: {min_clone_ret:.4f})")
+                                continue
+                    except Exception as e:
+                        print(f"Warning: Jitter test error for {s.name}: {e}")
+                        continue
+
                 # DSR/PSR Calcs (Only for survivors)
                 val_sr = estimated_sharpe_ratio(val_r_vec, config.ANNUALIZATION_FACTOR)
                 dsr_val = deflated_sharpe_ratio(
