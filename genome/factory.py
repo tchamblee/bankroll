@@ -215,50 +215,38 @@ class GenomeFactory:
         return ZScoreGene(feature, operator, threshold, window)
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
-        num_genes = random.randint(num_genes_range[0], num_genes_range[1])
+        num_genes = random.randint(max(2, num_genes_range[0]), max(2, num_genes_range[1])) # Ensure at least 2 for Setup+Trigger
+        
         long_genes = []
         short_genes = []
-        regime_genes = []
         
-        for _ in range(num_genes):
+        # --- ORGANIC GATING ENFORCEMENT ---
+        # 1. The Setup (Regime Gene)
+        long_genes.append(self.create_gene_from_pool(self.regime_pool))
+        short_genes.append(self.create_gene_from_pool(self.regime_pool))
+        
+        # 2. The Trigger (Action Gene)
+        long_genes.append(self.create_gene_from_pool(self.trigger_pool))
+        short_genes.append(self.create_gene_from_pool(self.trigger_pool))
+        
+        # 3. Filler (Random Mix)
+        for _ in range(num_genes - 2):
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
             long_genes.append(self.create_gene_from_pool(pool))
             
-        for _ in range(num_genes):
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
             short_genes.append(self.create_gene_from_pool(pool))
-            
-        # --- REGIME GENE INJECTION (20% Chance) ---
-        if random.random() < 0.20:
-            # Create a Regime Gene (Gate)
-            # Use Range or Persistence on a Regime Feature
-            pool = self.regime_pool if self.regime_pool else self.features
-            target_feature = random.choice(pool)
-            
-            stats = self.feature_stats.get(target_feature, {'mean': 0, 'std': 1})
-            
-            # Persistence Gene (e.g. Volatility > High for 10 bars)
-            op = random.choice(['>', '<'])
-            threshold = stats['mean'] + random.choice([-1, 1]) * stats['std']
-            regime_genes.append(PersistenceGene(target_feature, op, threshold, 10))
         
-        # Concordance: For complex strategies, allow 1 outlier (Robustness)
+        # Concordance: Majority Rule
         concordance = None
-        if num_genes > 0:
-            if num_genes <= 2:
-                # Allow 1/2 (OR Logic) to boost frequency for simple strategies
-                concordance = 1
-            else:
-                # Require majority (~51%)
-                # 3 genes -> 2 (2/3)
-                # 4 genes -> 3 (3/4)
-                # 5 genes -> 3 (3/5)
-                concordance = math.ceil(num_genes * 0.51)
+        if num_genes <= 2:
+            concordance = 2 # Require BOTH (Setup + Trigger) for small strategies
+        else:
+            concordance = math.ceil(num_genes * 0.51)
 
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
             long_genes=long_genes,
             short_genes=short_genes,
-            regime_genes=regime_genes,
             min_concordance=concordance
         )

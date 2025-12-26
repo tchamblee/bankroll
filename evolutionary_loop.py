@@ -67,14 +67,9 @@ class EvolutionaryAlphaFactory:
         
         combined_long = p1.long_genes + p2.long_genes
         combined_short = p1.short_genes + p2.short_genes
-        combined_regime = p1.regime_genes + p2.regime_genes
         
         child.long_genes = [g.copy() for g in random.sample(combined_long, min(len(combined_long), n_long))]
         child.short_genes = [g.copy() for g in random.sample(combined_short, min(len(combined_short), n_short))]
-        
-        if combined_regime:
-            n_regime = random.randint(0, min(len(combined_regime), 2))
-            child.regime_genes = [g.copy() for g in random.sample(combined_regime, n_regime)]
         
         child.recalculate_concordance()
         return child
@@ -310,9 +305,8 @@ class EvolutionaryAlphaFactory:
                 child = Strategy(name=f"Mutant_{random.randint(1000,9999)}")
                 child.long_genes = [g.copy() for g in parent.long_genes]
                 child.short_genes = [g.copy() for g in parent.short_genes]
-                child.regime_genes = [g.copy() for g in parent.regime_genes]
                 
-                genes_to_mutate = child.long_genes + child.short_genes + child.regime_genes
+                genes_to_mutate = child.long_genes + child.short_genes
                 if genes_to_mutate:
                     target_genes = random.sample(genes_to_mutate, min(len(genes_to_mutate), 2))
                     for g in target_genes: g.mutate(self.factory.features)

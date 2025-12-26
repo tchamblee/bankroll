@@ -7,11 +7,10 @@ class Strategy:
     """
     Represents a Bidirectional Trading Strategy with Regime Filtering.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None, regime_genes=None, min_concordance=None):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
-        self.regime_genes = regime_genes if regime_genes else []
         self.min_concordance = min_concordance
         self.fitness = 0.0
         
@@ -31,7 +30,6 @@ class Strategy:
             
         self.long_genes = _dedup(self.long_genes)
         self.short_genes = _dedup(self.short_genes)
-        self.regime_genes = _dedup(self.regime_genes)
         
     def recalculate_concordance(self):
         """
@@ -76,15 +74,6 @@ class Strategy:
         
         net_signal = go_long.astype(int) - go_short.astype(int)
         
-        # --- REGIME FILTER (VETO) ---
-        if self.regime_genes:
-            regime_mask = np.ones(n_rows, dtype=bool)
-            for gene in self.regime_genes:
-                regime_mask &= gene.evaluate(context, cache)
-            
-            # Apply Mask: If Regime is False, Signal is 0 (Flat)
-            net_signal = net_signal * regime_mask.astype(int)
-
         return net_signal * config.MAX_LOTS
 
     def to_dict(self):
@@ -92,26 +81,19 @@ class Strategy:
             'name': self.name,
             'long_genes': [g.to_dict() for g in self.long_genes],
             'short_genes': [g.to_dict() for g in self.short_genes],
-            'regime_genes': [g.to_dict() for g in self.regime_genes],
-            'min_concordance': self.min_concordance,
-            'fitness': self.fitness
+            'min_concordance': self.min_concordance
         }
 
-    @classmethod
-    def from_dict(cls, d):
-        s = cls(
-            name=d.get('name', 'Strategy'),
+    @staticmethod
+    def from_dict(d):
+        return Strategy(
+            name=d.get('name', 'Unknown'),
             long_genes=[gene_from_dict(g) for g in d.get('long_genes', [])],
             short_genes=[gene_from_dict(g) for g in d.get('short_genes', [])],
-            regime_genes=[gene_from_dict(g) for g in d.get('regime_genes', [])],
-            min_concordance=d.get('min_concordance')
+            min_concordance=d.get('min_concordance', 1)
         )
-        s.fitness = d.get('fitness', 0.0)
-        s.cleanup()
-        return s
 
     def __repr__(self):
-        l_str = f" + ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
-        s_str = f" + ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        r_str = f" & ".join([str(g) for g in self.regime_genes]) if self.regime_genes else "None"
-        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str}) | REGIME:({r_str})"
+        l_str = f" & ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
+        s_str = f" & ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
+        return f"[{self.name}] LONG:({l_str}) | SHORT:({s_str})"
