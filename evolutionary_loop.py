@@ -385,6 +385,10 @@ class EvolutionaryAlphaFactory:
                 time_limit=horizon, highs=self.backtester.high_vec[train_start:train_end], lows=self.backtester.low_vec[train_start:train_end], atr=self.backtester.atr_vec[train_start:train_end]
             )
 
+            best_rejected_name = None
+            best_rejected_min_ret = -999.0
+            best_rejected_details = ""
+
             # 2. Strict Filtering Loop
             for i, s in enumerate(top_candidates):
                 if i >= len(test_res): break
@@ -406,8 +410,12 @@ class EvolutionaryAlphaFactory:
                 if val_ret < thresh: rejection_reason.append(f"Val({val_ret*100:.2f}%)")
                 
                 if rejection_reason:
-                    # Silent reject from final list, but maybe log debug?
-                    # Keeping log silent to avoid spamming console with "Rejected"
+                    # Track closest call
+                    min_ret_here = min(train_ret, val_ret, test_ret)
+                    if min_ret_here > best_rejected_min_ret:
+                        best_rejected_min_ret = min_ret_here
+                        best_rejected_name = s.name
+                        best_rejected_details = f"Train: {train_ret*100:.2f}%, Val: {val_ret*100:.2f}%, Test: {test_ret*100:.2f}%"
                     continue
                 
                 # DSR/PSR Calcs (Only for survivors)
@@ -445,7 +453,10 @@ class EvolutionaryAlphaFactory:
             output = filtered_data
             
             if not output:
-                print("❌ No strategies passed the strict Train/Val/Test filters.")
+                print(f"❌ No strategies passed the strict Train/Val/Test filters (Threshold: {config.MIN_RETURN_THRESHOLD*100:.2f}%).")
+                if best_rejected_name:
+                    print(f"   👀 Closest Candidate: {best_rejected_name}")
+                    print(f"      Stats: {best_rejected_details}")
                 return
 
             print(f"✅ {len(output)} Strategies passed final filtering.")
