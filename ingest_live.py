@@ -305,6 +305,7 @@ async def ingest_stream(ib: IB, stop_event: asyncio.Event):
 
     logger.info("🔌 Setting up Market Data Subscriptions...")
     contract_map = {}
+    name_to_mode = {t["name"]: t["mode"] for t in cfg.TARGETS}
     l1_cols = ["ts_event", "pricebid", "priceask", "sizebid", "sizeask", "last_price", "last_size", "volume"]
     buffers = { t["name"]: [] for t in cfg.TARGETS }
 
@@ -410,7 +411,8 @@ async def ingest_stream(ib: IB, stop_event: asyncio.Event):
                 if not df.empty:
                     df["day"] = df["ts_event"].apply(lambda x: x.strftime("%Y%m%d"))
                     for day_str, group in df.groupby("day"):
-                        fn = os.path.join(DATA_DIR, f"RAW_TICKS_{name}_{day_str}.parquet")
+                        prefix = cfg.RAW_DATA_PREFIX_TICKS if "TICKS" in name_to_mode[name] else cfg.RAW_DATA_PREFIX_BARS
+                        fn = os.path.join(DATA_DIR, f"{prefix}_{name}_{day_str}.parquet")
                         save_cols = [c for c in l1_cols] 
                         await loop.run_in_executor(None, save_chunk, group[save_cols], fn)
                         print(f"\r💾 Saved {name} Chunk to {fn} ({len(group)} rows)...", end="")

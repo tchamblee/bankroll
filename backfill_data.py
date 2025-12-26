@@ -145,7 +145,7 @@ def save_chunk(df: pd.DataFrame, filename: str):
 async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: datetime, end_dt: datetime):
     """Specific logic for dense tick-by-tick data (FX/Futures)"""
     date_str = end_dt.strftime("%Y%m%d")
-    filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"RAW_TICKS_{name}_{date_str}.parquet")
+    filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"{cfg.RAW_DATA_PREFIX_TICKS}_{name}_{date_str}.parquet")
 
     existing_max_ts = None
 
@@ -305,7 +305,7 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
 
 async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime, duration="86400 S"):
     date_str = end_dt.strftime("%Y%m%d")
-    filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"RAW_BARS_{name}_{date_str}.parquet")
+    filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"{cfg.RAW_DATA_PREFIX_BARS}_{name}_{date_str}.parquet")
 
     existing_len = 0
     if os.path.exists(filename):

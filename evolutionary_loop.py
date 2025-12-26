@@ -551,6 +551,7 @@ class EvolutionaryAlphaFactory:
             if new_inbox_count > 0:
                 with open(inbox_path, "w") as f: json.dump(inbox_data, f, indent=4)
                 print(f"📦 Added {new_inbox_count} new strategies to Inbox: {inbox_path}")
+                print('\a' * 3) # 🔔 Audible Alert
             # -------------------------------
         else:
             print("No strategies survived.")

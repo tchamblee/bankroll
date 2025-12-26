@@ -1,0 +1,303 @@
+import argparse
+import json
+import os
+import copy
+import random
+import numpy as np
+import pandas as pd
+import config
+from backtest import BacktestEngine
+from genome import Strategy, GenomeFactory
+
+class StrategyOptimizer:
+    def __init__(self, target_name, source_file, horizon=180):
+        self.target_name = target_name
+        self.source_file = source_file
+        self.horizon = horizon
+        self.parent_strategy = None
+        self.variants = []
+        
+        # Load Data
+        print("Loading Feature Matrix...")
+        self.data = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+        
+        # Initialize Factory (for mutations) and Backtester
+        self.factory = GenomeFactory()
+        self.factory.set_stats(self.data)
+        
+        self.backtester = BacktestEngine(
+            self.data, 
+            cost_bps=config.COST_BPS, 
+            annualization_factor=config.ANNUALIZATION_FACTOR
+        )
+
+    def load_parent(self):
+        print(f"Searching for {self.target_name} in {self.source_file}...")
+        with open(self.source_file, 'r') as f:
+            strategies = json.load(f)
+            
+        target_data = next((s for s in strategies if s['name'] == self.target_name), None)
+        if not target_data:
+            raise ValueError(f"Strategy {self.target_name} not found in {self.source_file}")
+            
+        self.parent_strategy = Strategy.from_dict(target_data)
+        print(f"✅ Loaded Parent: {self.parent_strategy.name}")
+        print(f"   Genes: {len(self.parent_strategy.long_genes)} Long, {len(self.parent_strategy.short_genes)} Short")
+        print(f"   Concordance: {self.parent_strategy.min_concordance}")
+
+    def generate_variants(self, n_jitter=20, n_mutants=20):
+        print("\n🧬 Generating Variants...")
+        
+        # 1. Simplification (Ablation) - Remove 1 gene at a time
+        # This checks if "Less is More"
+        all_genes = self.parent_strategy.long_genes + self.parent_strategy.short_genes
+        if len(all_genes) > 1:
+            for i in range(len(self.parent_strategy.long_genes)):
+                variant = copy.deepcopy(self.parent_strategy)
+                variant.name = f"{self.target_name}_Simple_L{i}"
+                variant.long_genes.pop(i)
+                variant.recalculate_concordance()
+                self.variants.append(variant)
+
+            for i in range(len(self.parent_strategy.short_genes)):
+                variant = copy.deepcopy(self.parent_strategy)
+                variant.name = f"{self.target_name}_Simple_S{i}"
+                variant.short_genes.pop(i)
+                variant.recalculate_concordance()
+                self.variants.append(variant)
+
+        # 2. Relaxation - Lower Concordance
+        if self.parent_strategy.min_concordance > 1:
+            variant = copy.deepcopy(self.parent_strategy)
+            variant.name = f"{self.target_name}_Relaxed"
+            variant.min_concordance -= 1
+            self.variants.append(variant)
+
+        # 3. Jitter (Parameter Noise) - Test Robustness / Fine Tuning
+        for i in range(n_jitter):
+            variant = copy.deepcopy(self.parent_strategy)
+            variant.name = f"{self.target_name}_Jitter_{i}"
+            
+            # Jitter every gene slightly
+            for g in variant.long_genes + variant.short_genes:
+                # Jitter Threshold
+                if hasattr(g, 'threshold'):
+                    # ± 10% change
+                    g.threshold *= random.uniform(0.90, 1.10)
+                
+                # Jitter Window
+                if hasattr(g, 'window') and isinstance(g.window, int):
+                    # ± 20% change, min 2
+                    g.window = max(2, int(g.window * random.uniform(0.8, 1.2)))
+                    
+            self.variants.append(variant)
+
+        # 4. Mutation - Swap logic
+        for i in range(n_mutants):
+            variant = copy.deepcopy(self.parent_strategy)
+            variant.name = f"{self.target_name}_Mutant_{i}"
+            
+            # Mutate 1 random gene
+            genes = variant.long_genes + variant.short_genes
+            if genes:
+                target_gene = random.choice(genes)
+                target_gene.mutate(self.factory.features)
+                
+            variant.recalculate_concordance()
+            self.variants.append(variant)
+
+        print(f"   Generated {len(self.variants)} variants.")
+
+    def evaluate_and_report(self):
+        print("\n🔬 Evaluating Variants on All Sets (Train / Val / Test)...")
+        
+        population = [self.parent_strategy] + self.variants
+        
+        # 1. Generate Full Signal Matrix
+        print("   Generating signals...")
+        full_signals = self.backtester.generate_signal_matrix(population)
+        
+        # 2. Define Split Indices
+        train_end = self.backtester.train_idx
+        val_end = self.backtester.val_idx
+        
+        # 3. Batch Simulation for Each Split
+        print("   Simulating Train...")
+        train_rets, train_trades = self.backtester.run_simulation_batch(
+            full_signals[:train_end], population, 
+            self.backtester.open_vec[:train_end], 
+            self.backtester.times_vec.iloc[:train_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[:train_end],
+            time_limit=self.horizon, highs=self.backtester.high_vec[:train_end], lows=self.backtester.low_vec[:train_end], atr=self.backtester.atr_vec[:train_end]
+        )
+        
+        print("   Simulating Validation...")
+        val_rets, val_trades = self.backtester.run_simulation_batch(
+            full_signals[train_end:val_end], population, 
+            self.backtester.open_vec[train_end:val_end], 
+            self.backtester.times_vec.iloc[train_end:val_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[train_end:val_end],
+            time_limit=self.horizon, highs=self.backtester.high_vec[train_end:val_end], lows=self.backtester.low_vec[train_end:val_end], atr=self.backtester.atr_vec[train_end:val_end]
+        )
+        
+        print("   Simulating Test...")
+        test_rets, test_trades = self.backtester.run_simulation_batch(
+            full_signals[val_end:], population, 
+            self.backtester.open_vec[val_end:], 
+            self.backtester.times_vec.iloc[val_end:] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[val_end:],
+            time_limit=self.horizon, highs=self.backtester.high_vec[val_end:], lows=self.backtester.low_vec[val_end:], atr=self.backtester.atr_vec[val_end:]
+        )
+        
+        # Helper for Sortino
+        def get_sortino(r):
+            if len(r) < 2 or np.std(r[r<0]) == 0: return 0.0
+            return np.mean(r) / np.std(r[r<0]) * np.sqrt(config.ANNUALIZATION_FACTOR)
+
+        # Process Results
+        results_data = []
+        for i, strat in enumerate(population):
+            # Calculate metrics
+            t_r = np.sum(train_rets[:, i])
+            v_r = np.sum(val_rets[:, i])
+            te_r = np.sum(test_rets[:, i])
+            
+            t_s = get_sortino(train_rets[:, i])
+            v_s = get_sortino(val_rets[:, i])
+            te_s = get_sortino(test_rets[:, i])
+            
+            results_data.append({
+                'name': strat.name,
+                'strat': strat,
+                'train': {'ret': t_r, 'sortino': t_s, 'trades': train_trades[i]},
+                'val': {'ret': v_r, 'sortino': v_s, 'trades': val_trades[i]},
+                'test': {'ret': te_r, 'sortino': te_s, 'trades': test_trades[i]}
+            })
+
+        parent = results_data[0]
+        print(f"\n🏛️  PARENT ({parent['name']}):")
+        print(f"   TRAIN: Ret {parent['train']['ret']*100:6.2f}% | Sort {parent['train']['sortino']:5.2f} | Tr {parent['train']['trades']}")
+        print(f"   VAL  : Ret {parent['val']['ret']*100:6.2f}% | Sort {parent['val']['sortino']:5.2f} | Tr {parent['val']['trades']}")
+        print(f"   TEST : Ret {parent['test']['ret']*100:6.2f}% | Sort {parent['test']['sortino']:5.2f} | Tr {parent['test']['trades']}")
+        print("-" * 80)
+
+        better_variants = []
+        for res in results_data[1:]:
+            # Criteria: Improved Val OR Test Sortino, without crashing the other
+            val_imp = res['val']['sortino'] > parent['val']['sortino']
+            test_imp = res['test']['sortino'] > parent['test']['sortino']
+            test_stable = res['test']['sortino'] > parent['test']['sortino'] * 0.8 # Don't lose too much Test perf
+            
+            if (val_imp and test_stable) or test_imp:
+                res['note'] = "🔥 Robust" if (val_imp and test_imp) else "⚠️ Mixed"
+                better_variants.append(res)
+        
+        better_variants.sort(key=lambda x: x['test']['sortino'], reverse=True)
+        
+        print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Test Sortino):")
+        print(f"{'Name':<30} | {'Test Sort':<9} | {'Val Sort':<9} | {'Test Ret':<9} | {'Note'}")
+        print("-" * 80)
+        for v in better_variants[:10]:
+            print(f"{v['name']:<30} | {v['test']['sortino']:9.2f} | {v['val']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
+
+        # Save
+        if better_variants:
+            out_file = f"output/strategies/optimized_{self.target_name}.json"
+            
+            def convert_stats(stats_dict):
+                return {
+                    'ret': float(stats_dict['ret']),
+                    'sortino': float(stats_dict['sortino']),
+                    'trades': int(stats_dict['trades'])
+                }
+
+            to_save = []
+            for v in better_variants:
+                d = v['strat'].to_dict()
+                d.update({
+                    'horizon': self.horizon,
+                    'train_stats': convert_stats(v['train']),
+                    'val_stats': convert_stats(v['val']),
+                    'test_stats': convert_stats(v['test'])
+                })
+                to_save.append(d)
+                
+            with open(out_file, 'w') as f:
+                json.dump(to_save, f, indent=4)
+            print(f"\n💾 Saved {len(to_save)} variants to {out_file}")
+
+
+def find_strategy_context(name):
+    """Locates the strategy file and infers horizon."""
+    search_patterns = [
+        "found_strategies.json",
+        "candidates.json",
+        "apex_strategies_*.json",
+        "optimized_*.json"
+    ]
+    
+    # Search in standard output directory
+    import glob
+    for pattern in search_patterns:
+        files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], pattern))
+        for file_path in files:
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    for s in data:
+                        if s.get('name') == name:
+                            # Found it
+                            horizon = s.get('horizon')
+                            
+                            # Try to infer horizon from filename if missing
+                            if not horizon:
+                                basename = os.path.basename(file_path)
+                                parts = basename.split('_')
+                                for p in parts:
+                                    if p.isdigit():
+                                        horizon = int(p)
+                                        break
+                            
+                            # Default fallback
+                            if not horizon:
+                                horizon = 60 # Default to shortest common horizon
+                                print(f"⚠️  Warning: Horizon not found for {name}, defaulting to {horizon}")
+                            
+                            return file_path, horizon
+            except:
+                continue
+    return None, None
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Optimize a specific strategy variant")
+    parser.add_argument("name", type=str, help="Name of the strategy (e.g., Child_3604)")
+    parser.add_argument("--file", type=str, default=None, help="Path to strategy file (Optional, auto-detected if omitted)")
+    parser.add_argument("--horizon", type=int, default=None, help="Time horizon (Optional, auto-detected if omitted)")
+    
+    args = parser.parse_args()
+    
+    file_path = args.file
+    horizon = args.horizon
+    
+    if not file_path or not horizon:
+        print(f"🔍 Searching for strategy '{args.name}'...")
+        found_file, found_horizon = find_strategy_context(args.name)
+        
+        if not file_path and found_file:
+            file_path = found_file
+            print(f"   ✅ Found in: {file_path}")
+            
+        if not horizon and found_horizon:
+            horizon = found_horizon
+            print(f"   ✅ Inferred Horizon: {horizon}")
+            
+    if not file_path:
+        print(f"❌ Error: Could not locate strategy '{args.name}' in any standard output files.")
+        print("   Please provide --file and --horizon manually.")
+        exit(1)
+        
+    if not horizon:
+         print(f"❌ Error: Could not infer horizon for '{args.name}'. Please provide --horizon.")
+         exit(1)
+    
+    opt = StrategyOptimizer(args.name, file_path, horizon)
+    opt.load_parent()
+    opt.generate_variants(n_jitter=30, n_mutants=20)
+    opt.evaluate_and_report()

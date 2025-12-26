@@ -16,9 +16,9 @@ def _process_ticker(ticker, raw_dir, clean_dir):
             return
 
         if ticker == 'EURUSD':
-            pattern = os.path.join(raw_dir, f"RAW_TICKS_{ticker}*.parquet")
+            pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
         else:
-            pattern = os.path.join(raw_dir, f"RAW_BARS_{ticker}*.parquet")
+            pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")
             
         files = glob.glob(pattern)
         

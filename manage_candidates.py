@@ -27,7 +27,8 @@ def find_strategy_in_files(strategy_name):
         "found_strategies.json",
         "apex_strategies_*_top5_unique.json",
         "apex_strategies_*_top10.json",
-        "apex_strategies_*.json"
+        "apex_strategies_*.json",
+        "optimized_*.json"
     ]
     
     import glob
@@ -68,21 +69,42 @@ def list_candidates():
         return
 
     print(f"\n📋 CURRENT CANDIDATE LIST ({len(candidates)} strategies)")
-    print(f"{'Name':<20} | {'Horizon':<8} | {'Sortino':<8} | {'Return':<8}")
-    print("-" * 50)
+    # Headers
+    header = f"{'Name':<22} | {'H':<4} | {'Train (R%/S)':<14} | {'Val (R%/S)':<14} | {'Test (R%/S)':<14}"
+    print(header)
+    print("-" * len(header))
     
     for c in candidates:
         name = c.get('name', 'Unknown')
-        horizon = c.get('horizon', '?')
-        metrics = c.get('metrics', {})
-        sortino = metrics.get('sortino_oos', c.get('test_sortino', 0))
-        ret = metrics.get('robust_return', 0)
+        horizon = str(c.get('horizon', '?'))
         
-        if ret == 0:
-            ret = c.get('test_return', 0)
+        # Helper to extract metrics from various possible schemas
+        def get_m(prefix):
+            # Try new stats dict first (from optimizer)
+            stats = c.get(f'{prefix}_stats', {})
+            if stats:
+                return stats.get('ret', 0) * 100, stats.get('sortino', 0)
+            
+            # Fallback to flat keys (from evolutionary loop)
+            ret = c.get(f'{prefix}_return', 0) * 100
+            sort = c.get(f'{prefix}_sortino', 0)
+            if prefix == 'test' and sort == 0:
+                 sort = c.get('test_sortino', 0)
+            return ret, sort
+
+        t_r, t_s = get_m('train')
+        v_r, v_s = get_m('val')
+        te_r, te_s = get_m('test')
         
-        print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {ret*100:<7.2f}%")
-    print("-" * 50)
+        # Handle cases where robust_return/sortino_oos were used in metrics dict
+        if te_r == 0 and te_s == 0:
+            m = c.get('metrics', {})
+            te_r = m.get('robust_return', 0) * 100
+            te_s = m.get('sortino_oos', 0)
+
+        row = f"{name[:22]:<22} | {horizon:<4} | {t_r:5.1f}%/{t_s:4.2f} | {v_r:5.1f}%/{v_s:4.2f} | {te_r:5.1f}%/{te_s:4.2f}"
+        print(row)
+    print("-" * len(header))
 
 def add_strategy(name):
     candidates = load_candidates()
