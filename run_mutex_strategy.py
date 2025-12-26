@@ -77,6 +77,7 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
     current_tp_mult = 0.0
     
     prev_pos = 0.0
+    bars_in_market = 0
     
     # Cooldown State
     strat_cooldowns = np.zeros(n_strats, dtype=np.int64)
@@ -91,6 +92,10 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
         exit_trade = False
         barrier_price = 0.0
         exit_reason = 0 # 0: None, 1: Time/EOD, 2: SL, 3: TP
+        
+        # Track Time in Market
+        if position != 0:
+            bars_in_market += 1
         
         # Force Close (Time/EOD)
         if hours[i] >= end_hour or weekdays[i] >= 5:
@@ -156,7 +161,8 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
             active_strat_idx = -1
             
         # 2. Check Entries (Priority Mux)
-        if position == 0.0 and not (hours[i] >= end_hour or weekdays[i] >= 5):
+        # Enforce strict Mutex: If we just exited (exit_trade=True), do NOT enter on same bar.
+        if position == 0.0 and not exit_trade and not (hours[i] >= end_hour or weekdays[i] >= 5):
             for s_idx in range(n_strats):
                 # Check Cooldown
                 if strat_cooldowns[s_idx] > 0:
@@ -203,7 +209,7 @@ def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, week
                 
         prev_pos = position
         
-    return net_returns, trades_count
+    return net_returns, trades_count, bars_in_market
 
 def simulate_mutex_portfolio(subset_indices, sig_matrix, horizons, sl_mults, tp_mults, prices, highs, lows, atr, hours, weekdays, account_size):
     """
@@ -255,10 +261,12 @@ def optimize_mutex_portfolio(candidates, backtester):
     print("🧠 MUTEX PORTFOLIO COMBINATORIAL OPTIMIZATION")
     print("="*80)
     
-    # 1. Prepare Data (Validation Slice for Optimization)
-    opt_start = backtester.train_idx
+    # 1. Prepare Data (Train + Validation Slice for Optimization)
+    # We optimize over the entire In-Sample period (Train + Val) to maximize robustness
+    # and sample size, rather than just the Validation slice.
+    opt_start = 0
     opt_end = backtester.val_idx
-    print(f"Optimization Range: Validation Index {opt_start} to {opt_end} ({opt_end - opt_start} bars)")
+    print(f"Optimization Range: Train + Validation (Index {opt_start} to {opt_end}, {opt_end - opt_start} bars)")
     
     prices = backtester.open_vec[opt_start:opt_end].astype(np.float64)
     highs = backtester.high_vec[opt_start:opt_end].astype(np.float64)
@@ -333,7 +341,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             idx_list = list(combo_indices)
             
             # Run Simulation
-            rets, trades = simulate_mutex_portfolio(
+            rets, trades, bars_in_market = simulate_mutex_portfolio(
                 idx_list, 
                 opt_sig_matrix, 
                 horizons, sl_mults, tp_mults, 
@@ -344,7 +352,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             # Metrics
             total_ret = np.sum(rets)
             avg_ret = np.mean(rets)
-            
+                        
             if avg_ret <= 0 or trades < 10:
                 sortino = -1.0
                 max_dd = -1.0
@@ -361,11 +369,13 @@ def optimize_mutex_portfolio(candidates, backtester):
             tested_count += 1
             
             profit = total_ret * backtester.account_size
+            
             stats = {
                 'Sortino': sortino,
                 'Profit': profit,
                 'Trades': trades,
-                'MaxDD': max_dd
+                'MaxDD': max_dd,
+                'Exposure': bars_in_market
             }
             
             # 1. Update Fallback (Best Sortino) - Must still pass Robustness
@@ -396,7 +406,7 @@ def optimize_mutex_portfolio(candidates, backtester):
         # We need to re-run the best combo to get the exact return vector for DSR calculation
         # Or we could have stored it. Let's re-run it quickly.
         best_indices = [candidates.index(c) for c in best_combo]
-        best_rets, _ = simulate_mutex_portfolio(
+        best_rets, _, _ = simulate_mutex_portfolio(
             best_indices, opt_sig_matrix, horizons, sl_mults, tp_mults, 
             prices, highs, lows, atr, hours, weekdays, backtester.account_size
         )
@@ -416,6 +426,9 @@ def optimize_mutex_portfolio(candidates, backtester):
             annualization_factor=config.ANNUALIZATION_FACTOR
         )
 
+        avg_duration = best_stats['Exposure'] / best_stats['Trades'] if best_stats['Trades'] > 0 else 0
+        duty_cycle = (best_stats['Exposure'] / len(prices)) * 100
+
         print(f"\n🏆 WINNING COMBINATION FOUND (Max Profit Objective)!")
         print(f"  Strategies: {len(best_combo)}")
         print(f"  Profit:     ${best_stats['Profit']:,.2f}")
@@ -423,6 +436,8 @@ def optimize_mutex_portfolio(candidates, backtester):
         print(f"  DSR:        {dsr:.4f} (Probability > Random)")
         print(f"  MaxDD:      {best_stats['MaxDD']*100:.2f}%")
         print(f"  Trades:     {int(best_stats['Trades'])}")
+        print(f"  Avg Dur:    {avg_duration:.1f} bars")
+        print(f"  In Market:  {duty_cycle:.1f}%")
         
         if dsr < 0.95:
              print("⚠️  WARNING: DSR < 0.95. This strategy might be a statistical fluke despite high profit.")
@@ -512,7 +527,7 @@ def run_mutex_backtest():
     tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
     
     # Use internal jit func for simplicity
-    rets, _ = _jit_simulate_mutex_custom(
+    rets, _, _ = _jit_simulate_mutex_custom(
         oos_sig.astype(np.float64), 
         prices, highs, lows, atr, hours, weekdays, 
         horizons, sl_mults, tp_mults, 
@@ -520,15 +535,21 @@ def run_mutex_backtest():
         config.SPREAD_BPS / 10000.0, 
         config.COST_BPS / 10000.0, 
         config.ACCOUNT_SIZE, 
-        config.TRADING_END_HOUR,
+        config.TRADING_END_HOUR, 
         config.STOP_LOSS_COOLDOWN_BARS
     )
-    
+        
     cum_profit = np.cumsum(rets) * config.ACCOUNT_SIZE
+    total_oos_profit = cum_profit[-1] if len(cum_profit) > 0 else 0.0
+    
+    # Calculate OOS Sortino
+    avg_oos = np.mean(rets)
+    downside_oos = np.sqrt(np.mean(np.minimum(rets, 0)**2)) + 1e-9
+    sortino_oos = (avg_oos / downside_oos) * np.sqrt(config.ANNUALIZATION_FACTOR)
     
     plt.figure(figsize=(15, 8))
     plt.plot(range(len(cum_profit)), cum_profit, label='Optimized Mutex', color='green', linewidth=2)
-    plt.title(f"Optimized Mutex Portfolio (OOS)\nSortino: {stats['Sortino']:.2f} | Profit: ${stats['Profit']:,.0f} | Trades: {stats['Trades']}")
+    plt.title(f"Optimized Mutex Portfolio (OOS)\nSortino: {sortino_oos:.2f} | Profit: ${total_oos_profit:,.0f}")
     plt.ylabel("Cumulative Profit ($)")
     plt.xlabel("Bars (OOS)")
     plt.grid(True, alpha=0.3)

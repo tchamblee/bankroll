@@ -288,7 +288,7 @@ def load_inbox_strategies():
             pass
     return strategies
 
-def generate_inbox_report():
+def generate_inbox_report(skip_refresh=False):
     print("Generating Report for INBOX STRATEGIES...")
     strategies = load_inbox_strategies()
     if not strategies:
@@ -298,8 +298,17 @@ def generate_inbox_report():
     # Convert Strategy objects to dicts for refresh_strategies
     strat_dicts = [s.data for s in strategies]
     
-    # REFRESH METRICS (Uses BacktestEngine internally)
-    strat_dicts = refresh_strategies(strat_dicts)
+    if not skip_refresh:
+        # REFRESH METRICS (Uses BacktestEngine internally)
+        strat_dicts = refresh_strategies(strat_dicts)
+        
+        # SAVE UPDATED METRICS TO JSON
+        json_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json")
+        with open(json_path, "w") as f:
+            json.dump(strat_dicts, f, indent=4)
+        print(f"💾 Updated {len(strat_dicts)} strategies in {json_path} with fresh metrics.")
+    else:
+        print("⏩ Skipping metric refresh (using cached data).")
     
     # Re-hydrate strategies with refreshed data
     # (refresh_strategies updates dicts in place, so strategies[i].data might be stale if we replaced it entirely,
@@ -355,12 +364,6 @@ def generate_inbox_report():
         full_md += GeneTranslator.interpret_strategy_logic(strat.data)
         full_md += "\n\n---\n\n"
 
-    # SAVE UPDATED METRICS TO JSON
-    json_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json")
-    with open(json_path, "w") as f:
-        json.dump(strat_dicts, f, indent=4)
-    print(f"💾 Updated {len(strat_dicts)} strategies in {json_path} with fresh metrics.")
-
     report_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "REPORT_INBOX_AUDIT.md")
     with open(report_path, "w") as f:
         f.write(full_md)
@@ -368,11 +371,16 @@ def generate_inbox_report():
     print(f"✅ Generated Inbox Report: {report_path}")
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate Prop Firm Reports")
+    parser.add_argument("--skip-refresh", action="store_true", help="Skip refreshing metrics (use cached json)")
+    args = parser.parse_args()
+
     print("\n📜 Generating Prop Firm Strategy Reports...\n")
     
     # 0. Inbox Audit (New)
     try:
-        generate_inbox_report()
+        generate_inbox_report(skip_refresh=args.skip_refresh)
     except Exception as e:
         print(f"❌ Failed to generate Inbox Report: {e}")
 

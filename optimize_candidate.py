@@ -168,6 +168,9 @@ class StrategyOptimizer:
             time_limit=self.horizon, highs=self.backtester.high_vec[val_end:], lows=self.backtester.low_vec[val_end:], atr=self.backtester.atr_vec[val_end:]
         )
         
+        # Calculate Hamming Distance (Signal Diff) vs Parent (Index 0)
+        parent_sig = full_signals[:, 0]
+        
         # Process Results
         results_data = []
         for i, strat in enumerate(population):
@@ -180,9 +183,13 @@ class StrategyOptimizer:
             v_s = calculate_sortino_ratio(val_rets[:, i], config.ANNUALIZATION_FACTOR)
             te_s = calculate_sortino_ratio(test_rets[:, i], config.ANNUALIZATION_FACTOR)
             
+            # Hamming Distance
+            diff_bits = np.count_nonzero(full_signals[:, i] != parent_sig)
+            
             results_data.append({
                 'name': strat.name,
                 'strat': strat,
+                'diff': diff_bits,
                 'train': {'ret': t_r, 'sortino': t_s, 'trades': train_trades[i]},
                 'val': {'ret': v_r, 'sortino': v_s, 'trades': val_trades[i]},
                 'test': {'ret': te_r, 'sortino': te_s, 'trades': test_trades[i]}
@@ -218,10 +225,10 @@ class StrategyOptimizer:
         better_variants.sort(key=lambda x: x['test']['sortino'], reverse=True)
         
         print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Test Sortino):")
-        print(f"{'Name':<30} | {'Train Sort':<10} | {'Val Sort':<9} | {'Test Sort':<9} | {'Test Ret':<9} | {'Note'}")
-        print("-" * 95)
+        print(f"{'Name':<30} | {'Diff':<6} | {'Train Sort':<10} | {'Val Sort':<9} | {'Test Sort':<9} | {'Test Ret':<9} | {'Note'}")
+        print("-" * 105)
         for v in better_variants[:10]:
-            print(f"{v['name']:<30} | {v['train']['sortino']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
+            print(f"{v['name']:<30} | {v['diff']:<6} | {v['train']['sortino']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
 
         # Save
         if better_variants:

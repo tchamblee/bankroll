@@ -125,6 +125,8 @@ def refresh_strategies(strategies_data):
                 target_dict['test_return'] = float(te_stats['total_return'])
                 target_dict['test_sortino'] = float(te_stats['sortino'])
                 target_dict['test_trades'] = int(te_stats['trades'])
+                target_dict['train_trades'] = int(t_stats['trades'])
+                target_dict['val_trades'] = int(v_stats['trades'])
                 
                 # Additional Helper for Reporting
                 returns = net_returns_matrix[:, group.index(s)] # Need correct index in group
@@ -155,9 +157,9 @@ def refresh_strategies(strategies_data):
                 target_dict['test_ann_return'] = float(avg_ret * ann_factor)
 
                 # --- Update Structured Stats (Candidate/Optimizer Style) ---
-                target_dict['train_stats'] = {'ret': float(t_stats['total_return']), 'sortino': float(t_stats['sortino'])}
-                target_dict['val_stats'] = {'ret': float(v_stats['total_return']), 'sortino': float(v_stats['sortino'])}
-                target_dict['test_stats'] = {'ret': float(te_stats['total_return']), 'sortino': float(te_stats['sortino'])}
+                target_dict['train_stats'] = {'ret': float(t_stats['total_return']), 'sortino': float(t_stats['sortino']), 'trades': int(t_stats['trades'])}
+                target_dict['val_stats'] = {'ret': float(v_stats['total_return']), 'sortino': float(v_stats['sortino']), 'trades': int(v_stats['trades'])}
+                target_dict['test_stats'] = {'ret': float(te_stats['total_return']), 'sortino': float(te_stats['sortino']), 'trades': int(te_stats['trades'])}
                 
                 # --- Legacy/Report fields ---
                 target_dict['metrics'] = {
