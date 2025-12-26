@@ -3,7 +3,10 @@ import os
 import json
 import argparse
 import config
+import pandas as pd
+import numpy as np
 from genome import Strategy
+from backtest.utils import refresh_strategies, find_strategy_in_files
 
 CANDIDATES_FILE = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
 
@@ -21,56 +24,19 @@ def save_candidates(candidates):
         json.dump(candidates, f, indent=4)
     print(f"💾 Saved {len(candidates)} candidates to {CANDIDATES_FILE}")
 
-def find_strategy_in_files(strategy_name):
-    """Searches all strategy output files for a strategy with the given name."""
-    search_patterns = [
-        "found_strategies.json",
-        "apex_strategies_*_top5_unique.json",
-        "apex_strategies_*_top10.json",
-        "apex_strategies_*.json",
-        "optimized_*.json"
-    ]
-    
-    import glob
-    for pattern in search_patterns:
-        files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], pattern))
-        for file_path in files:
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                    for s_dict in data:
-                        if s_dict.get('name') == strategy_name:
-                            # Found it!
-                            # Ensure horizon is set if missing (infer from filename)
-                            if 'horizon' not in s_dict:
-                                # extracting horizon from filename e.g., apex_strategies_90_...
-                                parts = os.path.basename(file_path).split('_')
-                                for p in parts:
-                                    if p.isdigit():
-                                        s_dict['horizon'] = int(p)
-                                        break
-                            
-                            # Ensure metrics are present
-                            if 'metrics' not in s_dict:
-                                s_dict['metrics'] = {
-                                    'sortino_oos': s_dict.get('test_sortino', 0),
-                                    'robust_return': s_dict.get('test_return', s_dict.get('robust_return', 0))
-                                }
-                                
-                            return s_dict
-            except Exception:
-                continue
-    return None
-
 def list_candidates():
     candidates = load_candidates()
     if not candidates:
         print("Empty candidate list.")
         return
 
+    # REFRESH METRICS
+    candidates = refresh_strategies(candidates)
+    save_candidates(candidates)
+
     print(f"\n📋 CURRENT CANDIDATE LIST ({len(candidates)} strategies)")
     # Headers
-    header = f"{'Name':<22} | {'H':<4} | {'Train (R%/S)':<14} | {'Val (R%/S)':<14} | {'Test (R%/S)':<14}"
+    header = f"{'Name':<50} | {'H':<4} | {'Trds':<6} | {'Train (R%/S)':<14} | {'Val (R%/S)':<14} | {'Test (R%/S)':<14}"
     print(header)
     print("-" * len(header))
     
@@ -83,18 +49,22 @@ def list_candidates():
             # Try new stats dict first (from optimizer)
             stats = c.get(f'{prefix}_stats', {})
             if stats:
-                return stats.get('ret', 0) * 100, stats.get('sortino', 0)
+                return stats.get('ret', 0) * 100, stats.get('sortino', 0), int(stats.get('trades', 0))
             
-            # Fallback to flat keys (from evolutionary loop)
+            # Fallback to flat keys
             ret = c.get(f'{prefix}_return', 0) * 100
             sort = c.get(f'{prefix}_sortino', 0)
-            if prefix == 'test' and sort == 0:
-                 sort = c.get('test_sortino', 0)
-            return ret, sort
+            trades = c.get(f'{prefix}_trades', 0)
+            
+            if prefix == 'test':
+                 if sort == 0: sort = c.get('test_sortino', 0)
+                 if trades == 0: trades = c.get('test_trades', 0)
+            
+            return ret, sort, trades
 
-        t_r, t_s = get_m('train')
-        v_r, v_s = get_m('val')
-        te_r, te_s = get_m('test')
+        t_r, t_s, t_tr = get_m('train')
+        v_r, v_s, v_tr = get_m('val')
+        te_r, te_s, te_tr = get_m('test')
         
         # Handle cases where robust_return/sortino_oos were used in metrics dict
         if te_r == 0 and te_s == 0:
@@ -102,7 +72,7 @@ def list_candidates():
             te_r = m.get('robust_return', 0) * 100
             te_s = m.get('sortino_oos', 0)
 
-        row = f"{name[:22]:<22} | {horizon:<4} | {t_r:5.1f}%/{t_s:4.2f} | {v_r:5.1f}%/{v_s:4.2f} | {te_r:5.1f}%/{te_s:4.2f}"
+        row = f"{name[:50]:<50} | {horizon:<4} | {te_tr:<6} | {t_r:5.1f}%/{t_s:4.2f} | {v_r:5.1f}%/{v_s:4.2f} | {te_r:5.1f}%/{te_s:4.2f}"
         print(row)
     print("-" * len(header))
 
@@ -187,12 +157,19 @@ def list_inbox():
         print("Inbox is empty.")
         return
 
+    # REFRESH METRICS
+    strategies = refresh_strategies(strategies)
+    
+    # Save back to inbox
+    with open(inbox_path, 'w') as f:
+        json.dump(strategies, f, indent=4)
+
     # Sort by Sortino
     strategies.sort(key=lambda x: x.get('test_sortino', 0), reverse=True)
 
     print(f"\n📥 INBOX STRATEGIES ({len(strategies)} found)")
-    print(f"{'Name':<20} | {'Horizon':<8} | {'Sortino':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
-    print("-" * 100)
+    print(f"{'Name':<50} | {'Horizon':<8} | {'Sortino':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
+    print("-" * 130)
     
     for s in strategies:
         name = s.get('name', 'Unknown')
@@ -204,8 +181,8 @@ def list_inbox():
         r_test = s.get('test_return', 0) * 100
         gen = s.get('generation', '?')
         
-        print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
-    print("-" * 100)
+        print(f"{name[:50]:<50} | {horizon:<8} | {sortino:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
+    print("-" * 130)
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")

@@ -93,6 +93,9 @@ class EvolutionaryAlphaFactory:
         cand_signals_full = self.backtester.generate_signal_matrix(candidates)
         cand_signals = cand_signals_full[:limit_idx]
         
+        # FIX: Shift signals for Next-Open Execution (Prevent Peeking)
+        cand_signals = np.vstack([np.zeros((1, cand_signals.shape[1]), dtype=cand_signals.dtype), cand_signals[:-1]])
+        
         # Expectancy Filter (Churn Prevention)
         rets_batch, trades_batch = self.backtester.run_simulation_batch(
             cand_signals, 
@@ -344,40 +347,15 @@ class EvolutionaryAlphaFactory:
         filtered_data = []
         
         if top_candidates:
-            # 1. Evaluate on Test Set (OOS)
-            test_res = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=False, prediction_mode=False, time_limit=horizon, min_trades=10)
+            # 1. Evaluate on all sets using standard ENGINE (Correct Shift)
+            test_res, test_returns = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=10)
+            val_res, val_returns = self.backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=10)
+            train_res = self.backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=10)
             
-            # Generate Signals for all sets
-            val_start, val_end = self.backtester.train_idx, self.backtester.val_idx
-            test_start, test_end = self.backtester.val_idx, len(self.backtester.open_vec)
-            train_start, train_end = 0, self.backtester.train_idx
-            
-            full_signals = self.backtester.generate_signal_matrix(top_candidates)
-            
-            train_signals = full_signals[train_start:train_end]
-            val_signals = full_signals[val_start:val_end]
-            test_signals = full_signals[test_start:test_end]
-
-            # Batch Sim Validation
-            val_rets_batch, _ = self.backtester.run_simulation_batch(
-                val_signals, top_candidates, self.backtester.open_vec[val_start:val_end],
-                self.backtester.times_vec.iloc[val_start:val_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[val_start:val_end],
-                time_limit=horizon, highs=self.backtester.high_vec[val_start:val_end], lows=self.backtester.low_vec[val_start:val_end], atr=self.backtester.atr_vec[val_start:val_end]
-            )
-            
-            # Batch Sim Test
-            test_rets_batch, _ = self.backtester.run_simulation_batch(
-                test_signals, top_candidates, self.backtester.open_vec[test_start:test_end],
-                self.backtester.times_vec.iloc[test_start:test_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[test_start:test_end],
-                time_limit=horizon, highs=self.backtester.high_vec[test_start:test_end], lows=self.backtester.low_vec[test_start:test_end], atr=self.backtester.atr_vec[test_start:test_end]
-            )
-
-            # Batch Sim Train
-            train_rets_batch, _ = self.backtester.run_simulation_batch(
-                train_signals, top_candidates, self.backtester.open_vec[train_start:train_end],
-                self.backtester.times_vec.iloc[train_start:train_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[train_start:train_end],
-                time_limit=horizon, highs=self.backtester.high_vec[train_start:train_end], lows=self.backtester.low_vec[train_start:train_end], atr=self.backtester.atr_vec[train_start:train_end]
-            )
+            # Create lookup maps
+            test_map = {row['id']: row for _, row in test_res.iterrows()}
+            val_map = {row['id']: row for _, row in val_res.iterrows()}
+            train_map = {row['id']: row for _, row in train_res.iterrows()}
 
             best_rejected_name = None
             best_rejected_min_ret = -999.0
@@ -385,16 +363,16 @@ class EvolutionaryAlphaFactory:
 
             # 2. Strict Filtering Loop
             for i, s in enumerate(top_candidates):
-                if i >= len(test_res): break
+                if s.name not in test_map or s.name not in val_map or s.name not in train_map:
+                    continue
                 
-                # Metric Extraction
-                train_r_vec = train_rets_batch[:, i]
-                val_r_vec = val_rets_batch[:, i]
-                test_r_vec = test_rets_batch[:, i]
+                t_stats = train_map[s.name]
+                v_stats = val_map[s.name]
+                te_stats = test_map[s.name]
                 
-                train_ret = float(np.sum(train_r_vec))
-                val_ret = float(np.sum(val_r_vec))
-                test_ret = float(test_res.iloc[i]['total_return']) # Use dataframe derived metric
+                train_ret = t_stats['total_return']
+                val_ret = v_stats['total_return']
+                test_ret = te_stats['total_return']
                 
                 # --- GATEKEEPING ---
                 thresh = config.MIN_RETURN_THRESHOLD
@@ -439,6 +417,9 @@ class EvolutionaryAlphaFactory:
                         continue
 
                 # DSR/PSR Calcs (Only for survivors)
+                val_r_vec = val_returns[:, i]
+                test_r_vec = test_returns[:, i]
+                
                 val_sr = estimated_sharpe_ratio(val_r_vec, config.ANNUALIZATION_FACTOR)
                 dsr_val = deflated_sharpe_ratio(
                     observed_sr=val_sr, returns=val_r_vec, n_trials=self.total_strategies_evaluated,
@@ -455,9 +436,9 @@ class EvolutionaryAlphaFactory:
                 
                 # Build Data Dict
                 strat_data = s.to_dict()
-                strat_data['test_sortino'] = float(test_res.iloc[i]['sortino'])
+                strat_data['test_sortino'] = float(te_stats['sortino'])
                 strat_data['test_return'] = test_ret
-                strat_data['test_trades'] = int(test_res.iloc[i]['trades'])
+                strat_data['test_trades'] = int(te_stats['trades'])
                 strat_data['train_return'] = train_ret
                 strat_data['val_return'] = val_ret
                 strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
