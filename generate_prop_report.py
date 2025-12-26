@@ -470,14 +470,22 @@ def generate_inbox_report():
     for i, strat in enumerate(strategies):
         horizon = getattr(strat, 'horizon', 120)
         
-        stats_df, net_returns_matrix = engine.evaluate_population(
+        # Test Run (OOS)
+        stats_test, net_returns_matrix = engine.evaluate_population(
             [strat], 
             set_type='test', 
             return_series=True, 
             time_limit=horizon
         )
-        
         returns = net_returns_matrix[:, 0]
+        
+        # Train Run (IS)
+        stats_train = engine.evaluate_population([strat], set_type='train', return_series=False, time_limit=horizon)
+        ret_train = stats_train.iloc[0]['total_return']
+
+        # Val Run (IS/Selection)
+        stats_val = engine.evaluate_population([strat], set_type='validation', return_series=False, time_limit=horizon)
+        ret_val = stats_val.iloc[0]['total_return']
         
         # Metrics
         ann_factor = config.ANNUALIZATION_FACTOR
@@ -494,8 +502,8 @@ def generate_inbox_report():
         drawdown = (equity_curve - peak) / peak
         max_drawdown = np.min(drawdown)
         
-        sortino = stats_df.iloc[0]['sortino']
-        total_trades = int(stats_df.iloc[0]['trades'])
+        sortino = stats_test.iloc[0]['sortino']
+        total_trades = int(stats_test.iloc[0]['trades'])
         
         # Ratings
         rating_sortino = '⭐⭐⭐⭐⭐' if sortino > 3.0 else '⭐⭐⭐'
@@ -506,6 +514,9 @@ def generate_inbox_report():
         full_md += f"### 📊 Performance\n"
         full_md += f"| Metric | Value | Rating |\n"
         full_md += f"| :--- | :--- | :--- |\n"
+        full_md += f"| **Train Return** | `{ret_train*100:.2f}%` | |\n"
+        full_md += f"| **Val Return** | `{ret_val*100:.2f}%` | |\n"
+        full_md += f"| **Test Return** | `{stats_test.iloc[0]['total_return']*100:.2f}%` | {rating_return} |\n"
         full_md += f"| **Annualized Return** | `{ann_return*100:.2f}%` | {rating_return} |\n"
         full_md += f"| **Sortino Ratio** | `{sortino:.2f}` | {rating_sortino} |\n"
         full_md += f"| **Max Drawdown** | `{max_drawdown*100:.2f}%` | {rating_dd} |\n"
@@ -538,11 +549,11 @@ if __name__ == "__main__":
         print(f"❌ Failed to generate Mutex Report: {e}")
     
     # 2. Individual Horizon Reports (Legacy)
-    for h in config.PREDICTION_HORIZONS:
-        try:
-            generate_report(h)
-        except Exception as e:
-            # print(f"❌ Failed to generate report for Horizon {h}: {e}")
-            pass
+    # for h in config.PREDICTION_HORIZONS:
+    #     try:
+    #         generate_report(h)
+    #     except Exception as e:
+    #         # print(f"❌ Failed to generate report for Horizon {h}: {e}")
+    #         pass
 
     print("\nDone.")

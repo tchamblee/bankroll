@@ -116,6 +116,15 @@ def clear_list():
     save_candidates([])
     print("🧹 Candidate list cleared.")
 
+def clear_inbox():
+    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    if os.path.exists(inbox_path):
+        with open(inbox_path, 'w') as f:
+            json.dump([], f, indent=4)
+        print("🧹 Strategy Inbox cleared.")
+    else:
+        print("⚠️  Inbox file not found.")
+
 def list_inbox():
     inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
     if not os.path.exists(inbox_path):
@@ -137,18 +146,21 @@ def list_inbox():
     strategies.sort(key=lambda x: x.get('test_sortino', 0), reverse=True)
 
     print(f"\n📥 INBOX STRATEGIES ({len(strategies)} found)")
-    print(f"{'Name':<20} | {'Horizon':<8} | {'Sortino':<8} | {'Ret(Test)':<10} | {'Found(Gen)'}")
-    print("-" * 75)
+    print(f"{'Name':<20} | {'Horizon':<8} | {'Sortino':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
+    print("-" * 100)
     
     for s in strategies:
         name = s.get('name', 'Unknown')
         horizon = s.get('horizon', '?')
         sortino = s.get('test_sortino', 0)
-        ret = s.get('test_return', 0)
+        
+        r_train = s.get('train_return', 0) * 100
+        r_val = s.get('val_return', 0) * 100
+        r_test = s.get('test_return', 0) * 100
         gen = s.get('generation', '?')
         
-        print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {ret*100:<9.2f}% | {gen}")
-    print("-" * 75)
+        print(f"{name:<20} | {horizon:<8} | {sortino:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
+    print("-" * 100)
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")
@@ -164,6 +176,7 @@ def main():
     rm_parser.add_argument('name', type=str, help='Name of the strategy')
     
     subparsers.add_parser('clear', help='Clear the candidate list')
+    subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
     
     args = parser.parse_args()
     
@@ -177,6 +190,8 @@ def main():
         remove_strategy(args.name)
     elif args.command == 'clear':
         clear_list()
+    elif args.command == 'clear-inbox':
+        clear_inbox()
     else:
         parser.print_help()
 

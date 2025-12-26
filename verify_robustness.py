@@ -69,12 +69,12 @@ def run_stress_test(strategy_file):
     
     passed_strategies = []
     
-    for r in results:
-        name = r['name']
-        p5 = r['p5_sortino']
-        med = r['median_sortino']
-        std = r['std_sortino']
-        min_s = r['min_sortino']
+    for idx, r in results.iterrows():
+        name = r['id']
+        p5 = r['cpcv_p5_sortino']
+        med = r['cpcv_median']
+        std = r['cpcv_std']
+        min_s = r['cpcv_min']
         
         # Rating Logic
         # P5 (5th Percentile) Sortino > 1.5 means in 95% of market splits, Sortino was > 1.5
