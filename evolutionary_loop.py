@@ -71,6 +71,14 @@ class EvolutionaryAlphaFactory:
         child.long_genes = [g.copy() for g in random.sample(combined_long, min(len(combined_long), n_long))]
         child.short_genes = [g.copy() for g in random.sample(combined_short, min(len(combined_short), n_short))]
         
+        # Inherit Params
+        if random.random() < 0.5:
+            child.stop_loss_pct = p1.stop_loss_pct
+            child.take_profit_pct = p1.take_profit_pct
+        else:
+            child.stop_loss_pct = p2.stop_loss_pct
+            child.take_profit_pct = p2.take_profit_pct
+
         child.recalculate_concordance()
         return child
 
@@ -308,11 +316,20 @@ class EvolutionaryAlphaFactory:
                 child = Strategy(name=f"Mutant_{random.randint(1000,9999)}")
                 child.long_genes = [g.copy() for g in parent.long_genes]
                 child.short_genes = [g.copy() for g in parent.short_genes]
+                child.stop_loss_pct = parent.stop_loss_pct
+                child.take_profit_pct = parent.take_profit_pct
                 
+                # Gene Mutation
                 genes_to_mutate = child.long_genes + child.short_genes
                 if genes_to_mutate:
                     target_genes = random.sample(genes_to_mutate, min(len(genes_to_mutate), 2))
                     for g in target_genes: g.mutate(self.factory.features)
+                
+                # Param Mutation (10% chance)
+                if random.random() < 0.10:
+                    child.stop_loss_pct = random.choice([1.0, 1.5, 2.0, 2.5, 3.0])
+                    child.take_profit_pct = random.choice([2.0, 3.0, 4.0, 5.0, 6.0])
+
                 child.cleanup()
                 child.recalculate_concordance()
                 new_population.append(child)

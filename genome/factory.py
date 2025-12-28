@@ -262,11 +262,16 @@ class GenomeFactory:
              long_genes.append(self.create_gene_from_pool(self.trigger_pool))
              short_genes.append(self.create_gene_from_pool(self.trigger_pool))
 
+        sl_pct = random.choice([1.5, 2.0, 2.5])
+        tp_pct = random.choice([3.0, 4.0, 5.0, 6.0])
+
         return Strategy(
             name=f"{archetype_name}_{random.randint(1000,9999)}",
             long_genes=long_genes,
             short_genes=short_genes,
-            min_concordance=len(long_genes) # Require ALL conditions for archetypes (Strict)
+            min_concordance=len(long_genes), # Require ALL conditions for archetypes (Strict)
+            stop_loss_pct=sl_pct,
+            take_profit_pct=tp_pct
         )
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
@@ -304,9 +309,14 @@ class GenomeFactory:
         else:
             concordance = math.ceil(num_genes * 0.51)
 
+        sl_pct = random.choice([1.5, 2.0, 2.5])
+        tp_pct = random.choice([3.0, 4.0, 5.0, 6.0])
+
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
             long_genes=long_genes,
             short_genes=short_genes,
-            min_concordance=concordance
+            min_concordance=concordance,
+            stop_loss_pct=sl_pct,
+            take_profit_pct=tp_pct
         )
