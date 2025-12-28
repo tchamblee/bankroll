@@ -43,16 +43,79 @@ def load_all_candidates():
                 s.stop_loss_pct = d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS)
             if not hasattr(s, 'take_profit_pct'):
                 s.take_profit_pct = d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+            
+            # CRITICAL FIX: Use VALIDATION Sortino for ranking, not Test/OOS.
+            # This prevents look-ahead bias during candidate selection.
+            val_stats = d.get('val_stats', {})
+            s.sortino = val_stats.get('sortino', 0.0)
 
             candidates.append(s)
         except Exception as e:
             print(f"  Error loading strategy {d.get('name')}: {e}")
             
-    # Initial Sort by Sortino (Best First)
+    # Initial Sort by Validation Sortino (Best First)
     candidates.sort(key=lambda x: x.sortino, reverse=True)
     
-    print(f"  Loaded {len(candidates)} manually selected candidates.")
+    print(f"  Loaded {len(candidates)} candidates sorted by Validation Sortino.")
     return candidates
+
+def filter_correlated_candidates(candidates, backtester, max_count=14, corr_threshold=0.7):
+    """
+    Greedy selection of uncorrelated strategies.
+    1. Sort by Sortino (Best First).
+    2. Pick best.
+    3. Pick next best ONLY if its correlation with ALL currently picked 
+       strategies is < corr_threshold.
+    """
+    print(f"\nrunning Correlation Filter on {len(candidates)} candidates (Thresh: {corr_threshold})...")
+    
+    # 1. Generate Signal Matrix for ALL candidates to compute correlations
+    #    (Signals are a good proxy for return correlation and faster to compute/cleaner)
+    print("  Generating signal matrix for correlation analysis...")
+    backtester.ensure_context(candidates)
+    sig_matrix = backtester.generate_signal_matrix(candidates)
+    
+    # 2. Compute Correlation Matrix (using pandas for speed)
+    #    We use 'spearman' or 'pearson'. Pearson on {-1, 0, 1} signals works well to catch overlapping trades.
+    df_sigs = pd.DataFrame(sig_matrix, columns=[c.name for c in candidates])
+    corr_matrix = df_sigs.corr(method='pearson').values
+    
+    # 3. Greedy Selection
+    selected_indices = [] # Indices in the original 'candidates' list
+    
+    # Candidates are already sorted by Sortino from load_all_candidates, 
+    # but let's ensure it just in case.
+    # We need to track original indices to look up correlations.
+    # Actually, the corr_matrix follows the order of 'candidates'.
+    
+    for i in range(len(candidates)):
+        if len(selected_indices) >= max_count:
+            break
+            
+        # Always pick the absolute best (first one)
+        if len(selected_indices) == 0:
+            selected_indices.append(i)
+            continue
+            
+        # Check correlation with all already picked
+        is_correlated = False
+        for picked_idx in selected_indices:
+            # Correlation between candidate 'i' and picked 'picked_idx'
+            corr = corr_matrix[i, picked_idx]
+            if abs(corr) > corr_threshold:
+                is_correlated = True
+                # print(f"    Skipping {candidates[i].name}: Correlated ({corr:.2f}) with {candidates[picked_idx].name}")
+                break
+        
+        if not is_correlated:
+            selected_indices.append(i)
+            
+    final_candidates = [candidates[i] for i in selected_indices]
+    print(f"  Selected {len(final_candidates)} diverse candidates from pool of {len(candidates)}.")
+    for s in final_candidates:
+        print(f"    - {s.name} (Val Sortino: {s.sortino:.2f})")
+        
+    return final_candidates
 
 @jit(nopython=True)
 def _jit_simulate_mutex_custom(sig_matrix, prices, highs, lows, atr, hours, weekdays, horizons, sl_mults, tp_mults, lot_size, spread_pct, comm_pct, account_size, end_hour, cooldown_bars):
@@ -287,11 +350,12 @@ def optimize_mutex_portfolio(candidates, backtester):
         hours = dt_idx.hour.values.astype(np.int8)
         weekdays = dt_idx.dayofweek.values.astype(np.int8)
 
-    # 2. Limit Candidates
+    # 2. Limit Candidates with Correlation Filter
     MAX_CANDIDATES = 14 # 2^14 = 16,384 combinations (Fast)
+    
     if len(candidates) > MAX_CANDIDATES:
-        print(f"⚠️  Too many candidates ({len(candidates)}). Truncating to top {MAX_CANDIDATES} by standalone Sortino.")
-        candidates = candidates[:MAX_CANDIDATES]
+        print(f"⚠️  Too many candidates ({len(candidates)}). Applying Correlation Filter to pick top {MAX_CANDIDATES} diverse strategies.")
+        candidates = filter_correlated_candidates(candidates, backtester, max_count=MAX_CANDIDATES, corr_threshold=0.7)
     
     n_c = len(candidates)
     print(f"Evaluating {2**n_c - 1} combinations for {n_c} candidates...")

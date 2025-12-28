@@ -29,8 +29,15 @@ class FeatureEngine:
 
     def load_gdelt_data(self, pattern="GDELT_GKG_*.parquet"):
         """
-        Loads GDELT GKG data and aggregates it to Daily resolution.
+        Loads GDELT data. Tries V2 (Intraday) first, falls back to V1 (Daily).
         """
+        # Try V2 (Intraday)
+        v2_df = loader.load_gdelt_v2_data(self.data_dir)
+        if v2_df is not None and not v2_df.empty:
+            print("✅ Loaded GDELT V2 (Intraday) data.")
+            return v2_df
+            
+        print("⚠️ GDELT V2 not found. Falling back to Legacy (Daily)...")
         return loader.load_gdelt_data(self.data_dir, pattern)
 
     def create_volume_bars(self, primary_df, volume_threshold=1000):

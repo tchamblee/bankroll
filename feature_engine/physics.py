@@ -350,7 +350,7 @@ def _calc_physics_window_features(w, df_minimal):
     res[f'fdi_{w}'] = fdi
     
     # ROC Features
-    res[f'kyle_lambda_roc_{w}'] = lam.pct_change()
+    res[f'kyle_lambda_roc_{w}'] = lam.pct_change(fill_method=None)
     res[f'fdi_roc_{w}'] = fdi.diff()
     
     return res

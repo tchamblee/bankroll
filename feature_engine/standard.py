@@ -30,7 +30,7 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     res[f'skew_{w}'] = log_ret.rolling(w).skew()
     
     # 5. ROC Features
-    res[f'volatility_roc_{w}'] = vol.pct_change()
+    res[f'volatility_roc_{w}'] = vol.pct_change(fill_method=None)
     res[f'skew_roc_{w}'] = res[f'skew_{w}'].diff()
     res[f'trend_strength_roc_{w}'] = trend_strength.diff()
     

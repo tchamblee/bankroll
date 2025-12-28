@@ -164,24 +164,26 @@ def list_inbox():
     with open(inbox_path, 'w') as f:
         json.dump(strategies, f, indent=4)
 
-    # Sort by Sortino
-    strategies.sort(key=lambda x: x.get('test_sortino', 0), reverse=True)
+    # Sort by Validation Sortino (Best Practice)
+    strategies.sort(key=lambda x: x.get('val_stats', {}).get('sortino', x.get('val_sortino', 0)), reverse=True)
 
     print(f"\n📥 INBOX STRATEGIES ({len(strategies)} found)")
-    print(f"{'Name':<50} | {'Horizon':<8} | {'Sortino':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
+    print(f"{'Name':<50} | {'Horizon':<8} | {'Val Sort':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
     print("-" * 130)
     
     for s in strategies:
         name = s.get('name', 'Unknown')
         horizon = s.get('horizon', '?')
-        sortino = s.get('test_sortino', 0)
+        
+        # Prioritize Val Sortino
+        val_sort = s.get('val_stats', {}).get('sortino', s.get('val_sortino', 0))
         
         r_train = s.get('train_return', 0) * 100
         r_val = s.get('val_return', 0) * 100
         r_test = s.get('test_return', 0) * 100
         gen = s.get('generation', '?')
         
-        print(f"{name[:50]:<50} | {horizon:<8} | {sortino:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
+        print(f"{name[:50]:<50} | {horizon:<8} | {val_sort:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
     print("-" * 130)
 
 def main():

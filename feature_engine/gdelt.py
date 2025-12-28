@@ -3,64 +3,82 @@ import numpy as np
 
 def add_gdelt_features(df, gdelt_df):
     """
-    Merges Daily GDELT features into Intraday Bars.
-    CRITICAL: Uses LAG 1 (Yesterday's News) to avoid Lookahead Bias.
+    Merges GDELT features into Intraday Bars.
+    Supports both Daily (Legacy) and Intraday (V2) GDELT data.
     """
     if df is None or gdelt_df is None: return df
-    print("Merging GDELT Features (Lag 1 Day)...")
+    
     df = df.copy()
     
-    # Extract Date from Bar Start Time
-    df['date'] = df['time_start'].dt.normalize()
+    # Check if GDELT is Intraday or Daily
+    is_intraday_gdelt = False
+    if isinstance(gdelt_df.index, pd.DatetimeIndex):
+        # Check frequency/resolution roughly
+        # If mean diff is < 24 hours, it's intraday
+        if len(gdelt_df) > 1:
+            diff = gdelt_df.index[1] - gdelt_df.index[0]
+            if diff < pd.Timedelta(hours=23):
+                is_intraday_gdelt = True
     
-    # Shift GDELT by 1 Day to represent "Yesterday"
-    # Since gdelt_df is indexed by date, we can shift the index or the data.
-    # Ideally, for date T, we want GDELT from T-1.
-    # So we shift GDELT index forward by 1 day? 
-    # No, if we want T's features to be T-1's data, we merge T with T-1.
-    # Easier: Shift GDELT dataframe forward by 1 day.
-    
-    gdelt_shifted = gdelt_df.shift(1) # Row 1 becomes Row 2. Date index stays? No, shift moves data.
-    # shift(1) on a DF moves values down.
-    # 2025-12-01: Data_A
-    # 2025-12-02: Data_B
-    # after shift(1):
-    # 2025-12-01: NaN
-    # 2025-12-02: Data_A
-    # This is exactly what we want. On Dec 2nd, we see Dec 1st data.
-    
-    # Merge
-    # We reset index to make 'date' a column
-    gdelt_shifted = gdelt_shifted.reset_index()
-    
-    merged = pd.merge(df, gdelt_shifted, on='date', how='left')
-    
-    # Fill NaNs (e.g. weekends or missing days) with 0 or forward fill?
-    # Forward fill is better for sentiment persistence
+    if is_intraday_gdelt:
+        print("Merging GDELT Features (Intraday - 15min Resolution)...")
+        # Ensure sorting for merge_asof
+        df = df.sort_values('time_start')
+        gdelt_df = gdelt_df.sort_index()
+        
+        # Merge AsOf
+        # backward: find the last GDELT row where gdelt_time <= bar_time
+        # allow_exact_matches=True (assuming GDELT timestamp is publication time)
+        # Note: In real live trading, we might have a 15 min lag. 
+        # But for backtest/parity, we assume we have the data associated with that 15-min bucket.
+        
+        # We need to make sure index is a column for merge_asof if it's not
+        gdelt_reset = gdelt_df.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})
+        
+        # Check column name of time in gdelt
+        if 'time_start' not in gdelt_reset.columns:
+            # Maybe it stayed as 'index' or 'date'
+            cols = gdelt_reset.columns
+            # Try to find datetime col
+            for c in cols:
+                if pd.api.types.is_datetime64_any_dtype(gdelt_reset[c]):
+                    gdelt_reset = gdelt_reset.rename(columns={c: 'time_start'})
+                    break
+        
+        merged = pd.merge_asof(
+            df, 
+            gdelt_reset, 
+            on='time_start', 
+            direction='backward'
+        )
+        
+    else:
+        print("Merging GDELT Features (Daily - Legacy Lag 1 Day)...")
+        # Legacy Daily Logic
+        df['date'] = df['time_start'].dt.normalize()
+        gdelt_shifted = gdelt_df.shift(1).reset_index()
+        merged = pd.merge(df, gdelt_shifted, on='date', how='left')
+        merged.drop(columns=['date'], errors='ignore', inplace=True)
+        
+    # Fill NaNs (Forward Fill)
     cols_to_fill = ['news_vol_eur', 'news_tone_eur', 'news_vol_usd', 'news_tone_usd', 
                     'news_vol_zscore', 'global_polarity', 
-                    'epu_total', 'epu_usd', 'epu_eur',
-                    'central_bank_tone', 'energy_crisis_eur', 'panic_score']
+                    'epu_total', 'epu_usd', 'epu_eur', 'epu_diff',
+                    'central_bank_tone', 'energy_crisis_eur', 'panic_score', 'conflict_intensity']
     
-    # Only fill columns that exist (in case we run old logic)
     existing_cols = [c for c in cols_to_fill if c in merged.columns]
     merged[existing_cols] = merged[existing_cols].ffill().fillna(0)
     
     # Derived Physics Features
-    # 1. Attention Divergence (Mass Differential)
-    merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
-    merged['news_vol_ratio'] = merged['news_vol_eur'] / (merged['news_vol_usd'] + 1.0)
+    if 'news_vol_eur' in merged.columns and 'news_vol_usd' in merged.columns:
+        merged['news_vol_diff'] = merged['news_vol_eur'] - merged['news_vol_usd']
+        merged['news_vol_ratio'] = merged['news_vol_eur'] / (merged['news_vol_usd'] + 1.0)
 
-    # 2. Sentiment Divergence
-    merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
+    if 'news_tone_eur' in merged.columns and 'news_tone_usd' in merged.columns:
+        merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
     
-    # 4. Regime/Panic Features
-    # Already calculated in load: news_vol_zscore, epu_diff, conflict_intensity
-    
-    # Drop temp date column and Redundant/Weak Features
-    # Keeping 'panic_score' and 'global_polarity' per request, letting purge_features.py validate them.
-    # Dropping 'central_bank_tone', 'energy_crisis_eur' as they were flagged weak.
-    drop_cols = ['date', 'total_vol', 'inflation_vol', 'central_bank_tone', 
+    # Cleanup
+    drop_cols = ['total_vol', 'inflation_vol', 'central_bank_tone', 
                  'energy_crisis_eur', 'news_vol_zscore']
     merged.drop(columns=drop_cols, errors='ignore', inplace=True)
     

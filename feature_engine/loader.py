@@ -248,5 +248,183 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     roll_std = gdelt_daily['total_vol'].rolling(30, min_periods=5).std()
     # gdelt_daily['news_vol_zscore'] = (gdelt_daily['total_vol'] - roll_mean) / roll_std.replace(0, 1)
     
-    print(f"Processed GDELT data: {len(gdelt_daily)} days.")
-    return gdelt_daily
+def process_gdelt_v2_file(f):
+    """
+    Process a single 15-min GDELT V2 GKG parquet file.
+    Returns aggregated stats for that 15-min interval.
+    """
+    try:
+        # Load Parquet
+        # Expected cols: GKGRECORDID, DATE, SourceCommonName, DocumentIdentifier, Counts, Themes, Locations, V2Tone, batch_ts, date_utc
+        df = pd.read_parquet(f)
+        if df.empty: return None
+
+        # Ensure date_utc is datetime
+        if not pd.api.types.is_datetime64_any_dtype(df['date_utc']):
+            df['date_utc'] = pd.to_datetime(df['date_utc'])
+            
+        # We aggregate everything to the distinct timestamp of this file (usually just one)
+        # But let's group by date_utc just in case multiple timestamps exist (rare in batch file)
+        
+        # Parse V2Tone (already parsed in ingest as tone_mean, tone_polarity)
+        # Check if columns exist
+        if 'tone_mean' not in df.columns:
+            # Fallback if raw V2Tone exists
+            if 'V2Tone' in df.columns:
+                 tone_data = df['V2Tone'].astype(str).str.split(',', expand=True)
+                 df['tone_mean'] = tone_data[0].astype(float)
+                 df['tone_polarity'] = tone_data[3].astype(float)
+            else:
+                return None
+
+        # Keyword Definitions (Same as Daily)
+        eur_locs = config.GDELT_KEYWORDS['EUR_LOCS']
+        usd_locs = config.GDELT_KEYWORDS['USD_LOCS']
+        
+        # Optimize matching
+        loc_str = df['Locations'].fillna("").astype(str).str.upper()
+        theme_str = df['Themes'].fillna("").astype(str)
+        
+        eur_mask = loc_str.str.contains('|'.join([x.upper() for x in eur_locs]), regex=True)
+        usd_mask = loc_str.str.contains('|'.join([x.upper() for x in usd_locs]), regex=True)
+        de_mask = loc_str.str.contains('GERMANY|BERLIN|DE', regex=True)
+        
+        conflict_mask = theme_str.str.contains(config.GDELT_KEYWORDS['CONFLICT_THEMES'], regex=True)
+        epu_mask = theme_str.str.contains(config.GDELT_KEYWORDS['EPU_THEMES'], regex=True)
+        inflation_mask = theme_str.str.contains(config.GDELT_KEYWORDS['INFLATION_THEMES'], regex=True)
+        cb_mask = theme_str.str.contains(config.GDELT_KEYWORDS['CB_THEMES'], regex=True)
+        energy_mask = theme_str.str.contains(config.GDELT_KEYWORDS['ENERGY_THEMES'], regex=True)
+        
+        agg_data = []
+        for date, group in df.groupby('date_utc'):
+            idx = group.index
+            g_eur_mask = eur_mask.loc[idx]
+            g_usd_mask = usd_mask.loc[idx]
+            g_de_mask = de_mask.loc[idx]
+            
+            eur_group = group[g_eur_mask]
+            usd_group = group[g_usd_mask]
+            
+            agg_data.append({
+                'time_start': date, # Using time_start to match bar convention
+                'news_vol_eur': len(eur_group),
+                'news_tone_eur_sum': eur_group['tone_mean'].sum(),
+                'news_vol_usd': len(usd_group),
+                'news_tone_usd_sum': usd_group['tone_mean'].sum(),
+                
+                'global_tone_sum': group['tone_mean'].sum(),
+                'global_polarity_sum': group['tone_polarity'].sum(),
+                'total_count': len(group),
+                
+                'conflict_intensity': conflict_mask.loc[idx].sum(),
+                'epu_total': epu_mask.loc[idx].sum(),
+                'epu_usd': (epu_mask.loc[idx] & g_usd_mask).sum(),
+                'epu_eur': (epu_mask.loc[idx] & g_de_mask).sum(),
+                
+                'inflation_vol': inflation_mask.loc[idx].sum(),
+                'cb_tone_sum': group.loc[cb_mask.loc[idx], 'tone_mean'].sum(),
+                'cb_count': cb_mask.loc[idx].sum(),
+                'energy_crisis_eur': (energy_mask.loc[idx] & g_eur_mask).sum()
+            })
+            
+        return pd.DataFrame(agg_data)
+        
+    except Exception as e:
+        print(f"Error processing V2 file {f}: {e}")
+        return None
+
+def load_gdelt_v2_data(data_dir=None):
+    """
+    Loads GDELT V2 GKG (15-min) data and aggregates it to Intraday resolution.
+    Returns a DataFrame indexed by time_start (UTC).
+    """
+    if data_dir is None:
+        data_dir = config.DIRS.get("DATA_GDELT", "data/gdelt")
+        
+    v2_dir = os.path.join(data_dir, "v2_gkg")
+    if not os.path.exists(v2_dir):
+        print(f"No V2 GKG dir found at {v2_dir}")
+        return None
+        
+    files = glob.glob(os.path.join(v2_dir, "gdelt_v2_gkg_*.parquet"))
+    files.sort() # Ensure time order
+    
+    if not files:
+        print(f"No GDELT V2 files found in {v2_dir}")
+        return None
+        
+    print(f"Loading {len(files)} GDELT V2 files (Intraday)...")
+    
+    # Process in chunks to be safe
+    chunk_size = 200
+    max_workers = 8
+    intermediate_aggs = []
+    
+    for i in range(0, len(files), chunk_size):
+        chunk_files = files[i : i + chunk_size]
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(process_gdelt_v2_file, chunk_files))
+            
+            dfs = [r for r in results if r is not None]
+            if dfs:
+                chunk_df = pd.concat(dfs, ignore_index=True)
+                # Group by time in case of overlaps, though unlikely with 15-min batches
+                chunk_agg = chunk_df.groupby('time_start').sum().reset_index()
+                intermediate_aggs.append(chunk_agg)
+                
+            del results, dfs
+            
+        except Exception as e:
+            print(f"Error processing chunk {i}: {e}")
+            
+    if not intermediate_aggs:
+        return None
+        
+    final_agg = pd.concat(intermediate_aggs).groupby('time_start').sum()
+    
+    # Calculate derived metrics (Means, Ratios)
+    gdelt_intraday = pd.DataFrame(index=final_agg.index)
+    
+    # 1. Base Stats
+    gdelt_intraday['news_vol_eur'] = final_agg['news_vol_eur']
+    gdelt_intraday['news_tone_eur'] = final_agg['news_tone_eur_sum'] / final_agg['news_vol_eur'].replace(0, 1)
+    
+    gdelt_intraday['news_vol_usd'] = final_agg['news_vol_usd']
+    gdelt_intraday['news_tone_usd'] = final_agg['news_tone_usd_sum'] / final_agg['news_vol_usd'].replace(0, 1)
+    
+    # 2. Panic Index (Intraday)
+    gdelt_intraday['global_tone'] = final_agg['global_tone_sum'] / final_agg['total_count'].replace(0, 1)
+    gdelt_intraday['global_polarity'] = final_agg['global_polarity_sum'] / final_agg['total_count'].replace(0, 1)
+    
+    # Expanding Z-Score for Panic (Intraday Adaptation)
+    # Using smaller window for intraday reaction? No, expanding is safer.
+    tone_mean = gdelt_intraday['global_tone'].expanding(min_periods=10).mean()
+    tone_std = gdelt_intraday['global_tone'].expanding(min_periods=10).std()
+    
+    tone_mean = tone_mean.bfill().fillna(0)
+    tone_std = tone_std.bfill().fillna(1.0)
+    
+    tone_zscore = (gdelt_intraday['global_tone'] - tone_mean) / tone_std
+    gdelt_intraday['panic_score'] = np.where(tone_zscore < -2.0, gdelt_intraday['global_polarity'] * -1, 0)
+    
+    gdelt_intraday['conflict_intensity'] = final_agg['conflict_intensity']
+    
+    # 3. EPU
+    gdelt_intraday['epu_total'] = final_agg['epu_total']
+    gdelt_intraday['epu_usd'] = final_agg['epu_usd']
+    gdelt_intraday['epu_eur'] = final_agg['epu_eur']
+    gdelt_intraday['epu_diff'] = gdelt_intraday['epu_usd'] - gdelt_intraday['epu_eur']
+    
+    # 4. Inflation/Yields
+    gdelt_intraday['inflation_vol'] = final_agg['inflation_vol']
+    gdelt_intraday['central_bank_tone'] = final_agg['cb_tone_sum'] / final_agg['cb_count'].replace(0, 1)
+    
+    # 5. Asset Specific
+    gdelt_intraday['energy_crisis_eur'] = final_agg['energy_crisis_eur']
+    
+    # 6. Volume
+    gdelt_intraday['total_vol'] = gdelt_intraday['news_vol_eur'] + gdelt_intraday['news_vol_usd']
+    
+    print(f"Processed GDELT V2 Intraday data: {len(gdelt_intraday)} periods.")
+    return gdelt_intraday
