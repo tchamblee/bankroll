@@ -618,6 +618,8 @@ def download_v2_gkg_for_ts(ts_str: str) -> Optional[pl.DataFrame]:
             has_header=False,
             ignore_errors=True,
             infer_schema_length=0,
+            quote_char=None,  # GDELT GKG contains unescaped quotes, disable quote parsing
+            encoding="utf8-lossy"
         )
     except Exception as e:
         logger.warning("[GKG2 %s] Failed to parse CSV: %s", ts_str, e)
