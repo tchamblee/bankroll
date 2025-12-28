@@ -501,6 +501,26 @@ class PaperTradeApp:
             except: pass
             
         atr = full_df['atr'].iloc[-1] if 'atr' in full_df.columns else full_df['close'].iloc[-1]*0.001
+
+        # --- ENFORCE TRADING HOURS ---
+        last_ts = full_df['time_start'].iloc[-1]
+        if not hasattr(last_ts, 'hour'): last_ts = pd.to_datetime(last_ts)
+        
+        current_hour = last_ts.hour
+        current_weekday = last_ts.dayofweek
+        
+        # Market Open: Mon-Fri, StartHour <= H < EndHour
+        is_market_open = (current_hour >= cfg.TRADING_START_HOUR) and \
+                         (current_hour < cfg.TRADING_END_HOUR) and \
+                         (current_weekday < 5)
+                         
+        if not is_market_open:
+            if self.executor.position != 0:
+                logger.info(f"🚫 Market Closed (Hour {current_hour}). Forcing Exit.")
+                await self.executor.execute_signal(0, -1, full_df['close'].iloc[-1], atr)
+            return # Skip signal generation
+        # -----------------------------
+        
         active_sig, active_idx = 0, -1
         
         for i, strat in enumerate(self.strategies):
