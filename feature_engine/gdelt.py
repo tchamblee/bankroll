@@ -26,14 +26,56 @@ def add_gdelt_features(df, gdelt_df):
         df = df.sort_values('time_start')
         gdelt_df = gdelt_df.sort_index()
         
-        # Merge AsOf
-        # backward: find the last GDELT row where gdelt_time <= bar_time
-        # allow_exact_matches=True (assuming GDELT timestamp is publication time)
-        # Note: In real live trading, we might have a 15 min lag. 
-        # But for backtest/parity, we assume we have the data associated with that 15-min bucket.
+        # --- ROLLING TRANSFORMATION (Bridge Daily vs Intraday) ---
+        # Strategies were trained on Daily aggregates (24h sum).
+        # Raw 15-min data is too sparse and small-scaled.
+        # We apply a 24-hour (96 periods) rolling window to simulate a 
+        # "Continuous Daily" value.
+        
+        window = 96 # 15 min * 96 = 24 hours
+        
+        # Columns to SUM (Counts)
+        sum_cols = ['news_vol_eur', 'news_vol_usd', 'total_count', 
+                    'conflict_intensity', 'epu_total', 'epu_usd', 'epu_eur', 
+                    'inflation_vol', 'cb_count', 'energy_crisis_eur']
+        
+        # Columns to MEAN (Scores/Tones)
+        # Note: Ideally weighted mean, but simple mean on rolling window is decent proxy
+        # provided we assume article volume is somewhat distributed.
+        mean_cols = ['news_tone_eur', 'news_tone_usd', 'global_tone', 
+                     'global_polarity', 'central_bank_tone']
+                     
+        # Filter cols that actually exist
+        sum_cols = [c for c in sum_cols if c in gdelt_df.columns]
+        mean_cols = [c for c in mean_cols if c in gdelt_df.columns]
+        
+        # Apply Rolling
+        # min_periods=1 ensures we get data immediately without waiting 24h (starts noisy, stabilizes)
+        gdelt_rolled = gdelt_df.copy()
+        gdelt_rolled[sum_cols] = gdelt_rolled[sum_cols].rolling(window, min_periods=1).sum()
+        gdelt_rolled[mean_cols] = gdelt_rolled[mean_cols].rolling(window, min_periods=1).mean()
+        
+        # Recalculate derived columns that depend on rolled values
+        # e.g. panic_score, epu_diff
+        
+        # EPU Diff
+        if 'epu_usd' in gdelt_rolled.columns and 'epu_eur' in gdelt_rolled.columns:
+            gdelt_rolled['epu_diff'] = gdelt_rolled['epu_usd'] - gdelt_rolled['epu_eur']
+            
+        # Panic Score (Re-run logic on smoothed data)
+        if 'global_tone' in gdelt_rolled.columns and 'global_polarity' in gdelt_rolled.columns:
+             # Expanding/Rolling Z-Score on the SMOOTHED tone
+             t_mean = gdelt_rolled['global_tone'].expanding(min_periods=96).mean()
+             t_std = gdelt_rolled['global_tone'].expanding(min_periods=96).std()
+             
+             t_mean = t_mean.bfill().fillna(0)
+             t_std = t_std.bfill().fillna(1.0)
+             
+             z = (gdelt_rolled['global_tone'] - t_mean) / t_std
+             gdelt_rolled['panic_score'] = np.where(z < -2.0, gdelt_rolled['global_polarity'] * -1, 0)
         
         # We need to make sure index is a column for merge_asof if it's not
-        gdelt_reset = gdelt_df.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})
+        gdelt_reset = gdelt_rolled.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})
         
         # Check column name of time in gdelt
         if 'time_start' not in gdelt_reset.columns:
@@ -45,6 +87,12 @@ def add_gdelt_features(df, gdelt_df):
                     gdelt_reset = gdelt_reset.rename(columns={c: 'time_start'})
                     break
         
+        # Ensure Timezones match (Force UTC)
+        if 'time_start' in df.columns:
+            df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+        if 'time_start' in gdelt_reset.columns:
+            gdelt_reset['time_start'] = pd.to_datetime(gdelt_reset['time_start'], utc=True)
+
         merged = pd.merge_asof(
             df, 
             gdelt_reset, 

@@ -42,11 +42,92 @@ symbol_semaphore = asyncio.Semaphore(CONCURRENT_SYMBOLS)
 
 # --- GDELT CONFIG ---
 GDELT_GKG_BASE = "http://data.gdeltproject.org/gkg"
+GDELT_V2_BASE = "http://data.gdeltproject.org/gdeltv2"
 os.makedirs(cfg.DIRS["DATA_GDELT"], exist_ok=True)
+V2_GKG_DIR = os.path.join(cfg.DIRS["DATA_GDELT"], "v2_gkg")
+os.makedirs(V2_GKG_DIR, exist_ok=True)
 
 # --------------------------------------------------------------------------------------
 # GDELT FUNCTIONS
 # --------------------------------------------------------------------------------------
+
+def download_gdelt_v2_day(target_date: datetime):
+    """
+    Downloads all 15-minute GKG 2.0 files for the target date.
+    Iterates from 00:00 to 23:45.
+    """
+    # Generate 15-min timestamps for the day
+    start_dt = datetime.combine(target_date, datetime.min.time())
+    
+    # 96 intervals per day
+    for i in range(96):
+        ts = start_dt + timedelta(minutes=15 * i)
+        ts_str = ts.strftime("%Y%m%d%H%M%S")
+        filename = os.path.join(V2_GKG_DIR, f"gdelt_v2_gkg_{ts_str}.parquet")
+        
+        if os.path.exists(filename):
+            continue
+            
+        url = f"{GDELT_V2_BASE}/{ts_str}.gkg.csv.zip"
+        
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 404:
+                # Silent skip for missing files (common in older dates or glitches)
+                continue
+            resp.raise_for_status()
+            
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                if not zf.namelist(): continue
+                with zf.open(zf.namelist()[0]) as csv_file:
+                    # GKG 2.0 Parsing
+                    # Use quote_char=None and encoding='utf8-lossy' as per fix
+                    df = pl.read_csv(
+                        csv_file.read(), 
+                        separator="\t", 
+                        has_header=False, 
+                        ignore_errors=True, 
+                        infer_schema_length=0,
+                        quote_char=None,
+                        encoding="utf8-lossy"
+                    )
+                    
+                    if df.width < 27: continue
+                    
+                    cols = df.columns
+                    rename_map = {
+                        cols[0]: "GKGRECORDID",
+                        cols[1]: "DATE",
+                        cols[3]: "SourceCommonName",
+                        cols[4]: "DocumentIdentifier",
+                        cols[5]: "Counts",
+                        cols[7]: "Themes",
+                        cols[9]: "Locations",
+                        cols[15]: "V2Tone",
+                    }
+                    
+                    df = df.rename({k:v for k,v in rename_map.items() if k in df.columns})
+                    keep = ["GKGRECORDID", "DATE", "SourceCommonName", "DocumentIdentifier", "Counts", "Themes", "Locations", "V2Tone"]
+                    existing = [c for c in keep if c in df.columns]
+                    df = df.select(existing)
+                    
+                    # Parse Tone
+                    if "V2Tone" in df.columns:
+                        df = df.with_columns(
+                            pl.col("V2Tone").cast(pl.Utf8).str.split(",").alias("_tone_list")
+                        )
+                        df = df.with_columns(
+                            pl.col("_tone_list").list.get(0).cast(pl.Float64).alias("tone_mean"),
+                            pl.col("_tone_list").list.get(3).cast(pl.Float64).alias("tone_polarity"),
+                            pl.col("DATE").cast(pl.Utf8).str.strptime(pl.Datetime, "%Y%m%d%H%M%S", strict=False).alias("date_utc"),
+                            pl.lit(ts_str).alias("batch_ts")
+                        ).drop("_tone_list")
+                    
+                    df.write_parquet(filename)
+                    # logger.info(f"   [GDELT V2] Saved {ts_str}")
+
+        except Exception as e:
+            logger.warning(f"   [GDELT V2] Error {ts_str}: {e}")
 
 def download_gdelt_gkg(target_date: datetime):
     """Downloads and processes the Daily GKG 1.0 file for the target date."""
@@ -443,6 +524,7 @@ async def main():
             # We run this synchronously or in executor because it's HTTP, not IBKR async
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, download_gdelt_gkg, target_date)
+            await loop.run_in_executor(None, download_gdelt_v2_day, target_date)
 
             # --- 2b. Fetch IBKR Data ---
             tasks = []

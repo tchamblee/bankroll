@@ -6,6 +6,8 @@ import json
 import shutil
 import tempfile
 import glob
+import time
+from pathlib import Path
 import datetime as dt
 from datetime import datetime, timezone
 import pandas as pd
@@ -44,6 +46,8 @@ logger = logging.getLogger("PaperTrade")
 CLIENT_ID = 2
 WINDOW_SIZE = 4000 
 WARMUP_DAYS = 5
+LIVE_STATE_FILE = os.path.join(cfg.DIRS['OUTPUT_DIR'], "live_state.json")
+LIVE_BARS_FILE = os.path.join(cfg.DIRS['PROCESSED_DIR'], "live_bars.parquet")
 
 # --------------------------------------------------------------------------------------
 # CLASSES
@@ -54,62 +58,113 @@ class LiveDataManager:
         self.ticks_buffer = []
         self.current_vol = 0
         self.primary_bars = pd.DataFrame()
-        # Initialize columns for external tickers to avoid KeyError if they are missing initially
         self.external_cols = [t['name'] for t in cfg.TARGETS if t['name'] != 'EURUSD']
-        
-        # Snapshot holds the LATEST known price for each asset
         self.correlator_snapshot = {name: np.nan for name in self.external_cols}
-        
         self.gdelt_df = None
         
-    def warmup(self):
-        """Loads historical ticks to pre-fill bars and loads GDELT."""
-        logger.info("🔥 Warming up with historical data...")
-        
-        # 1. Load GDELT History (Try V2 Intraday first)
+    def load_persistence(self):
+        """Loads locally saved bars to restore state after restart."""
+        if os.path.exists(LIVE_BARS_FILE):
+            try:
+                df = pd.read_parquet(LIVE_BARS_FILE)
+                # Sort and Dedup
+                df = df.sort_values('time_start').drop_duplicates(subset=['time_start'])
+                # Ensure UTC
+                if 'time_start' in df.columns:
+                    df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+                
+                # Keep only window size
+                if len(df) > WINDOW_SIZE:
+                    df = df.iloc[-WINDOW_SIZE:]
+                
+                self.primary_bars = df.reset_index(drop=True)
+                logger.info(f"💾 Loaded {len(self.primary_bars)} bars from persistence.")
+                
+                # Update Snapshot from last bar
+                if not self.primary_bars.empty:
+                    last_row = self.primary_bars.iloc[-1]
+                    for col in self.external_cols:
+                        if col in last_row and not pd.isna(last_row[col]):
+                            self.correlator_snapshot[col] = last_row[col]
+            except Exception as e:
+                logger.error(f"❌ Failed to load persistence: {e}")
+
+    def save_bar(self, bar_df):
+        """Appends a new bar to the persistent store."""
         try:
-            logger.info("  🌍 Loading GDELT History...")
-            self.gdelt_df = loader.load_gdelt_v2_data(cfg.DIRS["DATA_GDELT"])
-            if self.gdelt_df is not None:
-                 logger.info(f"     ✅ Loaded {len(self.gdelt_df)} periods of GDELT V2 (Intraday) data.")
-            else:
-                 logger.info("     ⚠️ V2 not found, falling back to Legacy GDELT...")
-                 self.gdelt_df = loader.load_gdelt_data(cfg.DIRS["DATA_GDELT"])
-                 if self.gdelt_df is not None:
-                    logger.info(f"     Loaded {len(self.gdelt_df)} days of Legacy GDELT data.")
+            # We append by reading, concat, writing (simple but inefficient for high freq, okay for 5-min bars)
+            # Better: Append mode? Parquet doesn't support simple append easily without partitioning.
+            # Given WINDOW_SIZE=4000, rewriting is fast enough (<100ms).
+            
+            # Combine with memory state (which is already updated)
+            # Actually, self.primary_bars ALREADY has the new bar.
+            # So just save self.primary_bars.
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(LIVE_BARS_FILE), exist_ok=True)
+            self.primary_bars.to_parquet(LIVE_BARS_FILE, index=False)
         except Exception as e:
-            logger.error(f"     Failed to load GDELT: {e}")
+            logger.error(f"❌ Failed to save persistence: {e}")
 
-        # 2. Load Price History
-        data_dir = cfg.DIRS["DATA_RAW_TICKS"]
-        if not os.path.exists(data_dir): return
+    def warmup(self, ib=None):
+        """Loads history from disk + fetches missing gap from IBKR."""
+        logger.info("🔥 Warming up...")
+        
+        # 1. Load GDELT (Always full reload as it's small daily file)
+        try:
+            self.gdelt_df = loader.load_gdelt_v2_data(cfg.DIRS["DATA_GDELT"])
+            if self.gdelt_df is None:
+                 self.gdelt_df = loader.load_gdelt_data(cfg.DIRS["DATA_GDELT"])
+        except: pass
 
-        files = [f for f in os.listdir(data_dir) if "EURUSD" in f and f.endswith(".parquet")]
-        files.sort()
-        recent_files = files[-WARMUP_DAYS:]
-        if not recent_files: return
+        # 2. Load Local Persistence
+        self.load_persistence()
+        
+        # 3. Gap Filling (from IBKR)
+        if ib and not self.primary_bars.empty:
+            last_dt = self.primary_bars['time_end'].max()
+            if last_dt.tzinfo is None: last_dt = last_dt.replace(tzinfo=timezone.utc)
             
-        dfs = []
-        for f in recent_files:
-            try: dfs.append(pd.read_parquet(os.path.join(data_dir, f)))
-            except: pass
+            now_dt = datetime.now(timezone.utc)
+            delta = now_dt - last_dt
             
-        if not dfs: return
-        full_ticks = pd.concat(dfs, ignore_index=True)
-        if 'ts_event' in full_ticks.columns:
-            full_ticks = full_ticks.sort_values('ts_event')
-            
-        from feature_engine.bars import create_volume_bars
-        bars = create_volume_bars(full_ticks, volume_threshold=cfg.VOLUME_THRESHOLD)
-        if bars is not None and not bars.empty:
-            self.primary_bars = bars.tail(WINDOW_SIZE).reset_index(drop=True)
-            
-            # Initialize external columns with NaNs if they don't exist
-            for col in self.external_cols:
-                if col not in self.primary_bars.columns:
-                    self.primary_bars[col] = np.nan
-            
-            logger.info(f"  ✅ Warmup complete. Loaded {len(self.primary_bars)} bars.")
+            if delta.total_seconds() > 300: # If gap > 5 mins
+                logger.info(f"⏳ Gap detected: {delta}. Fetching missing data from {last_dt}...")
+                # We need to fetch Ticks to build Volume Bars to ensure consistency
+                # Fetching Historical Ticks is slow.
+                # Only do this if gap is small (< 4 hours). If gap is HUGE, maybe fetch Bars?
+                # No, we need Volume Bars.
+                pass 
+                # Ideally we implement logic here to fetch historical ticks from IBKR
+                # and run them through add_tick.
+                # For now, we rely on the fact that if we restart quickly, the gap is small.
+                # If gap is large, we might miss bars.
+        
+        # If still empty (first run), try loading from Raw Data Lake (Backfill)
+        if self.primary_bars.empty:
+            data_dir = cfg.DIRS["DATA_RAW_TICKS"]
+            if os.path.exists(data_dir):
+                files = sorted([f for f in os.listdir(data_dir) if "EURUSD" in f and f.endswith(".parquet")])
+                if files:
+                    recent = files[-WARMUP_DAYS:]
+                    dfs = []
+                    for f in recent:
+                        try: dfs.append(pd.read_parquet(os.path.join(data_dir, f)))
+                        except: pass
+                    if dfs:
+                        full = pd.concat(dfs, ignore_index=True).sort_values('ts_event')
+                        from feature_engine.bars import create_volume_bars
+                        bars = create_volume_bars(full, volume_threshold=cfg.VOLUME_THRESHOLD)
+                        if bars is not None:
+                            self.primary_bars = bars.tail(WINDOW_SIZE).reset_index(drop=True)
+                            self.save_bar(None) # Init file
+
+        # Ensure External Cols exist
+        for col in self.external_cols:
+            if col not in self.primary_bars.columns:
+                self.primary_bars[col] = np.nan
+                
+        logger.info(f"✅ Warmup complete. State: {len(self.primary_bars)} bars.")
 
     def add_tick(self, tick_obj, target_conf):
         name = target_conf['name']
@@ -171,6 +226,10 @@ class LiveDataManager:
         self.primary_bars[self.external_cols] = self.primary_bars[self.external_cols].ffill()
         
         if len(self.primary_bars) > WINDOW_SIZE: self.primary_bars = self.primary_bars.iloc[-WINDOW_SIZE:].reset_index(drop=True)
+        
+        # PERSIST TO DISK
+        self.save_bar(bar_df)
+        
         return bar_df
 
     def compute_features_full(self):
@@ -242,6 +301,43 @@ class ExecutionEngine:
         self.cooldowns = np.zeros(len(strategies), dtype=int)
         self.lot_size = cfg.STANDARD_LOT_SIZE
         
+        # Load State
+        self.load_state()
+        
+    def load_state(self):
+        if os.path.exists(LIVE_STATE_FILE):
+            try:
+                with open(LIVE_STATE_FILE, 'r') as f:
+                    state = json.load(f)
+                    self.position = state.get('position', 0)
+                    self.entry_price = state.get('entry_price', 0.0)
+                    self.active_strat_idx = state.get('active_strat_idx', -1)
+                    
+                    saved_cool = state.get('cooldowns', [])
+                    if len(saved_cool) == len(self.cooldowns):
+                        self.cooldowns = np.array(saved_cool, dtype=int)
+                        
+                logger.info(f"💾 Restored State: Pos={self.position} @ {self.entry_price:.5f} (Strat {self.active_strat_idx})")
+            except Exception as e:
+                logger.error(f"❌ Failed to load state: {e}")
+
+    def save_state(self):
+        try:
+            state = {
+                'position': int(self.position),
+                'entry_price': float(self.entry_price),
+                'active_strat_idx': int(self.active_strat_idx),
+                'cooldowns': self.cooldowns.tolist(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }
+            # Atomic Write
+            with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(LIVE_STATE_FILE), delete=False) as tf:
+                json.dump(state, tf)
+                temp_name = tf.name
+            shutil.move(temp_name, LIVE_STATE_FILE)
+        except Exception as e:
+            logger.error(f"❌ Failed to save state: {e}")
+
     async def check_intraday_exits(self, current_price):
         if self.position == 0 or self.active_strat_idx == -1: return
         strat = self.strategies[self.active_strat_idx]
@@ -268,22 +364,35 @@ class ExecutionEngine:
             if reason == "SL":
                 self.cooldowns[idx_to_cool] = cfg.STOP_LOSS_COOLDOWN_BARS
                 logger.info(f"❄️ Strategy {idx_to_cool} cooling down for {cfg.STOP_LOSS_COOLDOWN_BARS} bars")
+            
+            self.save_state()
 
     def decrement_cooldowns(self):
         self.cooldowns = np.maximum(0, self.cooldowns - 1)
+        # Only save if changed? Maybe too frequent. Save on trade/exit is most critical.
+        # But if we crash during cooldown, we want to remember it.
+        # Save every bar? It's cheap.
+        # self.save_state() # Let's do it in process_new_bar instead
 
     async def execute_signal(self, signal, strat_idx, price, atr):
         self.last_atr = atr
         if signal == self.position: return
         
+        state_changed = False
+        
         if self.position != 0:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
             self.position = 0
+            state_changed = True
             
         if signal != 0:
             action = 'BUY' if signal > 0 else 'SELL'
             logger.info(f"📝 VIRTUAL ENTRY: {action} {abs(signal)} lots (Strat {strat_idx}) @ {price:.5f}")
             self.position, self.active_strat_idx, self.entry_price = signal, strat_idx, price
+            state_changed = True
+            
+        if state_changed:
+            self.save_state()
 
 class PaperTradeApp:
     def __init__(self):
@@ -364,6 +473,7 @@ class PaperTradeApp:
     async def process_new_bar(self):
         # 1. Decrement cooldowns at the start of each new bar
         self.executor.decrement_cooldowns()
+        self.executor.save_state()
 
         full_df = self.data_manager.compute_features_full()
         if full_df is None: return

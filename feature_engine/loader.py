@@ -195,7 +195,12 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     
     # Final Aggregation
     print("Aggregating final results...")
-    final_agg = pd.concat(intermediate_aggs).groupby('date').sum()
+    try:
+        final_agg = pd.concat(intermediate_aggs).groupby('date').sum()
+        print(f"  Final Agg Shape: {final_agg.shape}")
+    except Exception as e:
+        print(f"  ❌ Aggregation Error: {e}")
+        return None
     
     # Calculate weighted means
     gdelt_daily = pd.DataFrame(index=final_agg.index)
@@ -342,6 +347,13 @@ def load_gdelt_v2_data(data_dir=None):
         data_dir = config.DIRS.get("DATA_GDELT", "data/gdelt")
         
     v2_dir = os.path.join(data_dir, "v2_gkg")
+    
+    # Check if dir exists, if not, try config.DIRS['DATA_GDELT']
+    if not os.path.exists(v2_dir):
+        alt_dir = os.path.join(config.DIRS.get("DATA_GDELT", "data/gdelt"), "v2_gkg")
+        if os.path.exists(alt_dir):
+            v2_dir = alt_dir
+    
     if not os.path.exists(v2_dir):
         print(f"No V2 GKG dir found at {v2_dir}")
         return None
@@ -425,6 +437,9 @@ def load_gdelt_v2_data(data_dir=None):
     
     # 6. Volume
     gdelt_intraday['total_vol'] = gdelt_intraday['news_vol_eur'] + gdelt_intraday['news_vol_usd']
+    
+    # Enforce UTC Index
+    gdelt_intraday.index = pd.to_datetime(gdelt_intraday.index, utc=True)
     
     print(f"Processed GDELT V2 Intraday data: {len(gdelt_intraday)} periods.")
     return gdelt_intraday
