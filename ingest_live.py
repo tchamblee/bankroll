@@ -15,6 +15,7 @@ import requests
 from ib_insync import *
 import nest_asyncio
 import config as cfg
+from ingest_fred import ingest_fred_data
 
 # Try importing FinBERT streaming (optional)
 try:
@@ -576,6 +577,14 @@ async def main_loop():
     
     # Start GDELT Monitor as separate task (Lives across IBKR reconnects)
     gdelt_task = asyncio.create_task(gdelt_monitor(stop_event))
+
+    # Initial FRED Fetch
+    logger.info("Fetching FRED Data...")
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, ingest_fred_data, 365*2)
+    except Exception as e:
+        logger.error(f"FRED Ingest Failed: {e}")
 
     while not stop_event.is_set():
         ib = IB()

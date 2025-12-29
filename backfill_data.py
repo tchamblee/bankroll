@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from ib_insync import *
 import nest_asyncio
 import config as cfg
+from ingest_fred import ingest_fred_data  # Import FRED Ingester
 
 nest_asyncio.apply()
 
@@ -479,6 +480,14 @@ async def main():
     try:
         await ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=103)
         logger.info(f"CONNECTED. Test Probe: {TEST_PROBE}")
+        
+        # 0. Fetch FRED Macro Data
+        logger.info("Fetching FRED Macro Data...")
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, ingest_fred_data, 365*5)
+        except Exception as e:
+            logger.error(f"FRED Ingest Failed: {e}")
         
         # 1. Pre-qualify contracts
         logger.info("Qualifying contracts...")
