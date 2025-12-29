@@ -123,19 +123,55 @@ def combinatorial_purged_cv(
     embargo = int(n_samples * embargo_pct)
     
     for test_fold_indices in combos:
+        # Construct Test Set
         test_idx = np.concatenate([folds[i] for i in test_fold_indices])
-        
-        # Train indices are everything NOT in test folds
-        # AND strictly applying embargo after test folds if they precede train data
-        # (For simplicity here, we just exclude test indices. 
-        # A full CPCV implementation handles embargoes carefully around borders.)
-        
-        train_folds_indices = [i for i in range(n_folds) if i not in test_fold_indices]
-        train_idx = np.concatenate([folds[i] for i in train_folds_indices])
-        
-        # Sort to ensure chronological order within the sets
         test_idx.sort()
-        train_idx.sort()
+        
+        # Determine Train Set Candidates (All folds NOT in Test)
+        train_folds_indices = [i for i in range(n_folds) if i not in test_fold_indices]
+        
+        # Apply Embargo: Remove training samples that follow a test fold
+        # We need to identify the boundaries.
+        # Since folds are contiguous blocks, we can check if a train fold
+        # immediately follows a test fold.
+        
+        final_train_indices = []
+        
+        for t_idx in train_folds_indices:
+            # Get the indices for this train fold
+            fold_indices = folds[t_idx]
+            
+            # Check if this train fold is 'contaminated' by a preceding test fold
+            # It is contaminated if it starts immediately after a test fold ends.
+            # (In a circular setup, we might check wraparound, but here standard CV assumes time linearity).
+            
+            is_embargoed = False
+            for test_i in test_fold_indices:
+                test_fold_end = folds[test_i][-1]
+                train_fold_start = fold_indices[0]
+                
+                # Check if Train starts right after Test (sequential)
+                # We add a small buffer check or just index comparison
+                if train_fold_start > test_fold_end and (train_fold_start - test_fold_end) <= embargo + 1:
+                    is_embargoed = True
+                    break
+            
+            if is_embargoed:
+                # Remove the first 'embargo' samples from this train fold
+                # Ensure we don't slice beyond the fold
+                if len(fold_indices) > embargo:
+                    final_train_indices.append(fold_indices[embargo:])
+                else:
+                    # If fold is smaller than embargo, skip it entirely
+                    pass
+            else:
+                final_train_indices.append(fold_indices)
+        
+        if len(final_train_indices) > 0:
+            train_idx = np.concatenate(final_train_indices)
+            train_idx.sort()
+        else:
+            train_idx = np.array([], dtype=int)
         
         splits.append((train_idx, test_idx))
         

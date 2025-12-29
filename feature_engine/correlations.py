@@ -62,12 +62,17 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     
     beta = rolling_cov / rolling_var
     
-    # Expected Return based on Correlator
-    expected_ret = beta * tmp['corr']
+    # FIX: Lag the Beta to avoid look-ahead bias.
+    # We must use the Beta estimated from [t-window, t-1] to predict t.
+    # Current 'beta' at index t includes data at t.
+    beta_lagged = beta.shift(1)
+    
+    # Expected Return based on Correlator (using OUT-OF-SAMPLE Beta)
+    expected_ret = beta_lagged * tmp['corr']
     
     # Residual = Actual - Expected
     df[f'residual{suffix}'] = tmp['prim'] - expected_ret
-    df[f'beta{suffix}'] = beta.fillna(0)
+    df[f'beta{suffix}'] = beta_lagged.fillna(0) # Store the beta actually used
     
     # Fill NaNs (early window)
     df[f'residual{suffix}'] = df[f'residual{suffix}'].fillna(0)
