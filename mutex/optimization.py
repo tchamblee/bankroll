@@ -13,7 +13,7 @@ def optimize_mutex_portfolio(candidates, backtester):
     print("⚔️ MUTEX COMBINATORIAL OPTIMIZATION")
     print("="*80)
     
-    if not candidates: return [], {{}}
+    if not candidates: return [], {}
 
     # 1. Filter Candidates (Top 14 by Robust Score)
     candidates.sort(key=lambda x: getattr(x, 'fitness', -999), reverse=True)
@@ -91,7 +91,7 @@ def optimize_mutex_portfolio(candidates, backtester):
     print(f"  Val Profit: ${best_profit:,.2f}")
     print(f"  Val Sortino: {best_sortino:.2f}")
     
-    return best_combo, {{'profit': best_profit, 'sortino': best_sortino}}
+    return best_combo, {'profit': best_profit, 'sortino': best_sortino}
 
 # --- HRP HELPERS ---
 
