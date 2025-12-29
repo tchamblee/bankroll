@@ -409,7 +409,7 @@ class EvolutionaryAlphaFactory:
                 if not passed_gate:
                     train_sortino = t_stats.get('sortino', 0)
                     val_sortino = v_stats.get('sortino', 0)
-                    if train_ret > 0 and val_ret > 0 and train_sortino > min_sortino_threshold and val_sortino > min_sortino_threshold:
+                    if train_ret > 0 and val_ret > 0 and train_sortino > 1.25 and val_sortino > 1.25:
                         passed_gate = True
                         # print(f"    🚑 Rescued Sniper: {s.name} (Ret: {val_ret*100:.2f}% | Sortino: {val_sortino:.2f})")
 
@@ -440,7 +440,8 @@ class EvolutionaryAlphaFactory:
                         clone_stats = self.backtester.evaluate_population(clones, set_type='validation', return_series=False, time_limit=horizon)
                         if not clone_stats.empty:
                             min_clone_ret = clone_stats['total_return'].min()
-                            jitter_thresh = val_ret * 0.5
+                            # Relaxed Jitter: Allow drop to 25% of original (was 50%)
+                            jitter_thresh = val_ret * 0.25
                             if min_clone_ret < jitter_thresh:
                                 continue
                     except Exception as e:

@@ -39,7 +39,7 @@ MIN_LOTS = 1
 MAX_LOTS = 4
 COST_BPS = 0.20
 SPREAD_BPS = 0.25
-MIN_RETURN_THRESHOLD = 0.005
+MIN_RETURN_THRESHOLD = 0.001
 
 # --- BAR DEFINITION ---
 # 600M units is approx 250 ticks for EURUSD (High Resolution)
