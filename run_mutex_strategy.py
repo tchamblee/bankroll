@@ -64,33 +64,31 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             exit_signal = False
             is_sl_hit = False
             
-            if curr_pos != 0:
-                # Barrier Checks (High/Low of PREVIOUS bar usually, but here we are at 'i'. 
-                # Standard practice: Check if High/Low of *current* bar hits barrier? 
-                # OR check if we held through previous bar? 
-                # Simplified: Check against High/Low of current bar i for SL/TP execution within bar i)
-                
-                # Check Time Limit
+            # Check Barriers from PREVIOUS bar (i-1) to avoid look-ahead
+            # We entered at or before Open[i-1]. We need to see if i-1 killed us.
+            if curr_pos != 0 and i > 0:
+                # Check Time Limit (Current time i vs Entry)
                 if (i - entry_indices[s]) >= horizons[s]:
                     exit_signal = True
                 
-                # Check SL/TP
+                # Check SL/TP against PREVIOUS bar volatility
                 if not exit_signal:
                     e_price = entry_prices[s]
                     sl_dist = entry_atrs[s] * sl_mults[s]
                     tp_dist = entry_atrs[s] * tp_mults[s]
                     
+                    # Use i-1 for High/Low checks
                     if curr_pos > 0:
-                        if lows[i] <= (e_price - sl_dist):
+                        if lows[i-1] <= (e_price - sl_dist):
                             exit_signal = True
                             is_sl_hit = True
-                        elif tp_mults[s] > 0 and highs[i] >= (e_price + tp_dist):
+                        elif tp_mults[s] > 0 and highs[i-1] >= (e_price + tp_dist):
                             exit_signal = True
                     else:
-                        if highs[i] >= (e_price + sl_dist):
+                        if highs[i-1] >= (e_price + sl_dist):
                             exit_signal = True
                             is_sl_hit = True
-                        elif tp_mults[s] > 0 and lows[i] <= (e_price - tp_dist):
+                        elif tp_mults[s] > 0 and lows[i-1] <= (e_price - tp_dist):
                             exit_signal = True
 
                 if force_close:
@@ -106,7 +104,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                 if is_sl_hit:
                     cooldowns[s] = cooldown_bars
             elif curr_pos == 0:
-                # Check Entry
+                # Check Entry (Signal at i is for Open[i])
                 sig = signals[i, s]
                 if sig != 0 and cooldowns[s] == 0 and not force_close:
                     target_pos = float(sig)
@@ -115,29 +113,31 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             if target_pos != curr_pos:
                 price = prices[i]
                 
-                # If we exited via SL/TP within the bar, we should technically use the SL/TP price.
-                # Simplification: Use Close (or Open of next? No, we are simulating 'i').
-                # Better: Use 'price' (Open of i) if signal-based, or SL level if SL-based.
-                # For high-speed mutex, using 'price' (Open/Close proxy) is acceptable if slippage is high.
-                # To be precise:
-                # If SL hit, price = Entry +/- SL_Dist
+                # Determine Execution Price
+                exec_price = price # Default to Open[i]
                 
-                exec_price = price
                 if exit_signal and curr_pos != 0:
-                    e_price = entry_prices[s]
-                    sl_dist = entry_atrs[s] * sl_mults[s]
-                    tp_dist = entry_atrs[s] * tp_mults[s]
+                    # If barrier hit in i-1, we assume we exited AT the barrier (plus slippage later)
+                    # or at Open[i] if it was a Time Exit.
                     
-                    if is_sl_hit:
-                        if curr_pos > 0: exec_price = e_price - sl_dist
-                        else: exec_price = e_price + sl_dist
-                    elif tp_mults[s] > 0:
-                        # Re-check TP condition to be sure
-                        if curr_pos > 0 and highs[i] >= (e_price + tp_dist):
-                            exec_price = e_price + tp_dist
-                        elif curr_pos < 0 and lows[i] <= (e_price - tp_dist):
-                            exec_price = e_price - tp_dist
-
+                    if is_sl_hit or (target_pos == 0 and not force_close and (i - entry_indices[s]) < horizons[s]):
+                        # Recalculate barrier levels
+                        e_price = entry_prices[s]
+                        sl_dist = entry_atrs[s] * sl_mults[s]
+                        tp_dist = entry_atrs[s] * tp_mults[s]
+                        
+                        if is_sl_hit:
+                             if curr_pos > 0: exec_price = e_price - sl_dist
+                             else: exec_price = e_price + sl_dist
+                        else:
+                            # TP Hit (Check i-1 again to determine price)
+                            # Note: This logic duplicates the check, but necessary to set price
+                            # Simplified: We trust the exit_signal flag.
+                            if curr_pos > 0: exec_price = e_price + tp_dist
+                            else: exec_price = e_price - tp_dist
+                            
+                    # If Time Exit or Force Close, use Open[i] (price)
+                
                 change = abs(target_pos - curr_pos)
                 
                 # Costs
