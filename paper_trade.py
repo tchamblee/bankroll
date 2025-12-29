@@ -16,6 +16,7 @@ from ib_insync import *
 import nest_asyncio
 
 import config as cfg
+from utils import setup_logging
 from genome import Strategy
 from feature_engine.core import FeatureEngine
 from feature_engine import loader
@@ -27,17 +28,7 @@ nest_asyncio.apply()
 # SETUP & LOGGING
 # --------------------------------------------------------------------------------------
 
-LOG_DIR = cfg.DIRS.get("LOGS", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, "paper_trade.log"), encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-logger = logging.getLogger("PaperTrade")
+logger = setup_logging("PaperTrade", "paper_trade.log")
 
 # --------------------------------------------------------------------------------------
 # CONFIGURATION
@@ -177,7 +168,7 @@ class LiveDataManager:
                 # Use sum of sizes as proxy
                 tick_vol = tick_obj.bidSize + tick_obj.askSize
                 self.ticks_buffer.append({'ts_event': ts, 'pricebid': tick_obj.bidPrice, 'priceask': tick_obj.askPrice, 'sizebid': tick_obj.bidSize, 'sizeask': tick_obj.askSize, 'last_price': np.nan, 'last_size': np.nan})
-            elif isinstance(tick_obj, (TickByTickAllLast, TickByTickLast)):
+            elif isinstance(tick_obj, (TickByTickAllLast,)):
                 tick_vol = tick_obj.size
                 self.ticks_buffer.append({'ts_event': ts, 'pricebid': np.nan, 'priceask': np.nan, 'sizebid': np.nan, 'sizeask': np.nan, 'last_price': tick_obj.price, 'last_size': tick_obj.size})
             

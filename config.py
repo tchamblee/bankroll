@@ -195,3 +195,6 @@ TARGETS = [
         "mode": "BARS_TRADES_1MIN",
     }
 ]
+
+# --- CONTROL FLAGS ---
+STOP_REQUESTED = False

@@ -6,10 +6,10 @@ import io
 from datetime import datetime
 import logging
 import config
+from utils import setup_logging
 
 # Setup Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("COT_Ingest")
+logger = setup_logging("COT_Ingest", "ingest_cot.log")
 
 # Constants
 COT_BASE_URL = "https://www.cftc.gov/files/dea/history/fut_fin_txt_{year}.zip"

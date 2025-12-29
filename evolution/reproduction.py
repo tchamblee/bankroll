@@ -1,0 +1,44 @@
+import random
+import config
+from genome import Strategy
+
+def crossover_strategies(p1: Strategy, p2: Strategy) -> Strategy:
+    child = Strategy(name=f"Child_{random.randint(1000,9999)}")
+    
+    n_long = random.randint(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)
+    n_short = random.randint(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)
+    
+    combined_long = p1.long_genes + p2.long_genes
+    combined_short = p1.short_genes + p2.short_genes
+    
+    # Sample without replacement if possible, else with replacement if not enough genes (unlikely given min counts)
+    child.long_genes = [g.copy() for g in random.sample(combined_long, min(len(combined_long), n_long))]
+    child.short_genes = [g.copy() for g in random.sample(combined_short, min(len(combined_short), n_short))]
+    
+    # Inherit Params
+    if random.random() < 0.5:
+        child.stop_loss_pct = p1.stop_loss_pct
+        child.take_profit_pct = p1.take_profit_pct
+    else:
+        child.stop_loss_pct = p2.stop_loss_pct
+        child.take_profit_pct = p2.take_profit_pct
+
+    child.recalculate_concordance()
+    return child
+
+def mutate_strategy(strategy: Strategy, available_features: list):
+    """Mutates a strategy in place."""
+    # Gene Mutation
+    genes_to_mutate = strategy.long_genes + strategy.short_genes
+    if genes_to_mutate:
+        target_genes = random.sample(genes_to_mutate, min(len(genes_to_mutate), 2))
+        for g in target_genes: 
+            g.mutate(available_features)
+    
+    # Param Mutation (10% chance)
+    if random.random() < 0.10:
+        strategy.stop_loss_pct = random.choice([1.0, 1.5, 2.0, 2.5, 3.0])
+        strategy.take_profit_pct = random.choice([2.0, 3.0, 4.0, 5.0, 6.0])
+
+    strategy.cleanup()
+    strategy.recalculate_concordance()

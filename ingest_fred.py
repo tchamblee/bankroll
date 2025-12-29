@@ -3,10 +3,10 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import logging
+from utils import setup_logging
 
 # Setup Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("FRED_Ingest")
+logger = setup_logging("FRED_Ingest", "ingest_fred.log")
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
