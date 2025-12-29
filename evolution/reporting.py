@@ -91,11 +91,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         passed_gate = True
         rejection_reason = []
 
-        # 1. Strict Sortino Filter (> 1.25 on Train/Val)
-        if train_sortino < 1.25 or val_sortino < 1.25:
+        # 1. Strict Sortino Filter (> 1.5 on Train/Val)
+        if train_sortino < 1.5 or val_sortino < 1.5:
             passed_gate = False
-            if train_sortino < 1.25: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
-            if val_sortino < 1.25: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
+            if train_sortino < 1.5: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
+            if val_sortino < 1.5: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
         
         # 2. Positive Return Filter
         elif train_ret <= 0 or val_ret <= 0:
@@ -202,7 +202,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 print(f"       ⚠️ Optimization skipped for {s.name}: {e}")
 
             # --- FINAL GATE: Test Performance Check ---
-            if final_test_ret <= 0 or final_test_sortino < 1.25:
+            if final_test_ret <= 0 or final_test_sortino < 1.5:
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)
