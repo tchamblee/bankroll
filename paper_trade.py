@@ -30,6 +30,17 @@ nest_asyncio.apply()
 
 logger = setup_logging("PaperTrade", "paper_trade.log")
 
+# Capture ib_insync and asyncio logs to the same file
+try:
+    file_handler = [h for h in logger.handlers if isinstance(h, logging.FileHandler)][0]
+    logging.getLogger("ib_insync").addHandler(file_handler)
+    logging.getLogger("asyncio").addHandler(file_handler)
+    # Ensure they are at least INFO
+    logging.getLogger("ib_insync").setLevel(logging.INFO)
+    logging.getLogger("asyncio").setLevel(logging.WARNING) # Asyncio can be too noisy at INFO
+except Exception as e:
+    logger.warning(f"Failed to attach file handler to libraries: {e}")
+
 # --------------------------------------------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------------------------------------------
