@@ -3,7 +3,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from .event_decay import _jit_bars_since_true
 
-def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi):
+def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi, abs_imbalance, volume):
     """Worker function for parallel window microstructure feature calculation."""
     res = {}
     
@@ -39,6 +39,14 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
     if pres_imbalance is not None:
         alignment = ticket_imbalance * pres_imbalance
         res[f'order_book_alignment_{w}'] = alignment.rolling(w).mean()
+        
+    # 7. VPIN (Volume-Synchronized Probability of Informed Trading)
+    # VPIN = Sum(|Buy - Sell|) / Sum(Volume)
+    # This is a proxy using time bars, but effective on 250-tick bars.
+    if abs_imbalance is not None and volume is not None:
+        sum_imb = abs_imbalance.rolling(w).sum()
+        sum_vol = volume.rolling(w).sum().replace(0, 1)
+        res[f'vpin_{w}'] = sum_imb / sum_vol
 
     return res
 
@@ -76,9 +84,12 @@ def add_microstructure_features(df, windows=[50, 100]):
         mid_price = (df['avg_ask_price'] + df['avg_bid_price']) / 2
         df['avg_spread'] = (df['avg_ask_price'] - df['avg_bid_price']) / mid_price.replace(0, 1)
         
+    # VPIN Pre-computation
+    abs_imbalance = df['net_aggressor_vol'].abs()
+        
     # Parallelize
     results = Parallel(n_jobs=-1)(
-        delayed(_calc_micro_window_features)(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi)
+        delayed(_calc_micro_window_features)(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi, abs_imbalance, vol)
         for w in windows
     )
     

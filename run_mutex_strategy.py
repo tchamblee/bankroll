@@ -263,6 +263,7 @@ def optimize_mutex_portfolio(candidates, backtester):
     return best_combo, {'profit': best_profit, 'sortino': best_sortino}
 
 import scipy.cluster.hierarchy as sch
+from scipy.spatial.distance import squareform
 
 def get_ivp(cov):
     # Inverse Variance Portfolio
@@ -296,7 +297,7 @@ def get_quasi_diag(link):
 
 def get_rec_bisection(cov, sort_ix):
     # Recursive Bisection Allocation
-    w = pd.Series(1, index=sort_ix)
+    w = pd.Series(1.0, index=sort_ix)
     c_items = [sort_ix]
     while len(c_items) > 0:
         c_items = [i[j:k] for i in c_items for j, k in ((0, len(i) // 2), (len(i) // 2, len(i))) if len(i) > 1]
@@ -351,7 +352,8 @@ def optimize_hrp_portfolio(candidates, backtester):
     dist = np.sqrt((1 - corr) / 2)
     
     # b. Linkage (Clustering)
-    link = sch.linkage(dist, 'single')
+    dist_condensed = squareform(dist.values)
+    link = sch.linkage(dist_condensed, 'single')
     
     # c. Quasi-Diagonalization
     sort_ix = get_quasi_diag(link)

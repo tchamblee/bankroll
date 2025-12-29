@@ -11,9 +11,9 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,
                        lot_size: float, spread_pct: float, comm_pct: float, min_comm: float,
                        account_size: float, sl_mult: float, 
-                       tp_mult: float, time_limit_bars: int) -> Tuple[np.ndarray, int]:
+                       tp_mult: float, time_limit_bars: int, cooldown_bars: int) -> Tuple[np.ndarray, int]:
     """
-    JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers.
+    JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers and Cooldown.
     """
     n = len(signals)
     
@@ -26,13 +26,20 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     entry_atr = 0.0
     entry_idx = 0
     
+    # Cooldown tracking
+    cooldown = 0
+    
     # Barrier Exit Prices
     barrier_exit_prices = np.zeros(n, dtype=np.float64)
     
     # Iterate all bars
     for i in range(n):
+        if cooldown > 0:
+            cooldown -= 1
+            
         # --- 1. CHECK BARRIERS FROM PREVIOUS INTERVAL [i-1 to i] ---
         barrier_hit = False
+        is_sl_hit = False
         
         if i > 0 and position != 0.0:
             h_prev = highs[i-1]
@@ -52,6 +59,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         realized_signals[i] = 0.0
                         barrier_exit_prices[i] = sl_price
                         barrier_hit = True
+                        is_sl_hit = True
                         
                 # Take Profit (High Check)
                 if not barrier_hit and tp_mult > 0.0:
@@ -72,6 +80,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         realized_signals[i] = 0.0
                         barrier_exit_prices[i] = sl_price
                         barrier_hit = True
+                        is_sl_hit = True
                         
                 # Take Profit (Low Check)
                 if not barrier_hit and tp_mult > 0.0:
@@ -97,12 +106,16 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         realized_signals[i] = 0.0
 
         # --- 3. NEW ENTRY / REVERSAL / HOLD ---
+        if barrier_hit:
+            if is_sl_hit:
+                cooldown = cooldown_bars
+                
         if force_close:
             realized_signals[i] = 0.0
             position = 0.0
         elif position == 0.0:
             # New Entry
-            if realized_signals[i] != 0.0:
+            if realized_signals[i] != 0.0 and cooldown == 0:
                 position = realized_signals[i]
                 entry_price = prices[i]
                 entry_atr = atr_vec[i]
@@ -357,7 +370,8 @@ class TradeSimulator:
     def simulate_fast(self, signals: np.ndarray, stop_loss_pct: float = config.DEFAULT_STOP_LOSS, take_profit_pct: Optional[float] = None, time_limit_bars: Optional[int] = None,
                       hours: Optional[np.ndarray] = None, weekdays: Optional[np.ndarray] = None,
                       highs: Optional[np.ndarray] = None, lows: Optional[np.ndarray] = None,
-                      atr: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
+                      atr: Optional[np.ndarray] = None,
+                      cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
         """
@@ -393,5 +407,6 @@ class TradeSimulator:
             self.account_size,
             sl_mult,
             tp_mult,
-            limit_val
+            limit_val,
+            cooldown_bars
         )
