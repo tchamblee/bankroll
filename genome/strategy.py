@@ -55,8 +55,8 @@ class Strategy:
         
         # Helper for Voting Logic
         def get_votes(genes):
-            if not genes: return np.zeros(n_rows, dtype=int)
-            votes = np.zeros(n_rows, dtype=int)
+            if not genes: return np.zeros(n_rows, dtype=np.float32)
+            votes = np.zeros(n_rows, dtype=np.float32)
             for gene in genes:
                 votes += gene.evaluate(context, cache)
             return votes

@@ -12,9 +12,9 @@ from .constants import (
     VALID_SLOPE_WINDOWS
 )
 from .genes import (
-    ZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
+    ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
     EfficiencyGene, DivergenceGene, EventGene, CrossGene, PersistenceGene,
-    ExtremaGene, ConsecutiveGene, DeltaGene, gene_from_dict
+    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, gene_from_dict
 )
 from .strategy import Strategy
 
@@ -40,7 +40,7 @@ class GenomeFactory:
         
         # Boost keywords for Physics/Microstructure (Alpha Refinement)
         self.boost_keywords = ['hurst', 'entropy', 'fdi', 'yang_zhang', 'kyle', 
-                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock']
+                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock', 'seasonal']
         
         self.update_pools()
 
@@ -82,17 +82,32 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 30% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
-        if rand_val < 0.30:
+        # 25% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
+        if rand_val < 0.25:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
             threshold = random.choice([-1.5, -1.25, 1.25, 1.5])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
+        
+        # 10% Soft ZScore Gene (Continuous Confidence)
+        elif rand_val < 0.35:
+            feature = self._weighted_choice(pool)
+            operator = random.choice(['>', '<'])
+            threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            slope = random.uniform(0.5, 2.0)
+            return SoftZScoreGene(feature, operator, threshold, window, slope)
 
-        # 15% Relational Gene (Context - "Is A > B?")
+        # 10% Seasonality Gene (Time-Based Alpha)
         elif rand_val < 0.45:
+             operator = random.choice(['>', '<'])
+             threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
+             return SeasonalityGene(operator, threshold)
+
+        # 10% Relational Gene (Context - "Is A > B?")
+        elif rand_val < 0.55:
             feature_left = self._weighted_choice(pool)
             # Find compatible features (same root)
             # e.g. 'volatility_100' compatible with 'volatility_200'

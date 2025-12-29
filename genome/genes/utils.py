@@ -4,8 +4,10 @@ from .flux import FluxGene
 from .divergence import DivergenceGene
 from .efficiency import EfficiencyGene
 from .zscore import ZScoreGene
+from .soft_zscore import SoftZScoreGene
 from .correlation import CorrelationGene
 from .time import TimeGene
+from .seasonality import SeasonalityGene
 from .consecutive import ConsecutiveGene
 from .cross import CrossGene
 from .persistence import PersistenceGene
@@ -27,10 +29,14 @@ def gene_from_dict(d):
         return EfficiencyGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'zscore':
         return ZScoreGene(d['feature'], d['operator'], d['threshold'], d['window'])
+    elif d['type'] == 'soft_zscore':
+        return SoftZScoreGene(d['feature'], d['operator'], d['threshold'], d['window'], d.get('slope', 1.0))
     elif d['type'] == 'correlation':
         return CorrelationGene(d['feature_left'], d['feature_right'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'time':
         return TimeGene(d['mode'], d['operator'], d['value'])
+    elif d['type'] == 'seasonality':
+        return SeasonalityGene(d['operator'], d['threshold'])
     elif d['type'] == 'consecutive':
         return ConsecutiveGene(d['direction'], d['operator'], d['count'])
     elif d['type'] == 'cross':

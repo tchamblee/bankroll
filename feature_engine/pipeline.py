@@ -1,5 +1,6 @@
 import config
 from .core import FeatureEngine
+from .seasonality import add_seasonality_features
 
 def create_full_feature_engine(data_dir=None, volume_threshold=250):
     """
@@ -97,9 +98,13 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     engine.add_microstructure_features()
     engine.add_advanced_physics_features(windows=windows_list)
     
-    # 8. Deltas (Flow)
+    # 10. Deltas (Flow)
     engine.add_delta_features(lookback=25)
     engine.add_delta_features(lookback=50)
     engine.add_delta_features(lookback=100)
+
+    # 11. Seasonality Features (NEW)
+    if engine.bars is not None:
+        engine.bars = add_seasonality_features(engine.bars, lookback_days=20)
     
     return engine
