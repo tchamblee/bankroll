@@ -255,7 +255,7 @@ class LiveDataManager:
         # Extract series from the monolithic dataframe for the engine helpers
         def extract_series(name):
             if name in engine.bars.columns:
-                return engine.bars[[name, 'time_start']].rename(columns={name: 'close'}) # Hack to mimic ticker DF
+                return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'}) # Hack to mimic ticker DF
             return None
 
         # Macro Voltage

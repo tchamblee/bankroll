@@ -18,7 +18,13 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     # We use merge_asof to find the Correlator price at the exact moment the bar started and ended.
     # This effectively 'resamples' the Correlator to the Primary's Volume Clock.
     
-    corr_clean = correlator_df[['ts_event', 'mid_price']].sort_values('ts_event').dropna()
+    price_col = 'mid_price'
+    if 'mid_price' not in correlator_df.columns:
+        if 'close' in correlator_df.columns: price_col = 'close'
+        elif 'last_price' in correlator_df.columns: price_col = 'last_price'
+        else: return primary_df
+
+    corr_clean = correlator_df[['ts_event', price_col]].sort_values('ts_event').dropna()
     
     # Get Start Prices
     # We merge onto df. We need to ensure types match.
@@ -28,7 +34,7 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
         left_on='time_start', 
         right_on='ts_event', 
         direction='backward'
-    )['mid_price']
+    )[price_col]
     
     # Get End Prices
     end_prices = pd.merge_asof(
@@ -37,7 +43,7 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
         left_on='time_end', 
         right_on='ts_event', 
         direction='backward'
-    )['mid_price']
+    )[price_col]
     
     # 2. Calculate Returns over the Interval
     # Handle gaps where correlator might not have data (NaNs)
@@ -92,7 +98,16 @@ def add_crypto_features(df, ibit_df):
     
     # IBIT
     ibit_df['ts_event'] = pd.to_datetime(ibit_df['ts_event'])
-    ibit_1m = ibit_df.set_index('ts_event')[['mid_price']].resample('1min').last().ffill()
+    
+    price_col = 'mid_price'
+    if 'mid_price' not in ibit_df.columns:
+        if 'close' in ibit_df.columns: price_col = 'close'
+        elif 'last_price' in ibit_df.columns: price_col = 'last_price'
+        else: 
+            print("Skipping Crypto Features: IBIT price column not found.")
+            return df
+
+    ibit_1m = ibit_df.set_index('ts_event')[[price_col]].resample('1min').last().ffill()
     ibit_1m.columns = ['ibit_close']
     
     # Align
