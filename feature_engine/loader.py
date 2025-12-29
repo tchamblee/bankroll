@@ -230,7 +230,7 @@ def load_gdelt_data(data_dir, pattern="GDELT_GKG_*.parquet"):
     # gdelt_daily['tone_zscore'] = (gdelt_daily['global_tone'] - tone_mean) / tone_std
     tone_zscore = (gdelt_daily['global_tone'] - tone_mean) / tone_std
     
-    gdelt_daily['panic_score'] = np.where(tone_zscore < -2.0, gdelt_daily['global_polarity'] * -1, 0)
+    gdelt_daily['panic_score'] = np.where(tone_zscore < config.PANIC_SCORE_THRESHOLD, gdelt_daily['global_polarity'] * -1, 0)
     
     gdelt_daily['conflict_intensity'] = final_agg['conflict_intensity']
     
@@ -418,7 +418,7 @@ def load_gdelt_v2_data(data_dir=None):
     tone_std = tone_std.bfill().fillna(1.0)
     
     tone_zscore = (gdelt_intraday['global_tone'] - tone_mean) / tone_std
-    gdelt_intraday['panic_score'] = np.where(tone_zscore < -2.0, gdelt_intraday['global_polarity'] * -1, 0)
+    gdelt_intraday['panic_score'] = np.where(tone_zscore < config.PANIC_SCORE_THRESHOLD, gdelt_intraday['global_polarity'] * -1, 0)
     
     gdelt_intraday['conflict_intensity'] = final_agg['conflict_intensity']
     

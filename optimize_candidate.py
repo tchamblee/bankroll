@@ -262,7 +262,7 @@ class StrategyOptimizer:
 
         # Save
         if better_variants:
-            out_file = f"output/strategies/optimized_{self.target_name}.json"
+            out_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"optimized_{self.target_name}.json")
             
             def convert_stats(stats_dict):
                 return {

@@ -6,6 +6,7 @@ import json
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 import config
+from backtest.statistics import calculate_sortino_ratio
 from .simulator import _jit_simulate_mutex_custom
 
 def optimize_mutex_portfolio(candidates, backtester):
@@ -77,9 +78,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             
             total_ret = np.sum(rets)
             profit = total_ret * config.ACCOUNT_SIZE
-            avg_ret = np.mean(rets)
-            downside = np.std(np.minimum(rets, 0)) + 1e-9
-            sortino = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+            sortino = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)
             
             if sortino > 1.0 and profit > best_profit:
                 best_profit = profit
@@ -212,7 +211,7 @@ def optimize_hrp_portfolio(candidates, backtester):
     
     oos_port_rets = np.dot(oos_rets_matrix, weights)
     oos_profit = np.sum(oos_port_rets) * config.ACCOUNT_SIZE
-    oos_sortino = (np.mean(oos_port_rets) / (np.std(np.minimum(oos_port_rets, 0)) + 1e-9)) * np.sqrt(config.ANNUALIZATION_FACTOR)
+    oos_sortino = calculate_sortino_ratio(oos_port_rets, config.ANNUALIZATION_FACTOR)
     
     print(f"\n🏆 HRP PORTFOLIO RESULT")
     print(f"  Strategies: {len(final_portfolio)}")

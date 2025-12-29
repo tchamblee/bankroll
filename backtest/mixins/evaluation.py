@@ -56,16 +56,16 @@ class EvaluationMixin:
             
             # 3. Calculate Metrics
             total_ret = np.sum(net_returns, axis=0)
-            stdev = np.std(net_returns, axis=0) + 1e-9
+            stdev = np.std(net_returns, axis=0) + config.EPSILON
             avg_ret = np.mean(net_returns, axis=0)
             sharpe = (avg_ret / stdev) * np.sqrt(self.annualization_factor)
             
             downside = np.minimum(net_returns, 0)
-            downside_std = np.std(downside, axis=0) + 1e-9
+            downside_std = np.std(downside, axis=0) + config.EPSILON
             sortino = (avg_ret / downside_std) * np.sqrt(self.annualization_factor)
             
             max_win = np.max(net_returns, axis=0)
-            stability_ratio = max_win / (total_ret + 1e-9)
+            stability_ratio = max_win / (total_ret + config.EPSILON)
             
             chunk_results = []
             for j, strat in enumerate(chunk_pop):
@@ -146,11 +146,11 @@ class EvaluationMixin:
 
             total_ret = np.sum(net_returns, axis=0)
             max_win = np.max(net_returns, axis=0)
-            stability_ratio = max_win / (total_ret + 1e-9)
+            stability_ratio = max_win / (total_ret + config.EPSILON)
             
             avg = np.mean(net_returns, axis=0)
             downside_std = np.std(np.minimum(net_returns, 0), axis=0)
-            downside_std = np.maximum(downside_std, 1e-6)
+            downside_std = np.maximum(downside_std, config.EPSILON)
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             sortino = np.nan_to_num(sortino, nan=-10.0)
@@ -216,7 +216,7 @@ class EvaluationMixin:
             
             avg = np.mean(net_returns, axis=0)
             downside = np.minimum(net_returns, 0)
-            downside_std = np.std(downside, axis=0) + 1e-9
+            downside_std = np.std(downside, axis=0) + config.EPSILON
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             

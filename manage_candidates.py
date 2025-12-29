@@ -71,7 +71,7 @@ def clear_list():
     print("🧹 Candidate list cleared.")
 
 def clear_inbox():
-    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    inbox_path = config.DIRS['STRATEGY_INBOX']
     if os.path.exists(inbox_path):
         with open(inbox_path, 'w') as f:
             json.dump([], f, indent=4)
@@ -80,7 +80,7 @@ def clear_inbox():
         print("⚠️  Inbox file not found.")
 
 def prune_inbox():
-    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    inbox_path = config.DIRS['STRATEGY_INBOX']
     if not os.path.exists(inbox_path):
         print("Inbox file not found.")
         return
@@ -103,7 +103,7 @@ def prune_inbox():
         print("✅ No duplicates found in Inbox.")
 
 def list_inbox():
-    inbox_path = config.DIRS.get('STRATEGY_INBOX', os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json"))
+    inbox_path = config.DIRS['STRATEGY_INBOX']
     if not os.path.exists(inbox_path):
         print("Inbox is empty (no file found).")
         return

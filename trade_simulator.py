@@ -219,7 +219,7 @@ class TradeSimulator:
                  times: pd.Series,
                  spread_bps: float = config.SPREAD_BPS, 
                  cost_bps: float = config.COST_BPS,
-                 min_comm: float = 2.0,
+                 min_comm: float = config.MIN_COMMISSION,
                  lot_size: float = config.STANDARD_LOT_SIZE,
                  account_size: float = config.ACCOUNT_SIZE):
         

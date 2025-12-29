@@ -19,7 +19,7 @@ def load_strategies(source_type, horizon=None, load_metrics=True):
     file_path = None
     
     if source_type == 'inbox':
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json")
+        file_path = config.DIRS['STRATEGY_INBOX']
         
     elif source_type == 'mutex':
         file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")

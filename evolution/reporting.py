@@ -223,11 +223,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             )
 
             strat_data = final_strat.to_dict()
-            strat_data['test_sortino'] = final_test_sortino
-            strat_data['test_return'] = final_test_ret
-            strat_data['test_trades'] = final_test_trades
-            strat_data['train_return'] = final_train_ret
-            strat_data['val_return'] = final_val_ret
+            strat_data['test_sortino'] = float(final_test_sortino)
+            strat_data['test_return'] = float(final_test_ret)
+            strat_data['test_trades'] = int(final_test_trades)
+            strat_data['train_return'] = float(final_train_ret)
+            strat_data['val_return'] = float(final_val_ret)
             strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) # Keep original robust score for sorting
             strat_data['dsr_val'] = float(dsr_val)
             strat_data['psr_test'] = float(psr_test)

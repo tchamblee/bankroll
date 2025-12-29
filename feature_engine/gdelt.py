@@ -72,7 +72,7 @@ def add_gdelt_features(df, gdelt_df):
              t_std = t_std.bfill().fillna(1.0)
              
              z = (gdelt_rolled['global_tone'] - t_mean) / t_std
-             gdelt_rolled['panic_score'] = np.where(z < -2.0, gdelt_rolled['global_polarity'] * -1, 0)
+             gdelt_rolled['panic_score'] = np.where(z < config.PANIC_SCORE_THRESHOLD, gdelt_rolled['global_polarity'] * -1, 0)
         
         # We need to make sure index is a column for merge_asof if it's not
         gdelt_reset = gdelt_rolled.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})

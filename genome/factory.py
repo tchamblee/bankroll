@@ -297,8 +297,8 @@ class GenomeFactory:
              long_genes.append(self.create_gene_from_pool(self.trigger_pool))
              short_genes.append(self.create_gene_from_pool(self.trigger_pool))
 
-        sl_pct = random.choice([1.5, 2.0, 2.5])
-        tp_pct = random.choice([3.0, 4.0, 5.0, 6.0])
+        sl_pct = random.choice(config.STOP_LOSS_OPTIONS)
+        tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
 
         return Strategy(
             name=f"{archetype_name}_{random.randint(1000,9999)}",
@@ -344,8 +344,8 @@ class GenomeFactory:
         else:
             concordance = math.ceil(num_genes * 0.51)
 
-        sl_pct = random.choice([1.5, 2.0, 2.5])
-        tp_pct = random.choice([3.0, 4.0, 5.0, 6.0])
+        sl_pct = random.choice(config.STOP_LOSS_OPTIONS)
+        tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
 
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",

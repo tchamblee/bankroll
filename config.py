@@ -41,6 +41,9 @@ COST_BPS = 0.20
 SPREAD_BPS = 0.25
 MIN_RETURN_THRESHOLD = 0.001
 
+# --- MATH CONSTANTS ---
+EPSILON = 1e-9
+
 # --- BAR DEFINITION ---
 # 600M units is approx 250 ticks for EURUSD (High Resolution)
 VOLUME_THRESHOLD = 600_000_000 
@@ -51,10 +54,14 @@ ANNUALIZATION_FACTOR = 189000
 
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
+STOP_LOSS_OPTIONS = [1.0, 1.5, 2.0, 2.5, 3.0]
+TAKE_PROFIT_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0]
+
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
 MIN_TRADES_FOR_METRICS = 30
 MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
+MIN_COMMISSION = 2.0
 
 # --- DATA & VALIDATION SETTINGS ---
 TRAIN_SPLIT_RATIO = 0.6
@@ -78,6 +85,7 @@ TRADING_START_HOUR = 8
 TRADING_END_HOUR = 22
 
 # --- GDELT SETTINGS ---
+PANIC_SCORE_THRESHOLD = -2.0
 GDELT_KEYWORDS = {
     'EUR_LOCS': ['Europe', 'Brussels', 'Germany', 'France', 'Italy', 'Spain', 'EUR', 'Euro'],
     'USD_LOCS': ['United States', 'US', 'Washington', 'New York', 'America', 'Fed'],

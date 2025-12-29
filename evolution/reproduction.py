@@ -37,8 +37,8 @@ def mutate_strategy(strategy: Strategy, available_features: list):
     
     # Param Mutation (10% chance)
     if random.random() < 0.10:
-        strategy.stop_loss_pct = random.choice([1.0, 1.5, 2.0, 2.5, 3.0])
-        strategy.take_profit_pct = random.choice([2.0, 3.0, 4.0, 5.0, 6.0])
+        strategy.stop_loss_pct = random.choice(config.STOP_LOSS_OPTIONS)
+        strategy.take_profit_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
 
     strategy.cleanup()
     strategy.recalculate_concordance()

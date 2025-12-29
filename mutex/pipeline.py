@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import config
 from backtest import BacktestEngine
+from backtest.statistics import calculate_sortino_ratio
 from .simulator import _jit_simulate_mutex_custom
 from .optimization import optimize_mutex_portfolio, optimize_hrp_portfolio
 from .utils import load_all_candidates
@@ -81,9 +82,7 @@ def run_mutex_backtest():
         cum_profit = np.cumsum(rets) * config.ACCOUNT_SIZE
         total_oos_profit = cum_profit[-1] if len(cum_profit) > 0 else 0.0
         
-        avg_oos = np.mean(rets)
-        downside_oos = np.sqrt(np.mean(np.minimum(rets, 0)**2)) + 1e-9
-        sortino_oos = (avg_oos / downside_oos) * np.sqrt(config.ANNUALIZATION_FACTOR)
+        sortino_oos = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)
         
         print("\n" + "="*80)
         print("🧪 OUT-OF-SAMPLE (TEST SET) PERFORMANCE")

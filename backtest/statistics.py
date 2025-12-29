@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.stats import norm
 from itertools import combinations
 from typing import List, Tuple, Dict
+import config
 
 def estimated_sharpe_ratio(returns: np.ndarray, annualization_factor: int = 252) -> float:
     """Calculates standard annualized Sharpe Ratio."""
@@ -10,7 +11,7 @@ def estimated_sharpe_ratio(returns: np.ndarray, annualization_factor: int = 252)
         return 0.0
     return np.mean(returns) / np.std(returns) * np.sqrt(annualization_factor)
 
-def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = 189000, target_return: float = 0.0) -> float:
+def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = config.ANNUALIZATION_FACTOR, target_return: float = 0.0) -> float:
     """
     Calculates Annualized Sortino Ratio using Downside Deviation (LPM_2).
     Clamps positive returns to zero (or target_return) for the deviation calculation.
@@ -22,7 +23,7 @@ def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = 189
     # Downside Deviation (LPM_2)
     # Using target_return (usually 0) as the hurdle
     downside = np.minimum(returns - target_return, 0.0)
-    downside_std = np.std(downside) + 1e-9
+    downside_std = np.std(downside) + config.EPSILON
     
     return (avg_ret / downside_std) * np.sqrt(annualization_factor)
 
@@ -33,7 +34,7 @@ def deflated_sharpe_ratio(
     var_returns: float, 
     skew_returns: float, 
     kurt_returns: float,
-    annualization_factor: int = 114408
+    annualization_factor: int = config.ANNUALIZATION_FACTOR
 ) -> float:
     """
     Calculates the Probabilistic Sharpe Ratio (PSR) adjusted for multiple testing (DSR).

@@ -12,7 +12,7 @@ class BacktestEngineBase:
     High-Performance Backtester Base Class.
     Handles data preparation, context management, and resource cleanup.
     """
-    def __init__(self, data: pd.DataFrame, cost_bps=None, fixed_cost=2.0, spread_bps=None, account_size=None, target_col='log_ret', annualization_factor=None):
+    def __init__(self, data: pd.DataFrame, cost_bps=None, fixed_cost=config.MIN_COMMISSION, spread_bps=None, account_size=None, target_col='log_ret', annualization_factor=None):
         self.raw_data = data
         self.target_col = target_col
         self.annualization_factor = annualization_factor if annualization_factor else config.ANNUALIZATION_FACTOR
