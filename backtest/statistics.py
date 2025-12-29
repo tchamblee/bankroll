@@ -64,8 +64,15 @@ def deflated_sharpe_ratio(
     # Bailey-Lopez de Prado (2012) Approximation for SR Variance:
     # Var(SR) approx (1 - skew*SR + (kurt-1)/4 * SR^2) / (T - 1)
     
-    # We use the Observed SR to estimate the variance of the SR estimator itself
-    sr_var = (1 - skew_returns * observed_sr + (kurt_returns - 1) / 4 * observed_sr**2) / (T - 1)
+    # CRITICAL FIX: The formula applies to the RAW (per-period) Sharpe Ratio.
+    # We must de-annualize the observed SR to get the raw SR for the variance formula,
+    # then re-annualize the variance.
+    
+    sr_raw = observed_sr / np.sqrt(annualization_factor)
+    sr_var_raw = (1 - skew_returns * sr_raw + (kurt_returns - 1) / 4 * sr_raw**2) / (T - 1)
+    
+    # Variance of Annualized SR = Var(Raw * Sqrt(A)) = A * Var(Raw)
+    sr_var = sr_var_raw * annualization_factor
     sr_std = np.sqrt(sr_var)
     
     # Expected Max SR (Hurdle)
@@ -148,26 +155,39 @@ def combinatorial_purged_cv(
             # (In a circular setup, we might check wraparound, but here standard CV assumes time linearity).
             
             is_embargoed = False
+            is_purged = False
+            
             for test_i in test_fold_indices:
+                test_fold_start = folds[test_i][0]
                 test_fold_end = folds[test_i][-1]
-                train_fold_start = fold_indices[0]
                 
-                # Check if Train starts right after Test (sequential)
-                # We add a small buffer check or just index comparison
+                train_fold_start = fold_indices[0]
+                train_fold_end = fold_indices[-1]
+                
+                # Check Embargo: Train starts after Test ends
                 if train_fold_start > test_fold_end and (train_fold_start - test_fold_end) <= embargo + 1:
                     is_embargoed = True
-                    break
+                
+                # Check Purge: Train ends before Test starts
+                # We need to remove the tail of the training set to prevent leakage from look-forward features
+                # or labels overlapping into the test set.
+                if train_fold_end < test_fold_start and (test_fold_start - train_fold_end) <= embargo + 1:
+                    is_purged = True
+            
+            # Apply Cuts
+            start_slice = 0
+            end_slice = len(fold_indices)
             
             if is_embargoed:
-                # Remove the first 'embargo' samples from this train fold
-                # Ensure we don't slice beyond the fold
-                if len(fold_indices) > embargo:
-                    final_train_indices.append(fold_indices[embargo:])
-                else:
-                    # If fold is smaller than embargo, skip it entirely
-                    pass
+                start_slice = embargo
+            
+            if is_purged:
+                end_slice = len(fold_indices) - embargo
+                
+            if end_slice > start_slice:
+                 final_train_indices.append(fold_indices[start_slice:end_slice])
             else:
-                final_train_indices.append(fold_indices)
+                pass # Fold completely removed
         
         if len(final_train_indices) > 0:
             train_idx = np.concatenate(final_train_indices)
