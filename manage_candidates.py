@@ -129,24 +129,31 @@ def list_inbox():
     # Sort by Validation Sortino (Best Practice)
     strategies.sort(key=lambda x: x.get('val_stats', {}).get('sortino', x.get('val_sortino', 0)), reverse=True)
 
-    print(f"\n📥 INBOX STRATEGIES ({len(strategies)} found)")
-    print(f"{'Name':<50} | {'Horizon':<8} | {'Val Sort':<8} | {'Train %':<10} | {'Val %':<10} | {'Test %':<10} | {'Gen':<5}")
-    print("-" * 130)
+    # Print standardized table
+    print_candidate_table(strategies, title="INBOX STRATEGIES")
+
+def remove_from_inbox(name):
+    inbox_path = config.DIRS['STRATEGY_INBOX']
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    with open(inbox_path, 'r') as f:
+        try:
+            strategies = json.load(f)
+        except:
+            print("Inbox is corrupted.")
+            return
+
+    initial_len = len(strategies)
+    strategies = [s for s in strategies if s.get('name') != name]
     
-    for s in strategies:
-        name = s.get('name', 'Unknown')
-        horizon = s.get('horizon', '?')
-        
-        # Prioritize Val Sortino
-        val_sort = s.get('val_stats', {}).get('sortino', s.get('val_sortino', 0))
-        
-        r_train = s.get('train_return', 0) * 100
-        r_val = s.get('val_return', 0) * 100
-        r_test = s.get('test_return', 0) * 100
-        gen = s.get('generation', '?')
-        
-        print(f"{name[:50]:<50} | {horizon:<8} | {val_sort:<8.2f} | {r_train:<10.2f} | {r_val:<10.2f} | {r_test:<10.2f} | {gen}")
-    print("-" * 130)
+    if len(strategies) < initial_len:
+        with open(inbox_path, 'w') as f:
+            json.dump(strategies, f, indent=4)
+        print(f"🗑️  Removed '{name}' from Inbox.")
+    else:
+        print(f"⚠️  Strategy '{name}' not found in Inbox.")
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")
@@ -158,8 +165,11 @@ def main():
     add_parser = subparsers.add_parser('add', help='Add a strategy by name')
     add_parser.add_argument('name', type=str, help='Name of the strategy (e.g., Child_2080)')
     
-    rm_parser = subparsers.add_parser('remove', help='Remove a strategy by name')
+    rm_parser = subparsers.add_parser('remove', help='Remove a strategy from CANDIDATES list')
     rm_parser.add_argument('name', type=str, help='Name of the strategy')
+
+    rm_inbox_parser = subparsers.add_parser('remove-inbox', help='Remove a strategy from INBOX')
+    rm_inbox_parser.add_argument('name', type=str, help='Name of the strategy')
     
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
@@ -175,6 +185,8 @@ def main():
         add_strategy(args.name)
     elif args.command == 'remove':
         remove_strategy(args.name)
+    elif args.command == 'remove-inbox':
+        remove_from_inbox(args.name)
     elif args.command == 'clear':
         clear_list()
     elif args.command == 'clear-inbox':
