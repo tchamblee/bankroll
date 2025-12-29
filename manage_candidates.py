@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from genome import Strategy
 from backtest.utils import refresh_strategies, find_strategy_in_files
+from backtest.reporting import print_candidate_table
 
 CANDIDATES_FILE = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
 
@@ -33,48 +34,9 @@ def list_candidates():
     # REFRESH METRICS
     candidates = refresh_strategies(candidates)
     save_candidates(candidates)
-
-    print(f"\n📋 CURRENT CANDIDATE LIST ({len(candidates)} strategies)")
-    # Headers
-    header = f"{'Name':<50} | {'H':<4} | {'Trds':<6} | {'Train (R%/S)':<14} | {'Val (R%/S)':<14} | {'Test (R%/S)':<14}"
-    print(header)
-    print("-" * len(header))
     
-    for c in candidates:
-        name = c.get('name', 'Unknown')
-        horizon = str(c.get('horizon', '?'))
-        
-        # Helper to extract metrics from various possible schemas
-        def get_m(prefix):
-            # Try new stats dict first (from optimizer)
-            stats = c.get(f'{prefix}_stats', {})
-            if stats:
-                return stats.get('ret', 0) * 100, stats.get('sortino', 0), int(stats.get('trades', 0))
-            
-            # Fallback to flat keys
-            ret = c.get(f'{prefix}_return', 0) * 100
-            sort = c.get(f'{prefix}_sortino', 0)
-            trades = c.get(f'{prefix}_trades', 0)
-            
-            if prefix == 'test':
-                 if sort == 0: sort = c.get('test_sortino', 0)
-                 if trades == 0: trades = c.get('test_trades', 0)
-            
-            return ret, sort, trades
-
-        t_r, t_s, t_tr = get_m('train')
-        v_r, v_s, v_tr = get_m('val')
-        te_r, te_s, te_tr = get_m('test')
-        
-        # Handle cases where robust_return/sortino_oos were used in metrics dict
-        if te_r == 0 and te_s == 0:
-            m = c.get('metrics', {})
-            te_r = m.get('robust_return', 0) * 100
-            te_s = m.get('sortino_oos', 0)
-
-        row = f"{name[:50]:<50} | {horizon:<4} | {te_tr:<6} | {t_r:5.1f}%/{t_s:4.2f} | {v_r:5.1f}%/{v_s:4.2f} | {te_r:5.1f}%/{te_s:4.2f}"
-        print(row)
-    print("-" * len(header))
+    # Print standardized table
+    print_candidate_table(candidates)
 
 def add_strategy(name):
     candidates = load_candidates()

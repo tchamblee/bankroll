@@ -4,83 +4,12 @@ import matplotlib.pyplot as plt
 import json
 import os
 import sys
-import re
 from feature_engine import FeatureEngine
-from genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
+from genome import Strategy
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
 from backtest.strategy_loader import load_strategies
 import config
-
-def parse_gene_string(gene_str):
-    match = re.match(r"(.+)\s+([<>=!]+)\s+(.+)", gene_str)
-    if not match: return None
-    left, op, right = match.groups()
-    left, op, right = left.strip(), op.strip(), right.strip()
-    
-    if left.startswith("Consecutive("):
-        direction = left.split("(")[1].split(")")[0]
-        return ConsecutiveGene(direction, op, int(re.sub(r"[^0-9]", "", right)))
-    if left.startswith("Time("):
-        mode = left.split("(")[1].split(")")[0]
-        return TimeGene(mode, op, int(re.sub(r"[^0-9]", "", right)))
-    if left.startswith("Z("):
-        try:
-            inner = left.split("Z(")[1].split(")")[0]
-            feature, window = [x.strip() for x in inner.split(",")]
-            if right.endswith('σ'): right = right[:-1]
-            return ZScoreGene(feature, op, float(right), int(window))
-        except: return None
-    if left.startswith("Delta("):
-        try:
-            inner = left.split("Delta(")[1].split(")")[0]
-            feature, lookback = [x.strip() for x in inner.split(",")]
-            return DeltaGene(feature, op, float(right), int(lookback))
-        except: return None
-    try:
-        float(right) # Check if it is a number
-        return None # StaticGene is deprecated
-    except ValueError:
-        return RelationalGene(left, op, right)
-
-def reconstruct_strategy(strat_dict):
-    # 1. New JSON Format (Native Serialization)
-    if 'long_genes' in strat_dict:
-        try:
-            return Strategy.from_dict(strat_dict)
-        except Exception as e:
-            print(f"Error hydrating strategy {strat_dict.get('name')}: {e}")
-            return None
-
-    # 2. Legacy String Format (Regex Parsing)
-    if 'logic' not in strat_dict: return None
-    
-    logic = strat_dict['logic']
-    name = strat_dict['name']
-    try:
-        match = re.search(r"(])[(](.*?)[)]", logic)
-        logic_type = match.group(1) if match else "AND"
-        min_con = int(logic_type.split("(")[1].split(")")[0]) if logic_type.startswith("VOTE(") else None
-        sep = " + " if logic_type == "VOTE" else " AND "
-        parts = logic.split(" | ")
-        if len(parts) != 2: return None
-        long_block, short_block = parts[0], parts[1]
-        
-        def extract_content(block, tag):
-            if f"{tag}:(" in block:
-                start = block.find(f"{tag}:(") + len(tag) + 2
-                return block[start:block.rfind(")")]
-            return "None"
-
-        long_part = extract_content(long_block, "LONG")
-        short_part = extract_content(short_block, "SHORT")
-        
-        l_genes = [parse_gene_string(g) for g in long_part.split(sep) if g != "None"]
-        s_genes = [parse_gene_string(g) for g in short_part.split(sep) if g != "None"]
-        return Strategy(name=name, long_genes=[g for g in l_genes if g], short_genes=[g for g in s_genes if g], min_concordance=min_con)
-    except Exception as e:
-        print(f"Error parsing {name}: {e}")
-        return None
 
 def plot_performance(df, strategies):
     backtester = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
@@ -390,16 +319,12 @@ if __name__ == "__main__":
     
     if args.file:
         print(f"Loading strategies from {args.file}...")
-        # Try generic load
         loaded, _ = load_strategies(args.file)
         if loaded:
             strategies.extend(loaded)
         else:
-            # Fallback to manual load for legacy reconstruction if needed?
-            # load_strategies uses Strategy.from_dict.
-            # If args.file contains legacy logic strings, load_strategies might skip them or fail to parse logic.
-            # But let's assume standard format for now.
-            pass
+            print(f"❌ Failed to load any strategies from {args.file}")
+            sys.exit(1)
 
     elif os.path.exists(os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")):
         print("Loading Mutex Portfolio...")

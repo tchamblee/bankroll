@@ -121,85 +121,35 @@ class StrategyOptimizer:
         
         population = [self.parent_strategy] + self.variants
         
-        # Hydrate Horizon on Strategy Objects (Critical for Signal Generation Checks)
+        # Hydrate Horizon on Strategy Objects
         for s in population:
             s.horizon = self.horizon
-        
-        # 1. Generate Full Signal Matrix
-        print("   Generating signals...")
-        # Pass horizon explicitly to enforce Safe Entry logic (Time Filter)
-        full_signals = self.backtester.generate_signal_matrix(population, horizon=self.horizon)
-        
-        # --- FIX: LOOKAHEAD BIAS (Next Open Execution) ---
-        # Signals generated at Close[t] must be executed at Open[t+1].
-        # We shift signals forward by 1.
-        full_signals = np.vstack([np.zeros((1, full_signals.shape[1]), dtype=full_signals.dtype), full_signals[:-1]])
-        
-        # 2. Define Split Indices
-        train_end = self.backtester.train_idx
-        val_end = self.backtester.val_idx
-        
-        # Print Date Ranges
-        t_vec = self.backtester.times_vec
-        def fmt_date(idx):
-            if hasattr(t_vec, 'iloc'): return str(t_vec.iloc[idx])
-            return str(t_vec[idx])
             
-        print(f"   📅 Data Splits:")
-        print(f"      Train: {fmt_date(0)} -> {fmt_date(train_end-1)}")
-        print(f"      Val:   {fmt_date(train_end)} -> {fmt_date(val_end-1)}")
-        print(f"      Test:  {fmt_date(val_end)} -> {fmt_date(len(t_vec)-1)}")
+        # Use Engine's Built-in Evaluation
+        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
         
-        # 3. Batch Simulation for Each Split
-        print("   Simulating Train...")
-        train_rets, train_trades = self.backtester.run_simulation_batch(
-            full_signals[:train_end], population, 
-            self.backtester.open_vec[:train_end], 
-            self.backtester.times_vec.iloc[:train_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[:train_end],
-            time_limit=self.horizon, highs=self.backtester.high_vec[:train_end], lows=self.backtester.low_vec[:train_end], atr=self.backtester.atr_vec[:train_end]
-        )
-        
-        print("   Simulating Validation...")
-        val_rets, val_trades = self.backtester.run_simulation_batch(
-            full_signals[train_end:val_end], population, 
-            self.backtester.open_vec[train_end:val_end], 
-            self.backtester.times_vec.iloc[train_end:val_end] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[train_end:val_end],
-            time_limit=self.horizon, highs=self.backtester.high_vec[train_end:val_end], lows=self.backtester.low_vec[train_end:val_end], atr=self.backtester.atr_vec[train_end:val_end]
-        )
-        
-        print("   Simulating Test...")
-        test_rets, test_trades = self.backtester.run_simulation_batch(
-            full_signals[val_end:], population, 
-            self.backtester.open_vec[val_end:], 
-            self.backtester.times_vec.iloc[val_end:] if hasattr(self.backtester.times_vec, 'iloc') else self.backtester.times_vec[val_end:],
-            time_limit=self.horizon, highs=self.backtester.high_vec[val_end:], lows=self.backtester.low_vec[val_end:], atr=self.backtester.atr_vec[val_end:]
-        )
-        
-        # Calculate Hamming Distance (Signal Diff) vs Parent (Index 0)
+        # Calculate Hamming Distance (Signal Diff) vs Parent
+        full_signals = self.backtester.generate_signal_matrix(population, horizon=self.horizon)
         parent_sig = full_signals[:, 0]
         
-        # Process Results
         results_data = []
         for i, strat in enumerate(population):
-            # Calculate metrics
-            t_r = np.sum(train_rets[:, i])
-            v_r = np.sum(val_rets[:, i])
-            te_r = np.sum(test_rets[:, i])
-            
-            t_s = calculate_sortino_ratio(train_rets[:, i], config.ANNUALIZATION_FACTOR)
-            v_s = calculate_sortino_ratio(val_rets[:, i], config.ANNUALIZATION_FACTOR)
-            te_s = calculate_sortino_ratio(test_rets[:, i], config.ANNUALIZATION_FACTOR)
-            
-            # Hamming Distance
             diff_bits = np.count_nonzero(full_signals[:, i] != parent_sig)
             
+            # Helper to extract from DF
+            def get_row(df, s_id):
+                row = df[df['id'] == s_id].iloc[0]
+                return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
+                
             results_data.append({
                 'name': strat.name,
                 'strat': strat,
                 'diff': diff_bits,
-                'train': {'ret': t_r, 'sortino': t_s, 'trades': train_trades[i]},
-                'val': {'ret': v_r, 'sortino': v_s, 'trades': val_trades[i]},
-                'test': {'ret': te_r, 'sortino': te_s, 'trades': test_trades[i]}
+                'train': get_row(train_df, strat.name),
+                'val': get_row(val_df, strat.name),
+                'test': get_row(test_df, strat.name)
             })
 
         parent = results_data[0]
