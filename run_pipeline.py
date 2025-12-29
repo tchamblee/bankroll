@@ -62,25 +62,12 @@ def main():
     
     # 5. Analysis & Visualization
     run_step("report_top_strategies.py", "Strategy Selection & Reporting")
-    
-    # 5b. Robustness Stress Testing (CPCV) - DISABLED (Using Mutex Robustness Instead)
-    # for horizon in config.PREDICTION_HORIZONS:
-    #     unique_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
-    #     if os.path.exists(unique_file):
-    #         run_step(f"verify_robustness.py {unique_file}", f"CPCV Robustness Audit (Horizon: {horizon})")
-
     run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
     run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
     run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")
     run_step("generate_prop_report.py", "Prop Desk Strategy Analysis Reports")
     
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
-    print("Output Artifacts:")
-    print(f"  - Data: {config.DIRS['DATA_CLEAN_TICKS']}")
-    print(f"  - Features: {config.DIRS['FEATURES_DIR']}/survivors_*.json")
-    print(f"  - Strategies: {config.DIRS['STRATEGIES_DIR']}/apex_strategies.json")
-    print(f"  - Plots: {config.DIRS['PLOTS_DIR']}/top5_audit_chart.png")
-    print(f"  - Report: Check stdout for 'APEX STRATEGY REPORT'")
 
 if __name__ == "__main__":
     main()
