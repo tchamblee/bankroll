@@ -85,30 +85,30 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         # --- GATEKEEPING ---
         min_ret_threshold = config.MIN_RETURN_THRESHOLD
         
-        passed_gate = False
+        train_sortino = float(t_stats.get('sortino', 0))
+        val_sortino = float(v_stats.get('sortino', 0))
+        
+        passed_gate = True
         rejection_reason = []
 
-        # Check 1: Raw Return Threshold
-        if train_ret >= min_ret_threshold and val_ret >= min_ret_threshold:
-            passed_gate = True
+        # 1. Strict Sortino Filter (> 1.25 on Train/Val)
+        if train_sortino < 1.25 or val_sortino < 1.25:
+            passed_gate = False
+            if train_sortino < 1.25: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
+            if val_sortino < 1.25: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
         
-        # Check 2: Stability Rescue (Sniper Logic)
-        if not passed_gate:
-            train_sortino = t_stats.get('sortino', 0)
-            val_sortino = v_stats.get('sortino', 0)
-            if train_ret > 0 and val_ret > 0 and train_sortino > 1.25 and val_sortino > 1.25:
-                passed_gate = True
+        # 2. Positive Return Filter
+        elif train_ret <= 0 or val_ret <= 0:
+            passed_gate = False
+            if train_ret <= 0: rejection_reason.append(f"Train_Ret({train_ret*100:.2f}%)")
+            if val_ret <= 0: rejection_reason.append(f"Val_Ret({val_ret*100:.2f}%)")
 
         if not passed_gate:
-            if train_ret < min_ret_threshold: rejection_reason.append(f"Train_Ret({train_ret*100:.2f}%)")
-            if val_ret < min_ret_threshold: rejection_reason.append(f"Val_Ret({val_ret*100:.2f}%)")
-            
-            # Track closest call
-            min_ret_here = min(train_ret, val_ret)
-            if min_ret_here > best_rejected_min_ret:
-                best_rejected_min_ret = min_ret_here
-                best_rejected_name = s.name
-                best_rejected_details = f"Train: {train_ret*100:.2f}%, Val: {val_ret*100:.2f}%"
+            # Track closest call for debugging/info
+            # Prioritize Sortino failures in logging if Return was okay
+            min_sort_here = min(train_sortino, val_sortino)
+            if min_sort_here > 1.0: # Only log if it was somewhat close
+                 best_rejected_details = f"TrainSort:{train_sortino:.2f}, ValSort:{val_sortino:.2f}"
             continue
         
         # --- SENSITIVITY ANALYSIS (Jitter Test) ---
@@ -202,7 +202,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 print(f"       ⚠️ Optimization skipped for {s.name}: {e}")
 
             # --- FINAL GATE: Test Performance Check ---
-            if final_test_ret <= 0:
+            if final_test_ret <= 0 or final_test_sortino < 1.25:
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)

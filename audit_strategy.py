@@ -40,7 +40,6 @@ def find_strategy(name):
                 
                 for s_dict in data:
                     if s_dict.get('name') == name:
-                        print(f"✅ Found strategy in {fpath}")
                         strat = Strategy.from_dict(s_dict)
                         # Hydrate extra fields
                         strat.horizon = s_dict.get('horizon', 60) # Default if missing
@@ -52,13 +51,12 @@ def find_strategy(name):
                         
                         return strat
         except Exception as e:
-            # print(f"⚠️ Error reading {fpath}: {e}") # specific error
             pass
             
     return None
 
 def calc_metrics(returns_vec, trades_count):
-    if len(returns_vec) == 0: return {}
+    if len(returns_vec) == 0: return {"trades": 0, "total_return": 0.0, "ann_return": 0.0, "sortino": 0.0, "max_drawdown": 0.0}
     
     total_ret = np.sum(returns_vec)
     
@@ -96,8 +94,100 @@ def calc_metrics(returns_vec, trades_count):
         "max_drawdown": max_dd
     }
 
+def audit_segment(engine, strategy, signals_global, start_idx, end_idx, segment_name, print_table=True):
+    # Slice Data
+    seg_slice = slice(start_idx, end_idx)
+    
+    signals_seg = signals_global[seg_slice]
+    prices_seg = engine.open_vec[seg_slice]
+    times_seg = engine.times_vec[seg_slice]
+    highs_seg = engine.high_vec[seg_slice]
+    lows_seg = engine.low_vec[seg_slice]
+    atr_seg = engine.atr_vec[seg_slice] if engine.atr_vec is not None else None
+    
+    # Sub-signals
+    signals_long = signals_seg.copy()
+    signals_long[signals_long < 0] = 0
+    
+    signals_short = signals_seg.copy()
+    signals_short[signals_short > 0] = 0
+    
+    # Run Simulations
+    ret_combined, trd_combined = engine.run_simulation_batch(
+        signals_seg, [strategy], prices_seg, times_seg, 
+        time_limit=strategy.horizon, highs=highs_seg, lows=lows_seg, atr=atr_seg
+    )
+    
+    ret_long, trd_long = engine.run_simulation_batch(
+        signals_long, [strategy], prices_seg, times_seg, 
+        time_limit=strategy.horizon, highs=highs_seg, lows=lows_seg, atr=atr_seg
+    )
+    
+    ret_short, trd_short = engine.run_simulation_batch(
+        signals_short, [strategy], prices_seg, times_seg, 
+        time_limit=strategy.horizon, highs=highs_seg, lows=lows_seg, atr=atr_seg
+    )
+    
+    # Calculate Metrics
+    m_comb = calc_metrics(ret_combined[:, 0], trd_combined[0])
+    m_long = calc_metrics(ret_long[:, 0], trd_long[0])
+    m_short = calc_metrics(ret_short[:, 0], trd_short[0])
+    
+    if print_table:
+        # Print Table
+        print("\n" + "-"*60)
+        print(f"📂 DATASET: {segment_name} (Bars: {end_idx - start_idx})")
+        print("-"*60)
+        
+        headers = ["Metric", "Total", "Longs", "Shorts"]
+        table = [
+            ["Trades", m_comb.get('trades', 0), m_long.get('trades', 0), m_short.get('trades', 0)],
+            ["Total Return", f"{m_comb.get('total_return', 0):.2%}", f"{m_long.get('total_return', 0):.2%}", f"{m_short.get('total_return', 0):.2%}"],
+            ["Ann. Return", f"{m_comb.get('ann_return', 0):.2%}", f"{m_long.get('ann_return', 0):.2%}", f"{m_short.get('ann_return', 0):.2%}"],
+            ["Sortino Ratio", f"{m_comb.get('sortino', 0):.2f}", f"{m_long.get('sortino', 0):.2f}", f"{m_short.get('sortino', 0):.2f}"],
+            ["Max Drawdown", f"{m_comb.get('max_drawdown', 0):.2%}", f"{m_long.get('max_drawdown', 0):.2%}", f"{m_short.get('max_drawdown', 0):.2%}"],
+        ]
+        
+        print(tabulate(table, headers=headers, tablefmt="fancy_grid"))
+
+    return m_comb
+
+def evaluate_strategy_all_sets(engine, strategy, print_report=False):
+    """
+    Evaluates a strategy on Train, Val, and Test sets.
+    Returns a dictionary with metrics for each set.
+    """
+    # 1. Generate Signals (Full History)
+    if print_report: print("  - Generating Signals...")
+    signals = engine.generate_signal_matrix([strategy]) # (N, 1)
+    
+    # CRITICAL: Shift signals by 1 to enforce Next-Open execution (Lag 1)
+    signals = np.roll(signals, 1, axis=0)
+    signals[0] = 0 
+    
+    if print_report:
+        print("\n" + "="*60)
+        print(f"📊 FULL AUDIT REPORT: {strategy.name}")
+        print("="*60)
+        print(f"Horizon:     {strategy.horizon} bars")
+        print(f"Stop Loss:   {strategy.stop_loss_pct}%")
+        print(f"Take Profit: {strategy.take_profit_pct}%")
+    
+    segments = [
+        ("TRAIN", 0, engine.train_idx),
+        ("VALIDATION", engine.train_idx, engine.val_idx),
+        ("TEST", engine.val_idx, len(engine.close_vec))
+    ]
+    
+    results = {}
+    for name, start, end in segments:
+        metrics = audit_segment(engine, strategy, signals, start, end, name, print_table=print_report)
+        results[name] = metrics
+        
+    return results
+
 def main():
-    parser = argparse.ArgumentParser(description="Audit a strategy on OOS data.")
+    parser = argparse.ArgumentParser(description="Audit a strategy on Train/Val/Test data.")
     parser.add_argument("name", type=str, help="Name of the strategy to audit")
     args = parser.parse_args()
     
@@ -118,78 +208,7 @@ def main():
     print(f"⚙️ Initializing Backtest Engine...")
     engine = BacktestEngine(bars_df)
     
-    print(f"🚀 Simulating OOS Performance (Test Set Start Idx: {engine.val_idx})...")
-    
-    # 1. Generate Signals (Full History)
-    print("  - Generating Signals...")
-    signals = engine.generate_signal_matrix([strategy]) # (N, 1)
-    
-    # CRITICAL: Shift signals by 1 to enforce Next-Open execution (Lag 1)
-    # Signal[t] (calculated at Close) must execute at Open[t+1]
-    signals = np.roll(signals, 1, axis=0)
-    signals[0] = 0 # First bar has no prior signal
-    
-    # 2. Slice for OOS
-    oos_slice = slice(engine.val_idx, None)
-    
-    signals_oos = signals[oos_slice]
-    prices_oos = engine.close_vec[oos_slice]
-    times_oos = engine.times_vec[oos_slice]
-    highs_oos = engine.high_vec[oos_slice]
-    lows_oos = engine.low_vec[oos_slice]
-    atr_oos = engine.atr_vec[oos_slice] if engine.atr_vec is not None else None
-    
-    # 3. Prepare Sub-Signals for Breakdown
-    # Ensure we copy correctly
-    signals_long = signals_oos.copy()
-    signals_long[signals_long < 0] = 0
-    
-    signals_short = signals_oos.copy()
-    signals_short[signals_short > 0] = 0
-    
-    # 4. Run Simulations
-    print("  - Running Trade Simulator (Combined)...")
-    ret_combined, trd_combined = engine.run_simulation_batch(
-        signals_oos, [strategy], prices_oos, times_oos, 
-        time_limit=strategy.horizon, highs=highs_oos, lows=lows_oos, atr=atr_oos
-    )
-    
-    print("  - Running Trade Simulator (Long Only)...")
-    ret_long, trd_long = engine.run_simulation_batch(
-        signals_long, [strategy], prices_oos, times_oos, 
-        time_limit=strategy.horizon, highs=highs_oos, lows=lows_oos, atr=atr_oos
-    )
-    
-    print("  - Running Trade Simulator (Short Only)...")
-    ret_short, trd_short = engine.run_simulation_batch(
-        signals_short, [strategy], prices_oos, times_oos, 
-        time_limit=strategy.horizon, highs=highs_oos, lows=lows_oos, atr=atr_oos
-    )
-    
-    # 5. Calculate Metrics
-    m_comb = calc_metrics(ret_combined[:, 0], trd_combined[0])
-    m_long = calc_metrics(ret_long[:, 0], trd_long[0])
-    m_short = calc_metrics(ret_short[:, 0], trd_short[0])
-    
-    # 6. Print Report
-    print("\n" + "="*50)
-    print(f"📊 AUDIT REPORT: {args.name}")
-    print("="*50)
-    print(f"Horizon:     {strategy.horizon} bars")
-    print(f"Stop Loss:   {strategy.stop_loss_pct}%")
-    print(f"Take Profit: {strategy.take_profit_pct}%")
-    print("-" * 50)
-    
-    headers = ["Metric", "Total", "Longs", "Shorts"]
-    table = [
-        ["Trades", m_comb.get('trades', 0), m_long.get('trades', 0), m_short.get('trades', 0)],
-        ["Total Return", f"{m_comb.get('total_return', 0):.2%}", f"{m_long.get('total_return', 0):.2%}", f"{m_short.get('total_return', 0):.2%}"],
-        ["Ann. Return", f"{m_comb.get('ann_return', 0):.2%}", f"{m_long.get('ann_return', 0):.2%}", f"{m_short.get('ann_return', 0):.2%}"],
-        ["Sortino Ratio", f"{m_comb.get('sortino', 0):.2f}", f"{m_long.get('sortino', 0):.2f}", f"{m_short.get('sortino', 0):.2f}"],
-        ["Max Drawdown", f"{m_comb.get('max_drawdown', 0):.2%}", f"{m_long.get('max_drawdown', 0):.2%}", f"{m_short.get('max_drawdown', 0):.2%}"],
-    ]
-    
-    print(tabulate(table, headers=headers, tablefmt="fancy_grid"))
+    evaluate_strategy_all_sets(engine, strategy, print_report=True)
     
     print("\n✅ Audit Complete.")
 
