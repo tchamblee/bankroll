@@ -98,7 +98,12 @@ def add_fred_features_v2(bars_df):
         return bars_df
 
     fred_df = pd.read_parquet(fred_path)
+    # Ensure datetime and UTC timezone to match IBKR bars
     fred_df['date'] = pd.to_datetime(fred_df['date'])
+    if fred_df['date'].dt.tz is None:
+        fred_df['date'] = fred_df['date'].dt.tz_localize('UTC')
+    else:
+        fred_df['date'] = fred_df['date'].dt.tz_convert('UTC')
     
     # Compute derived features on DAILY data
     fred_df = precompute_fred_derived(fred_df)
@@ -108,6 +113,7 @@ def add_fred_features_v2(bars_df):
     
     # Prepare Bars
     if 'time_start' not in bars_df.columns: return bars_df
+    # Normalize bar times to midnight UTC for merging
     bars_df['_date_only'] = bars_df['time_start'].dt.normalize()
     
     # Merge
