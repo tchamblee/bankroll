@@ -22,9 +22,6 @@ class BacktestEngineBase:
         os.makedirs(base_temp, exist_ok=True)
         self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_", dir=base_temp)
         
-        # Force Joblib to use this directory for its own temp files (memmapping)
-        os.environ['JOBLIB_TEMP_FOLDER'] = self.temp_dir
-        
         self.existing_keys = set()
         
         # --- CONFIGURATION ---
@@ -80,9 +77,6 @@ class BacktestEngineBase:
             stop_reusable_executor()
         except:
             pass
-
-        if 'JOBLIB_TEMP_FOLDER' in os.environ and os.environ['JOBLIB_TEMP_FOLDER'] == self.temp_dir:
-            del os.environ['JOBLIB_TEMP_FOLDER']
 
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
             try:

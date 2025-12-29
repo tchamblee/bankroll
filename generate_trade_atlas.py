@@ -169,7 +169,15 @@ def main():
         sl_pct = getattr(strat, 'stop_loss_pct', config.DEFAULT_STOP_LOSS)
         tp_pct = getattr(strat, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)
         
-        trades, _ = simulator.simulate(signals, stop_loss_pct=sl_pct, take_profit_pct=tp_pct, time_limit_bars=h)
+        trades, _ = simulator.simulate(
+            signals, 
+            stop_loss_pct=sl_pct, 
+            take_profit_pct=tp_pct, 
+            time_limit_bars=h,
+            highs=backtester.high_vec.flatten(),
+            lows=backtester.low_vec.flatten(),
+            atr=backtester.atr_vec.flatten()
+        )
         
         # FILTER: OOS Only
         oos_start = backtester.val_idx

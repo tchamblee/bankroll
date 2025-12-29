@@ -8,6 +8,7 @@ from genome import GenomeFactory, Strategy
 from backtest import BacktestEngine
 
 # Local helper imports
+from backtest.strategy_loader import load_strategies
 from .reproduction import crossover_strategies, mutate_strategy
 from .selection import update_hall_of_fame
 from .reporting import save_campaign_results
@@ -48,8 +49,75 @@ class EvolutionaryAlphaFactory:
             self.backtester.shutdown()
 
     def initialize_population(self, horizon=None):
-        print(f"  🎲 Initializing Population with {self.pop_size} Random Strategies.")
-        self.population = [self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)) for _ in range(self.pop_size)]
+        self.population = []
+        seeds = []
+
+        # 1. Load Seeds from Candidates and Inbox
+        print("  🌱 Loading Seed Strategies...")
+        cand_strats, _ = load_strategies('candidates.json', horizon=horizon, load_metrics=False)
+        inbox_strats, _ = load_strategies('found_strategies.json', horizon=horizon, load_metrics=False)
+        
+        # Combine and Deduplicate by Name, Filtering by Horizon
+        raw_seeds = cand_strats + inbox_strats
+        seen_names = set()
+        unique_seeds = []
+        skipped_count = 0
+        
+        for s in raw_seeds:
+            # Check Horizon
+            s_horizon = getattr(s, 'horizon', None)
+            if s_horizon is not None and s_horizon != horizon:
+                skipped_count += 1
+                continue
+                
+            if s.name not in seen_names:
+                unique_seeds.append(s)
+                seen_names.add(s.name)
+        
+        if skipped_count > 0:
+            print(f"  ⚠️  Skipped {skipped_count} seeds due to horizon mismatch (Expected H{horizon}).")
+        
+        # Cap seeds to prevent overcrowding (Leaves room for randoms)
+        # Assuming 5 mutants per seed, 15% seeds -> 90% filled max (leaving 10% random minimum)
+        max_seeds = int(self.pop_size * 0.15)
+        if len(unique_seeds) > max_seeds:
+            print(f"  ⚠️  Too many seeds ({len(unique_seeds)}). Sampling {max_seeds} random seeds.")
+            seeds = random.sample(unique_seeds, max_seeds)
+        else:
+            seeds = unique_seeds
+
+        print(f"  ✨ Found {len(unique_seeds)} unique seed strategies matching H{horizon}. Using {len(seeds)}.")
+
+        # 2. Inject Mutants (derived from seeds)
+        mutant_count = 0
+        
+        for seed in seeds:
+            if len(self.population) >= self.pop_size: break
+            
+            # Inject Mutants (e.g., 5 per seed) - No Original
+            for _ in range(5):
+                if len(self.population) >= self.pop_size: break
+                
+                child = Strategy(name=f"Mutant_{seed.name}_{random.randint(10,99)}")
+                child.long_genes = [g.copy() for g in seed.long_genes]
+                child.short_genes = [g.copy() for g in seed.short_genes]
+                child.stop_loss_pct = seed.stop_loss_pct
+                child.take_profit_pct = seed.take_profit_pct
+                
+                mutate_strategy(child, self.factory.features)
+                self.population.append(child)
+                mutant_count += 1
+        
+        print(f"  🧬 Injected {mutant_count} Mutants from {len(seeds)} Seeds.")
+
+        # 3. Fill Remainder with Random Strategies
+        remaining = self.pop_size - len(self.population)
+        if remaining > 0:
+            print(f"  🎲 Generating {remaining} Random Strategies to fill population.")
+            self.population.extend([self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)) for _ in range(remaining)])
+        else:
+             # If we overfilled, truncate (rare if pop_size is large)
+             self.population = self.population[:self.pop_size]
 
     def evolve(self, horizon=60):
         self.initialize_population(horizon=horizon)

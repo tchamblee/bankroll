@@ -248,25 +248,41 @@ class TradeSimulator:
                  signals: np.ndarray, 
                  stop_loss_pct: float = config.DEFAULT_STOP_LOSS, 
                  take_profit_pct: Optional[float] = None,
-                 time_limit_bars: Optional[int] = None) -> Tuple[List[Trade], np.ndarray]:
+                 time_limit_bars: Optional[int] = None,
+                 highs: Optional[np.ndarray] = None,
+                 lows: Optional[np.ndarray] = None,
+                 atr: Optional[np.ndarray] = None) -> Tuple[List[Trade], np.ndarray]:
         """
         Simulates trading a signal vector with barriers.
         Detailed version returning Trade objects for visualization.
+        
+        If 'atr' is provided, stop_loss_pct and take_profit_pct are interpreted as ATR Multipliers.
+        Otherwise, they are interpreted as raw Percentage of Entry Price.
         """
         # Prepare Result Containers
         trades = []
         equity_curve = np.zeros(self.n_bars)
         equity_curve[0] = self.account_size
         
+        # Data Checks
+        use_atr = atr is not None
+        h_vec = highs if highs is not None else self.prices
+        l_vec = lows if lows is not None else self.prices
+        atr_vec = atr if atr is not None else np.zeros(self.n_bars)
+        
         # State
         current_equity = self.account_size
         position = 0 # Current lots/direction
         entry_price = 0.0
+        entry_atr = 0.0
         trade_start_idx = 0
         current_trade = None
         
         for i in range(1, self.n_bars):
-            price = self.prices[i]
+            price = self.prices[i] # Open/Close depending on setup. Usually Close for MTM, but exec at Open.
+            # Assuming 'prices' passed to __init__ are the execution prices (Open) or Close.
+            # Standard backtest uses Next Open.
+            
             hour = self.hours[i]
             weekday = self.weekdays[i]
             
@@ -279,6 +295,7 @@ class TradeSimulator:
             
             exit_signal = False
             exit_reason = ""
+            barrier_exit_price = 0.0
             
             if position != 0:
                 if force_close:
@@ -287,17 +304,48 @@ class TradeSimulator:
                 elif time_limit_bars and (i - trade_start_idx >= time_limit_bars):
                     exit_signal = True
                     exit_reason = "TIME"
-                elif stop_loss_pct:
-                    pnl_pct = (price - entry_price) / entry_price * np.sign(position)
-                    if pnl_pct <= -stop_loss_pct:
-                        exit_signal = True
-                        exit_reason = "SL"
-                
-                if take_profit_pct and not exit_signal and not force_close:
-                    pnl_pct = (price - entry_price) / entry_price * np.sign(position)
-                    if pnl_pct >= take_profit_pct:
-                        exit_signal = True
-                        exit_reason = "TP"
+                else:
+                    # Barrier Checks (SL/TP)
+                    # Check against PREVIOUS bar High/Low (i-1) to avoid lookahead
+                    # (We are at step i, deciding to exit based on what happened since entry)
+                    # Actually, if we are at step i (Open), we check if price hit SL during i-1.
+                    
+                    h_prev = h_vec[i-1]
+                    l_prev = l_vec[i-1]
+                    
+                    sl_dist = 0.0
+                    tp_dist = 0.0
+                    
+                    if use_atr:
+                        sl_dist = entry_atr * stop_loss_pct
+                        tp_dist = entry_atr * take_profit_pct if take_profit_pct else 0.0
+                    else:
+                        sl_dist = entry_price * stop_loss_pct
+                        tp_dist = entry_price * take_profit_pct if take_profit_pct else 0.0
+
+                    if position > 0:
+                        # Long SL (Low check)
+                        if stop_loss_pct and l_prev <= (entry_price - sl_dist):
+                            exit_signal = True
+                            exit_reason = "SL"
+                            barrier_exit_price = entry_price - sl_dist
+                        # Long TP (High check)
+                        elif take_profit_pct and h_prev >= (entry_price + tp_dist):
+                            exit_signal = True
+                            exit_reason = "TP"
+                            barrier_exit_price = entry_price + tp_dist
+                            
+                    elif position < 0:
+                        # Short SL (High check)
+                        if stop_loss_pct and h_prev >= (entry_price + sl_dist):
+                            exit_signal = True
+                            exit_reason = "SL"
+                            barrier_exit_price = entry_price + sl_dist
+                        # Short TP (Low check)
+                        elif take_profit_pct and l_prev <= (entry_price - tp_dist):
+                            exit_signal = True
+                            exit_reason = "TP"
+                            barrier_exit_price = entry_price - tp_dist
             
             target_pos = signals[i]
             
@@ -326,9 +374,13 @@ class TradeSimulator:
             if target_pos != position:
                 change = target_pos - position
                 
+                # Execution Price
+                # If barrier exit, use barrier price. Else use current bar price (Open)
+                exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else price
+                
                 # Cost Calculation
-                spread_cost = abs(change) * self.lot_size * price * (0.5 * self.spread_pct)
-                raw_comm = abs(change) * self.lot_size * price * self.comm_pct
+                spread_cost = abs(change) * self.lot_size * exec_price * (0.5 * self.spread_pct)
+                raw_comm = abs(change) * self.lot_size * exec_price * self.comm_pct
                 
                 comm = 0.0
                 if abs(change) > 1e-6:
@@ -340,9 +392,9 @@ class TradeSimulator:
                 if position != 0:
                     if current_trade:
                         current_trade.exit_idx = i
-                        current_trade.exit_price = price
+                        current_trade.exit_price = exec_price
                         current_trade.exit_reason = exit_reason if exit_signal else "SIGNAL"
-                        gross = (price - current_trade.entry_price) * current_trade.size * current_trade.direction * self.lot_size
+                        gross = (exec_price - current_trade.entry_price) * current_trade.size * current_trade.direction * self.lot_size
                         current_trade.pnl = gross 
                         trades.append(current_trade)
                         current_trade = None
@@ -352,13 +404,14 @@ class TradeSimulator:
                     size = abs(target_pos)
                     current_trade = Trade(
                         entry_idx=i,
-                        entry_price=price,
+                        entry_price=exec_price,
                         direction=direction,
                         size=size,
-                        events=[{'idx': i, 'action': 'ENTRY', 'price': price, 'size': size}]
+                        events=[{'idx': i, 'action': 'ENTRY', 'price': exec_price, 'size': size}]
                     )
                     trade_start_idx = i
-                    entry_price = price
+                    entry_price = exec_price
+                    entry_atr = atr_vec[i] if use_atr else 0.0
                     
                 position = target_pos
                 
