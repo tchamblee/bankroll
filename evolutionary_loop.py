@@ -212,7 +212,7 @@ class EvolutionaryAlphaFactory:
             start_time = time.time()
             
             # Dynamic Trade Filter (Horizon-Aware Scaling)
-            target_final = max(10, int(config.MIN_TRADES_COEFFICIENT / horizon + 5))
+            target_final = max(config.MIN_TRADES_FOR_METRICS, int(config.MIN_TRADES_COEFFICIENT / horizon + 5))
             scaling_factor = target_final / 10.0
             
             current_min_trades = int(3 * scaling_factor)
@@ -396,7 +396,7 @@ class EvolutionaryAlphaFactory:
                 # 2. Positive Return + High Stability (Conservative/Sniper) -> Pass
                 
                 min_ret_threshold = config.MIN_RETURN_THRESHOLD
-                min_sortino_threshold = 3.0 # Allow low-return strategies if they are very stable
+                min_sortino_threshold = 1.5 # Allow low-return strategies if they are very stable
                 
                 passed_gate = False
                 rejection_reason = []

@@ -38,6 +38,10 @@ class GenomeFactory:
                                'yang_zhang', 'lambda', 'force', 'fdi',
                                'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol']
         
+        # Boost keywords for Physics/Microstructure (Alpha Refinement)
+        self.boost_keywords = ['hurst', 'entropy', 'fdi', 'yang_zhang', 'kyle', 
+                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock']
+        
         self.update_pools()
 
     def update_pools(self):
@@ -57,6 +61,22 @@ class GenomeFactory:
             if f in df.columns:
                 self.feature_stats[f] = {'mean': df[f].mean(), 'std': df[f].std()}
 
+    def _weighted_choice(self, pool):
+        """Selects from pool with bias towards physics/microstructure."""
+        if not pool: return None
+        
+        boosted = [f for f in pool if any(k in f for k in self.boost_keywords)]
+        regular = [f for f in pool if f not in boosted]
+        
+        if not boosted: return random.choice(pool)
+        if not regular: return random.choice(pool)
+            
+        # 60% chance to pick from boosted features
+        if random.random() < 0.60:
+            return random.choice(boosted)
+        else:
+            return random.choice(regular)
+
     def create_gene_from_pool(self, pool):
         if not pool: return self.create_random_gene() # Fallback
         
@@ -64,7 +84,7 @@ class GenomeFactory:
         
         # 30% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
         if rand_val < 0.30:
-            feature = random.choice(pool)
+            feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
             threshold = random.choice([-1.5, -1.25, 1.25, 1.5])
@@ -73,7 +93,7 @@ class GenomeFactory:
 
         # 15% Relational Gene (Context - "Is A > B?")
         elif rand_val < 0.45:
-            feature_left = random.choice(pool)
+            feature_left = self._weighted_choice(pool)
             # Find compatible features (same root)
             # e.g. 'volatility_100' compatible with 'volatility_200'
             root = feature_left.rsplit('_', 1)[0]
@@ -89,7 +109,7 @@ class GenomeFactory:
 
         # 5% Squeeze Gene (Regime Detector - Volatility Compression)
         elif rand_val < 0.50:
-            feature_short = random.choice(pool)
+            feature_short = self._weighted_choice(pool)
             # Squeeze needs compatible long-term feature
             root = feature_short.rsplit('_', 1)[0]
             compatible = [f for f in pool if f.startswith(root) and f != feature_short]
@@ -104,8 +124,8 @@ class GenomeFactory:
         # 10% Correlation Gene (Synergy - "Are A and B moving together?")
         elif rand_val < 0.60:
             # Correlation can be between ANY two features (that's the point)
-            feature_left = random.choice(pool)
-            feature_right = random.choice(pool)
+            feature_left = self._weighted_choice(pool)
+            feature_right = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-0.6, -0.4, 0.4, 0.6])
             window = random.choice(VALID_CORR_WINDOWS)
@@ -113,7 +133,7 @@ class GenomeFactory:
 
         # 5% Flux Gene (Acceleration)
         elif rand_val < 0.65:
-            feature = random.choice(pool)
+            feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
             threshold = random.uniform(-0.1, 0.1) * stats['std']
@@ -122,7 +142,7 @@ class GenomeFactory:
 
         # 5% Efficiency Gene (Path)
         elif rand_val < 0.70:
-            feature = random.choice(pool)
+            feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.uniform(0.3, 0.8)
             window = random.choice(VALID_EFF_WINDOWS)
@@ -132,7 +152,7 @@ class GenomeFactory:
         elif rand_val < 0.75:
             # Divergence needs compatible features (Price vs Oscillator usually, or Price vs Price)
             # Simplified: Random pair is risky. Let's restrict to same root.
-            f1 = random.choice(pool)
+            f1 = self._weighted_choice(pool)
             root = f1.rsplit('_', 1)[0]
             compatible = [f for f in pool if f.startswith(root) and f != f1]
             
@@ -145,7 +165,7 @@ class GenomeFactory:
 
         # 10% Event Gene (Memory - "Did X happen recently?")
         elif rand_val < 0.85:
-            feature = random.choice(pool)
+            feature = self._weighted_choice(pool)
             
             # Make Event Adaptive: Wrap in Z-Score
             # "Did Z-Score(Feature) > 2.0 happen in last 10 bars?"
@@ -160,7 +180,7 @@ class GenomeFactory:
 
         # 5% Cross Gene (Event - "A crossed B")
         elif rand_val < 0.90:
-            feature_left = random.choice(pool)
+            feature_left = self._weighted_choice(pool)
             # Enforce Compatibility
             root = feature_left.rsplit('_', 1)[0]
             compatible = [f for f in pool if f.startswith(root) and f != feature_left]
@@ -175,7 +195,7 @@ class GenomeFactory:
         # 5% Regime Gene (Bounded Metrics)
         elif rand_val < 0.95:
             bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
-            target_feature = random.choice(bounded_pool) if bounded_pool else random.choice(pool)
+            target_feature = self._weighted_choice(bounded_pool) if bounded_pool else self._weighted_choice(pool)
             
             op = random.choice(['>', '<'])
             stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
@@ -185,7 +205,7 @@ class GenomeFactory:
 
         # 3% Extrema Gene (Breakout)
         elif rand_val < 0.98:
-            feature = random.choice(pool)
+            feature = self._weighted_choice(pool)
             mode = random.choice(['max', 'min'])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ExtremaGene(feature, mode, window)
@@ -198,7 +218,7 @@ class GenomeFactory:
                 count = random.randint(2, 6)
                 return ConsecutiveGene(direction, op, count)
             else:
-                feature = random.choice(pool)
+                feature = self._weighted_choice(pool)
                 operator = random.choice(['>', '<'])
                 stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
                 threshold = random.uniform(-0.5, 0.5) * stats['std']
@@ -207,7 +227,7 @@ class GenomeFactory:
 
     def create_random_gene(self):
         # Fallback now uses ZScore instead of Static
-        feature = random.choice(self.features)
+        feature = self._weighted_choice(self.features)
         operator = random.choice(['>', '<'])
         # Lower thresholds to encourage activity (1.5 sigma instead of 2.0)
         threshold = random.choice([-1.5, 1.5, 2.0])
