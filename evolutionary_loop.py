@@ -364,13 +364,11 @@ class EvolutionaryAlphaFactory:
         filtered_data = []
         
         if top_candidates:
-            # 1. Evaluate on all sets using standard ENGINE (Correct Shift)
-            test_res, test_returns = self.backtester.evaluate_population(top_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=10)
+            # 1. Evaluate on Development Sets (Train + Validation) ONLY
             val_res, val_returns = self.backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=10)
             train_res = self.backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=10)
             
             # Create lookup maps
-            test_map = {row['id']: row for _, row in test_res.iterrows()}
             val_map = {row['id']: row for _, row in val_res.iterrows()}
             train_map = {row['id']: row for _, row in train_res.iterrows()}
 
@@ -378,37 +376,56 @@ class EvolutionaryAlphaFactory:
             best_rejected_min_ret = -999.0
             best_rejected_details = ""
 
-            # 2. Strict Filtering Loop
+            # 2. Strict Filtering Loop (Train + Val ONLY)
+            survivor_candidates = []
+            survivor_val_indices = []
+
             for i, s in enumerate(top_candidates):
-                if s.name not in test_map or s.name not in val_map or s.name not in train_map:
+                if s.name not in val_map or s.name not in train_map:
                     continue
                 
                 t_stats = train_map[s.name]
                 v_stats = val_map[s.name]
-                te_stats = test_map[s.name]
                 
                 train_ret = t_stats['total_return']
                 val_ret = v_stats['total_return']
-                test_ret = te_stats['total_return']
                 
                 # --- GATEKEEPING ---
-                thresh = config.MIN_RETURN_THRESHOLD
-                rejection_reason = []
-                if test_ret < thresh: rejection_reason.append(f"Test({test_ret*100:.2f}%)")
-                if train_ret < thresh: rejection_reason.append(f"Train({train_ret*100:.2f}%)")
-                if val_ret < thresh: rejection_reason.append(f"Val({val_ret*100:.2f}%)")
+                # Flexible Filter:
+                # 1. High Return (Aggressive) -> Pass
+                # 2. Positive Return + High Stability (Conservative/Sniper) -> Pass
                 
-                if rejection_reason:
+                min_ret_threshold = config.MIN_RETURN_THRESHOLD
+                min_sortino_threshold = 3.0 # Allow low-return strategies if they are very stable
+                
+                passed_gate = False
+                rejection_reason = []
+
+                # Check 1: Raw Return Threshold
+                if train_ret >= min_ret_threshold and val_ret >= min_ret_threshold:
+                    passed_gate = True
+                
+                # Check 2: Stability Rescue (Sniper Logic)
+                if not passed_gate:
+                    train_sortino = t_stats.get('sortino', 0)
+                    val_sortino = v_stats.get('sortino', 0)
+                    if train_ret > 0 and val_ret > 0 and train_sortino > min_sortino_threshold and val_sortino > min_sortino_threshold:
+                        passed_gate = True
+                        # print(f"    🚑 Rescued Sniper: {s.name} (Ret: {val_ret*100:.2f}% | Sortino: {val_sortino:.2f})")
+
+                if not passed_gate:
+                    if train_ret < min_ret_threshold: rejection_reason.append(f"Train_Ret({train_ret*100:.2f}%)")
+                    if val_ret < min_ret_threshold: rejection_reason.append(f"Val_Ret({val_ret*100:.2f}%)")
+                    
                     # Track closest call
-                    min_ret_here = min(train_ret, val_ret, test_ret)
+                    min_ret_here = min(train_ret, val_ret)
                     if min_ret_here > best_rejected_min_ret:
                         best_rejected_min_ret = min_ret_here
                         best_rejected_name = s.name
-                        best_rejected_details = f"Train: {train_ret*100:.2f}%, Val: {val_ret*100:.2f}%, Test: {test_ret*100:.2f}%"
+                        best_rejected_details = f"Train: {train_ret*100:.2f}%, Val: {val_ret*100:.2f}%"
                     continue
                 
                 # --- SENSITIVITY ANALYSIS (Jitter Test) ---
-                # Ensure strategy isn't overfit to specific parameters (5% noise test)
                 if val_ret > 0:
                     clones = []
                     for _ in range(3):
@@ -420,52 +437,70 @@ class EvolutionaryAlphaFactory:
                         clones.append(clone)
                     
                     try:
-                        # Evaluate clones on Validation set
                         clone_stats = self.backtester.evaluate_population(clones, set_type='validation', return_series=False, time_limit=horizon)
                         if not clone_stats.empty:
                             min_clone_ret = clone_stats['total_return'].min()
-                            # Requirement: Worst case scenario must retain 50% of performance (or strictly positive if margin is thin)
                             jitter_thresh = val_ret * 0.5
                             if min_clone_ret < jitter_thresh:
-                                # print(f"    Rejected {s.name}: Failed Jitter Test (Val: {val_ret:.4f} -> Worst: {min_clone_ret:.4f})")
                                 continue
                     except Exception as e:
                         print(f"Warning: Jitter test error for {s.name}: {e}")
                         continue
 
-                # DSR/PSR Calcs (Only for survivors)
-                val_r_vec = val_returns[:, i]
-                test_r_vec = test_returns[:, i]
-                
-                val_sr = estimated_sharpe_ratio(val_r_vec, config.ANNUALIZATION_FACTOR)
-                dsr_val = deflated_sharpe_ratio(
-                    observed_sr=val_sr, returns=val_r_vec, n_trials=self.total_strategies_evaluated,
-                    var_returns=np.var(val_r_vec), skew_returns=scipy.stats.skew(val_r_vec), kurt_returns=scipy.stats.kurtosis(val_r_vec),
-                    annualization_factor=config.ANNUALIZATION_FACTOR
-                )
-                
-                test_sr = estimated_sharpe_ratio(test_r_vec, config.ANNUALIZATION_FACTOR)
-                psr_test = deflated_sharpe_ratio(
-                    observed_sr=test_sr, returns=test_r_vec, n_trials=1,
-                    var_returns=np.var(test_r_vec), skew_returns=scipy.stats.skew(test_r_vec), kurt_returns=scipy.stats.kurtosis(test_r_vec),
-                    annualization_factor=config.ANNUALIZATION_FACTOR
-                )
-                
-                # Build Data Dict
-                strat_data = s.to_dict()
-                strat_data['test_sortino'] = float(te_stats['sortino'])
-                strat_data['test_return'] = test_ret
-                strat_data['test_trades'] = int(te_stats['trades'])
-                strat_data['train_return'] = train_ret
-                strat_data['val_return'] = val_ret
-                strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
-                strat_data['dsr_val'] = float(dsr_val)
-                strat_data['psr_test'] = float(psr_test)
-                strat_data['training_id'] = self.training_id
-                strat_data['generation'] = getattr(s, 'generation_found', -1)
-                
-                filtered_candidates.append(s)
-                filtered_data.append(strat_data)
+                survivor_candidates.append(s)
+                survivor_val_indices.append(i)
+
+            # 3. Final Evaluation of Survivors (Now we can look at Test for reporting)
+            filtered_candidates = []
+            filtered_data = []
+
+            if survivor_candidates:
+                print(f"    🔍 Evaluating {len(survivor_candidates)} survivors on Test Set...")
+                test_res, test_returns = self.backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=10)
+                test_map = {row['id']: row for _, row in test_res.iterrows()}
+
+                for i, s in enumerate(survivor_candidates):
+                    orig_idx = survivor_val_indices[i]
+                    val_r_vec = val_returns[:, orig_idx]
+                    
+                    # DSR calculation on Validation Set
+                    val_sr = estimated_sharpe_ratio(val_r_vec, config.ANNUALIZATION_FACTOR)
+                    dsr_val = deflated_sharpe_ratio(
+                        observed_sr=val_sr, returns=val_r_vec, n_trials=self.total_strategies_evaluated,
+                        var_returns=np.var(val_r_vec), skew_returns=scipy.stats.skew(val_r_vec), kurt_returns=scipy.stats.kurtosis(val_r_vec),
+                        annualization_factor=config.ANNUALIZATION_FACTOR
+                    )
+
+                    # Test Stats
+                    t_stats = train_map[s.name]
+                    v_stats = val_map[s.name]
+                    te_stats = test_map.get(s.name, {'total_return': 0.0, 'sortino': 0.0, 'trades': 0})
+
+                    test_ret = te_stats['total_return']
+                    test_r_vec = test_returns[:, i]
+                    test_sr = estimated_sharpe_ratio(test_r_vec, config.ANNUALIZATION_FACTOR)
+                    
+                    # PSR calculation on Test Set (Purely for final reporting)
+                    psr_test = deflated_sharpe_ratio(
+                        observed_sr=test_sr, returns=test_r_vec, n_trials=1,
+                        var_returns=np.var(test_r_vec), skew_returns=scipy.stats.skew(test_r_vec), kurt_returns=scipy.stats.kurtosis(test_r_vec),
+                        annualization_factor=config.ANNUALIZATION_FACTOR
+                    )
+
+                    strat_data = s.to_dict()
+                    strat_data['test_sortino'] = float(te_stats['sortino'])
+                    strat_data['test_return'] = test_ret
+                    strat_data['test_trades'] = int(te_stats['trades'])
+                    strat_data['train_return'] = t_stats['total_return']
+                    strat_data['val_return'] = v_stats['total_return']
+                    strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
+                    strat_data['dsr_val'] = float(dsr_val)
+                    strat_data['psr_test'] = float(psr_test)
+                    strat_data['training_id'] = self.training_id
+                    strat_data['generation'] = getattr(s, 'generation_found', -1)
+                    
+                    filtered_candidates.append(s)
+                    filtered_data.append(strat_data)
 
             # --- PORTFOLIO & SAVING ---
             output = filtered_data

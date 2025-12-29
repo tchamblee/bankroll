@@ -17,17 +17,64 @@ from trade_simulator import TradeSimulator
 
 # ... (Previous Helper Functions) ...
 
-def optimize_weighted_portfolio(candidates, backtester):
+import scipy.cluster.hierarchy as sch
+
+def get_ivp(cov):
+    # Inverse Variance Portfolio
+    ivp = 1. / np.diag(cov)
+    ivp /= ivp.sum()
+    return ivp
+
+def get_cluster_var(cov, c_items):
+    # Calculate cluster variance
+    cov_slice = cov.loc[c_items, c_items]
+    w = get_ivp(cov_slice).reshape(-1, 1)
+    c_var = np.dot(np.dot(w.T, cov_slice), w)[0, 0]
+    return c_var
+
+def get_quasi_diag(link):
+    # Sort clustered items by distance
+    link = link.astype(int)
+    sort_ix = pd.Series([link[-1, 0], link[-1, 1]])
+    num_items = link[-1, 3]
+    while sort_ix.max() >= num_items:
+        sort_ix.index = range(0, sort_ix.shape[0] * 2, 2)
+        df0 = sort_ix[sort_ix >= num_items]
+        i = df0.index
+        j = df0.values - num_items
+        sort_ix[i] = link[j, 0]
+        df0 = pd.Series(link[j, 1], index=i + 1)
+        sort_ix = pd.concat([sort_ix, df0]) #.append(df0)
+        sort_ix = sort_ix.sort_index()
+        sort_ix.index = range(sort_ix.shape[0])
+    return sort_ix.tolist()
+
+def get_rec_bisection(cov, sort_ix):
+    # Recursive Bisection Allocation
+    w = pd.Series(1, index=sort_ix)
+    c_items = [sort_ix]
+    while len(c_items) > 0:
+        c_items = [i[j:k] for i in c_items for j, k in ((0, len(i) // 2), (len(i) // 2, len(i))) if len(i) > 1]
+        for i in range(0, len(c_items), 2):
+            c_items0 = c_items[i]
+            c_items1 = c_items[i + 1]
+            c_var0 = get_cluster_var(cov, c_items0)
+            c_var1 = get_cluster_var(cov, c_items1)
+            alpha = 1 - c_var0 / (c_var0 + c_var1)
+            w[c_items0] *= alpha
+            w[c_items1] *= 1 - alpha
+    return w
+
+def optimize_hrp_portfolio(candidates, backtester):
     print("\n" + "="*80)
-    print("⚖️  WEIGHTED PORTFOLIO OPTIMIZATION (Mean-Variance)")
+    print("🌳 HIERARCHICAL RISK PARITY (HRP) OPTIMIZATION")
     print("="*80)
     
     if len(candidates) < 2:
-        print("Not enough candidates for weighted optimization.")
+        print("Not enough candidates for HRP.")
         return
 
     # 1. Generate Returns Matrix (Train + Val)
-    # We need independent returns for each strategy to correlate them
     opt_start = 0
     opt_end = backtester.val_idx
     
@@ -35,7 +82,6 @@ def optimize_weighted_portfolio(candidates, backtester):
     backtester.ensure_context(candidates)
     raw_sig = backtester.generate_signal_matrix(candidates)
     shifted_sig = np.vstack([np.zeros((1, len(candidates)), dtype=raw_sig.dtype), raw_sig[:-1]])
-    
     opt_sig = shifted_sig[opt_start:opt_end]
     
     prices = backtester.open_vec[opt_start:opt_end].astype(np.float64)
@@ -44,79 +90,88 @@ def optimize_weighted_portfolio(candidates, backtester):
     lows = backtester.low_vec[opt_start:opt_end].astype(np.float64)
     atr = backtester.atr_vec[opt_start:opt_end].astype(np.float64)
 
-    print("  Simulating individual streams...")
+    print("  Simulating individual streams for Correlation...")
     rets_matrix, _ = backtester.run_simulation_batch(
         opt_sig, candidates, prices, times, 
-        time_limit=config.DEFAULT_TIME_LIMIT, # Use default or per-strategy? Batch handles per-strategy in params
+        time_limit=config.DEFAULT_TIME_LIMIT, 
         highs=highs, lows=lows, atr=atr
     )
     
-    # 2. Optimization Objective
-    # Maximize Sharpe = Mean / Std
-    n_assets = len(candidates)
+    # Convert to DataFrame
+    rets_df = pd.DataFrame(rets_matrix, columns=[c.name for c in candidates])
     
-    def objective(weights):
-        portfolio_rets = np.dot(rets_matrix, weights)
-        mean = np.mean(portfolio_rets)
-        std = np.std(portfolio_rets) + 1e-9
-        sharpe = mean / std
-        return -sharpe # Minimize neg sharpe
+    # 2. HRP Steps
+    # a. Correlation & Distance
+    corr = rets_df.corr().fillna(0)
+    dist = np.sqrt((1 - corr) / 2)
+    
+    # b. Linkage (Clustering)
+    link = sch.linkage(dist, 'single')
+    
+    # c. Quasi-Diagonalization
+    sort_ix = get_quasi_diag(link)
+    sort_ix = list(map(int, sort_ix)) # Ensure ints
+    
+    # d. Recursive Bisection
+    # Need Covariance for allocation
+    cov = rets_df.cov()
+    # Map sort_ix (indices) to column names for the function if needed, 
+    # but our helper uses integer indices if cov indices are integers?
+    # Our helper expects cov to be a DataFrame with indices matching sort_ix values?
+    # Actually, get_cluster_var does `cov.loc[c_items, c_items]`.
+    # So if sort_ix contains integers [0, 5, 2...], cov must have integer index/columns.
+    # rets_df.cov() produces string index if rets_df has string columns.
+    # Let's reset cov to integer index for simplicity
+    cov_int = cov.reset_index(drop=True)
+    cov_int.columns = range(len(cov_int.columns))
+    
+    hrp_weights = get_rec_bisection(cov_int, sort_ix)
+    
+    # Re-map weights to candidates
+    # hrp_weights is a Series with index matching sort_ix (integers)
+    # We just need to align them.
+    weights = hrp_weights.sort_index().values
+    
+    # Filter low weights
+    final_portfolio = []
+    for i, w in enumerate(weights):
+        if w > 0.005: # 0.5% min weight
+            s_dict = candidates[i].to_dict()
+            s_dict['weight'] = float(w)
+            s_dict['horizon'] = candidates[i].horizon
+            final_portfolio.append(s_dict)
+    
+    final_portfolio.sort(key=lambda x: x['weight'], reverse=True)
+    
+    # OOS Performance check
+    oos_start = backtester.val_idx
+    oos_sig = shifted_sig[oos_start:]
+    oos_prices = backtester.open_vec[oos_start:].astype(np.float64)
+    oos_times = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
+    oos_highs = backtester.high_vec[oos_start:].astype(np.float64)
+    oos_lows = backtester.low_vec[oos_start:].astype(np.float64)
+    oos_atr = backtester.atr_vec[oos_start:].astype(np.float64)
 
-    # Constraints: Sum weights = 1, 0 <= w <= 0.4 (Diversification constraint)
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1.0})
-    bounds = tuple((0.0, 0.4) for _ in range(n_assets))
+    oos_rets_matrix, _ = backtester.run_simulation_batch(
+        oos_sig, candidates, oos_prices, oos_times, 
+        highs=oos_highs, lows=oos_lows, atr=oos_atr
+    )
     
-    # Initial Guess (Equal Weight)
-    init_weights = np.array([1.0/n_assets] * n_assets)
+    oos_port_rets = np.dot(oos_rets_matrix, weights)
+    oos_profit = np.sum(oos_port_rets) * config.ACCOUNT_SIZE
+    oos_sortino = (np.mean(oos_port_rets) / (np.std(np.minimum(oos_port_rets, 0)) + 1e-9)) * np.sqrt(config.ANNUALIZATION_FACTOR)
     
-    print("  Optimizing weights...")
-    result = minimize(objective, init_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+    print(f"\n🏆 HRP PORTFOLIO RESULT")
+    print(f"  Strategies: {len(final_portfolio)}")
+    print(f"  OOS Profit: ${oos_profit:,.2f}")
+    print(f"  OOS Sortino: {oos_sortino:.2f}")
     
-    if result.success:
-        weights = result.x
-        # Filter low weights
-        final_portfolio = []
-        for i, w in enumerate(weights):
-            if w > 0.01:
-                s_dict = candidates[i].to_dict()
-                s_dict['weight'] = float(w)
-                s_dict['horizon'] = candidates[i].horizon
-                final_portfolio.append(s_dict)
-        
-        final_portfolio.sort(key=lambda x: x['weight'], reverse=True)
-        
-        # OOS Performance check
-        oos_start = backtester.val_idx
-        oos_sig = shifted_sig[oos_start:]
-        oos_prices = backtester.open_vec[oos_start:].astype(np.float64)
-        oos_times = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
-        oos_highs = backtester.high_vec[oos_start:].astype(np.float64)
-        oos_lows = backtester.low_vec[oos_start:].astype(np.float64)
-        oos_atr = backtester.atr_vec[oos_start:].astype(np.float64)
-
-        oos_rets_matrix, _ = backtester.run_simulation_batch(
-            oos_sig, candidates, oos_prices, oos_times, 
-            highs=oos_highs, lows=oos_lows, atr=oos_atr
-        )
-        
-        oos_port_rets = np.dot(oos_rets_matrix, weights)
-        oos_profit = np.sum(oos_port_rets) * config.ACCOUNT_SIZE
-        oos_sortino = (np.mean(oos_port_rets) / (np.std(np.minimum(oos_port_rets, 0)) + 1e-9)) * np.sqrt(config.ANNUALIZATION_FACTOR)
-        
-        print(f"\n🏆 WEIGHTED PORTFOLIO RESULT")
-        print(f"  Strategies: {len(final_portfolio)}")
-        print(f"  OOS Profit: ${oos_profit:,.2f}")
-        print(f"  OOS Sortino: {oos_sortino:.2f}")
-        
-        out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "weighted_portfolio.json")
-        with open(out_path, 'w') as f:
-            json.dump(final_portfolio, f, indent=4)
-        print(f"💾 Saved to {out_path}")
-        
-        return final_portfolio
-    else:
-        print("Optimization failed.")
-        return []
+    out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "hrp_portfolio.json")
+    with open(out_path, 'w') as f:
+        json.dump(final_portfolio, f, indent=4)
+    print(f"💾 Saved to {out_path}")
+    
+    return final_portfolio
 
 def run_mutex_backtest():
     # 1. Setup
@@ -216,10 +271,5 @@ def run_mutex_backtest():
         plt.savefig(out_path)
         print(f"📸 Saved Performance Chart to {out_path}")
     
-    # 4. Optimize Weighted Portfolio (New Opportunity)
-    # Use top candidates (already loaded and sorted)
-    # Limiting to top 20 to keep optimization fast
-    optimize_weighted_portfolio(candidates[:20], backtester)
-
-if __name__ == "__main__":
-    run_mutex_backtest()
+    # 4. Optimize HRP Portfolio (Robust)
+    optimize_hrp_portfolio(candidates[:100], backtester)
