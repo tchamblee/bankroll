@@ -81,7 +81,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             downside = np.std(np.minimum(rets, 0)) + 1e-9
             sortino = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
             
-            if sortino > 3.0 and profit > best_profit:
+            if sortino > 1.0 and profit > best_profit:
                 best_profit = profit
                 best_sortino = sortino
                 best_combo = [top_candidates[i] for i in idxs]
