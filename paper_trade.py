@@ -303,6 +303,9 @@ class ExecutionEngine:
         self.cooldowns = np.zeros(len(strategies), dtype=int)
         self.lot_size = cfg.STANDARD_LOT_SIZE
         
+        self.balance = cfg.ACCOUNT_SIZE
+        self.realized_pnl = 0.0
+        
         # Load State
         self.load_state()
         
@@ -315,11 +318,14 @@ class ExecutionEngine:
                     self.entry_price = state.get('entry_price', 0.0)
                     self.active_strat_idx = state.get('active_strat_idx', -1)
                     
+                    self.balance = state.get('balance', cfg.ACCOUNT_SIZE)
+                    self.realized_pnl = state.get('realized_pnl', 0.0)
+                    
                     saved_cool = state.get('cooldowns', [])
                     if len(saved_cool) == len(self.cooldowns):
                         self.cooldowns = np.array(saved_cool, dtype=int)
                         
-                logger.info(f"💾 Restored State: Pos={self.position} @ {self.entry_price:.5f} (Strat {self.active_strat_idx})")
+                logger.info(f"💾 Restored State: Pos={self.position} @ {self.entry_price:.5f} (Strat {self.active_strat_idx}) | Bal=${self.balance:.0f}")
             except Exception as e:
                 logger.error(f"❌ Failed to load state: {e}")
 
@@ -330,6 +336,8 @@ class ExecutionEngine:
                 'entry_price': float(self.entry_price),
                 'active_strat_idx': int(self.active_strat_idx),
                 'cooldowns': self.cooldowns.tolist(),
+                'balance': float(self.balance),
+                'realized_pnl': float(self.realized_pnl),
                 'updated_at': datetime.now(timezone.utc).isoformat()
             }
             # Atomic Write
@@ -339,6 +347,13 @@ class ExecutionEngine:
             shutil.move(temp_name, LIVE_STATE_FILE)
         except Exception as e:
             logger.error(f"❌ Failed to save state: {e}")
+
+    def calculate_commission(self, price, lots):
+        # IBKR Tiered/Fixed approx: 0.2 bps or min $2.00
+        # Value = Price * (Lots * StandardLotSize)
+        value = price * abs(lots) * cfg.STANDARD_LOT_SIZE
+        comm = value * (cfg.COST_BPS / 10000.0)
+        return max(cfg.MIN_COMMISSION, comm)
 
     async def check_intraday_exits(self, current_price):
         if self.position == 0 or self.active_strat_idx == -1: return
@@ -358,6 +373,18 @@ class ExecutionEngine:
             
         if exit_signal:
             logger.info(f"📝 VIRTUAL EXIT: {reason} @ {current_price:.5f}")
+            
+            # --- PnL Calculation ---
+            raw_pnl = (current_price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
+            comm = self.calculate_commission(self.entry_price, self.position) + \
+                   self.calculate_commission(current_price, self.position)
+            net_pnl = raw_pnl - comm
+            
+            self.balance += net_pnl
+            self.realized_pnl += net_pnl
+            logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            # -----------------------
+
             # Capture index BEFORE resetting
             idx_to_cool = self.active_strat_idx
             
@@ -384,6 +411,18 @@ class ExecutionEngine:
         
         if self.position != 0:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
+            
+            # --- PnL Calculation ---
+            raw_pnl = (price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
+            comm = self.calculate_commission(self.entry_price, self.position) + \
+                   self.calculate_commission(price, self.position)
+            net_pnl = raw_pnl - comm
+            
+            self.balance += net_pnl
+            self.realized_pnl += net_pnl
+            logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            # -----------------------
+
             self.position = 0
             state_changed = True
             
@@ -503,10 +542,15 @@ class PaperTradeApp:
         context = {}
         for key in self.existing_keys:
             try:
-                context[key] = np.load(os.path.join(self.temp_dir, f"{key}.npy"))
+                arr = np.load(os.path.join(self.temp_dir, f"{key}.npy"))
+                if len(arr) == 0:
+                    logger.error(f"⚠️ FOUND EMPTY FEATURE: {key} shape={arr.shape}")
+                context[key] = arr
             except: pass
             
         context['__len__'] = len(full_df)
+        if context['__len__'] > 0 and any(len(v) == 0 for v in context.values() if isinstance(v, np.ndarray)):
+             logger.error(f"CRITICAL: Context has {context['__len__']} rows but contains empty features!")
             
         atr = full_df['atr'].iloc[-1] if 'atr' in full_df.columns else full_df['close'].iloc[-1]*0.001
 

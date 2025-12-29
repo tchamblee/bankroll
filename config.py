@@ -58,7 +58,7 @@ STOP_LOSS_OPTIONS = [1.0, 1.5, 2.0, 2.5, 3.0]
 TAKE_PROFIT_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0]
 
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
-MIN_TRADES_FOR_METRICS = 30
+MIN_TRADES_FOR_METRICS = 50
 MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
 MIN_COMMISSION = 2.0

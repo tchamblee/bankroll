@@ -201,6 +201,50 @@ class GeneTranslator:
 
         return "\n".join(narrative)
 
+def get_avg_sortino(c):
+    """Calculates the average Sortino ratio across Train/Val/Test."""
+    def get_sortino(prefix):
+        stats = c.get(f'{prefix}_stats', {})
+        if stats:
+            return stats.get('sortino', 0)
+        
+        sort = c.get(f'{prefix}_sortino', 0)
+        if prefix == 'test' and sort == 0:
+             sort = c.get('test_sortino', 0)
+        return sort
+
+    t_s = get_sortino('train')
+    v_s = get_sortino('val')
+    te_s = get_sortino('test')
+    
+    if te_s == 0:
+        m = c.get('metrics', {})
+        te_s = m.get('sortino_oos', 0)
+
+    return (t_s + v_s + te_s) / 3
+
+def get_min_sortino(c):
+    """Calculates the minimum Sortino ratio across Train/Val/Test."""
+    def get_sortino(prefix):
+        stats = c.get(f'{prefix}_stats', {})
+        if stats:
+            return stats.get('sortino', 0)
+        
+        sort = c.get(f'{prefix}_sortino', 0)
+        if prefix == 'test' and sort == 0:
+             sort = c.get('test_sortino', 0)
+        return sort
+
+    t_s = get_sortino('train')
+    v_s = get_sortino('val')
+    te_s = get_sortino('test')
+    
+    if te_s == 0:
+        m = c.get('metrics', {})
+        te_s = m.get('sortino_oos', 0)
+
+    return min(t_s, v_s, te_s)
+
 def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
     """Prints a standardized table of strategy candidates."""
     if not candidates:
@@ -209,7 +253,7 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
 
     print(f"\n📋 {title} ({len(candidates)} strategies)")
     # Headers
-    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
+    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Avg S':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
     print(header)
     print("-" * len(header))
     
@@ -246,6 +290,11 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
             te_r = m.get('robust_return', 0) * 100
             te_s = m.get('sortino_oos', 0)
 
-        row = f"{name[:50]:<50} | {horizon:<3} | {te_tr:<4} | {t_s:5.2f} | {v_s:5.2f} | {te_s:5.2f} | {t_r:5.2f}% | {v_r:5.2f}% | {te_r:5.2f}%"
+        avg_s = get_avg_sortino(c)
+
+        row = f"{name[:50]:<50} | {horizon:<3} | {te_tr:<4} | {t_s:5.2f} | {v_s:5.2f} | {te_s:5.2f} | {avg_s:5.2f} | {t_r:5.2f}% | {v_r:5.2f}% | {te_r:5.2f}%"
         print(row)
+        
+        if 'warning' in c:
+            print(f"   ⚠️  {c['warning']}")
     print("-" * len(header))

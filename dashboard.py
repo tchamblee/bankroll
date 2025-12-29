@@ -146,6 +146,16 @@ if st.sidebar.button("Manual Refresh"):
 st.sidebar.divider()
 st.sidebar.markdown("### System Status")
 
+# --- RESET DATA ---
+if st.sidebar.button("⚠️ RESET DATA", type="primary"):
+    if os.path.exists(STATE_FILE):
+        os.remove(STATE_FILE)
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "w") as f: f.write("")
+    st.toast("State and Logs Cleared!", icon="🗑️")
+    time.sleep(1)
+    st.rerun()
+
 # --- HEALTH CHECK (SIDEBAR) ---
 state = load_state()
 is_alive = False
@@ -170,12 +180,14 @@ else:
 if view == "Cockpit":
     # --- METRICS ROW ---
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     if state:
         pos = state.get("position", 0)
         entry = state.get("entry_price", 0.0)
         strat_idx = state.get("active_strat_idx", -1)
+        balance = state.get("balance", 60000.0)
+        realized = state.get("realized_pnl", 0.0)
         
         # Calculate Unrealized PnL
         bars = load_bars(1)
@@ -189,18 +201,24 @@ if view == "Cockpit":
                 pnl = (entry - current_price) * abs(pos) * 100000
 
         with col1:
-            st.metric("Position", f"{pos} Lots", delta_color="off")
+            st.metric("Balance", f"${balance:,.0f}")
         with col2:
-            st.metric("Entry Price", f"{entry:.5f}", delta=f"{current_price - entry:.5f}" if pos > 0 else f"{entry - current_price:.5f}")
+            st.metric("Realized PnL", f"${realized:,.2f}", delta=realized, delta_color="normal")
         with col3:
-            st.metric("Unrealized PnL (Est)", f"${pnl:.2f}", delta_color="normal")
+            st.metric("Position", f"{pos} Lots", delta_color="off")
         with col4:
-            st.metric("Active Strategy", f"Index {strat_idx}")
+            st.metric("Entry Price", f"{entry:.5f}", delta=f"{current_price - entry:.5f}" if pos > 0 else f"{entry - current_price:.5f}")
+        with col5:
+            st.metric("Unrealized PnL", f"${pnl:.2f}", delta_color="normal")
+        with col6:
+            st.metric("Active Strat", f"#{strat_idx}")
     else:
-        col1.metric("Position", "OFFLINE")
-        col2.metric("Entry Price", "---")
-        col3.metric("Unrealized PnL", "---")
-        col4.metric("Active Strategy", "---")
+        col1.metric("Balance", "---")
+        col2.metric("Realized PnL", "---")
+        col3.metric("Position", "OFFLINE")
+        col4.metric("Entry Price", "---")
+        col5.metric("Unrealized PnL", "---")
+        col6.metric("Active Strat", "---")
 
     st.divider()
 

@@ -94,8 +94,8 @@ class EvolutionaryAlphaFactory:
         for seed in seeds:
             if len(self.population) >= self.pop_size: break
             
-            # Inject Mutants (e.g., 5 per seed) - No Original
-            for _ in range(5):
+            # Inject Mutants (e.g., 20 per seed) - No Original
+            for _ in range(20):
                 if len(self.population) >= self.pop_size: break
                 
                 child = Strategy(name=f"Mutant_{seed.name}_{random.randint(10,99)}")

@@ -57,8 +57,8 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         return
 
     # 1. Evaluate on Development Sets (Train + Validation) ONLY
-    val_res, val_returns = backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=10)
-    train_res = backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=10)
+    val_res, val_returns = backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
+    train_res = backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
     
     # Create lookup maps
     val_map = {row['id']: row for _, row in val_res.iterrows()}
@@ -145,7 +145,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         print(f"    🔍 Optimizing & Evaluating {len(survivor_candidates)} survivors on Test Set...")
         
         # Initial Test Eval (to get baseline stats and return vectors for DSR)
-        test_res, test_returns = backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=10)
+        test_res, test_returns = backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
         test_map = {row['id']: row for _, row in test_res.iterrows()}
 
         for i, s in enumerate(survivor_candidates):
@@ -202,7 +202,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 print(f"       ⚠️ Optimization skipped for {s.name}: {e}")
 
             # --- FINAL GATE: Test Performance Check ---
-            if final_test_ret <= 0 or final_test_sortino < 1.5:
+            if final_test_ret <= 0 or final_test_sortino < 1.5 or final_test_trades < config.MIN_TRADES_FOR_METRICS:
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)
@@ -293,14 +293,92 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             with open(inbox_path, "r") as f: inbox_data = json.load(f)
         except: pass
     
-    new_inbox_count = 0
-    for s_data in output:
-        if not any(x['name'] == s_data['name'] for x in inbox_data):
-                s_data['horizon'] = horizon 
-                inbox_data.append(s_data)
-                new_inbox_count += 1
+    # Filter Inbox for SAME HORIZON to check correlation
+    # We only care about redundancy within the same timeframe
+    existing_inbox_objs = []
+    existing_inbox_names = set()
     
-    if new_inbox_count > 0:
+    for d in inbox_data:
+        h = d.get('horizon', None)
+        if h == horizon:
+            try:
+                s = Strategy.from_dict(d)
+                s.horizon = h
+                existing_inbox_objs.append(s)
+                existing_inbox_names.add(s.name)
+            except: pass
+
+    # Prepare New Candidates (filtered_candidates matches output list index-wise)
+    # We need to simulate both Existing and New to get aligned return vectors
+    
+    candidates_to_add = []
+    
+    if not output:
+        print("No candidates to add.")
+    else:
+        print(f"    🔍 Checking correlations against {len(existing_inbox_objs)} existing H{horizon} inbox strategies...")
+        
+        # Combine: [Existing... , New...]
+        combined_sim = existing_inbox_objs + filtered_candidates
+        
+        # Use Validation Set for Correlation (Fast & Representative)
+        _, ret_matrix = backtester.evaluate_population(combined_sim, set_type='validation', return_series=True, time_limit=horizon)
+        
+        # Handle case where evaluation returns None or empty
+        if ret_matrix is None or ret_matrix.shape[1] != len(combined_sim):
+            print("    ⚠️  Correlation check failed (Simulation Error). Adding all unique names.")
+            # Fallback to name check only
+            for s_data in output:
+                candidates_to_add.append(s_data)
+        else:
+            # Calculate Correlation Matrix
+            df_rets = pd.DataFrame(ret_matrix)
+            # fillna(0) to prevent errors with flatline strategies
+            df_rets = df_rets.fillna(0)
+            corr_matrix = df_rets.corr().values
+            
+            n_existing = len(existing_inbox_objs)
+            n_new = len(filtered_candidates)
+            
+            # Indices of accepted strategies (starts with Existing)
+            accepted_indices = list(range(n_existing))
+            
+            added_count = 0
+            
+            for i in range(n_new):
+                full_idx = n_existing + i
+                new_strat_data = output[i]
+                name = new_strat_data['name']
+                
+                # 1. Name Duplication Check
+                if any(x['name'] == name for x in inbox_data):
+                    continue
+                    
+                # 2. Correlation Check
+                is_correlated = False
+                if accepted_indices:
+                    # Check against ALL currently accepted (Existing + Accepted New)
+                    corrs = corr_matrix[full_idx, accepted_indices]
+                    # Handle NaNs in correlation (e.g. if variance is 0)
+                    corrs = np.nan_to_num(corrs, nan=0.0)
+                    max_corr = np.max(corrs) if len(corrs) > 0 else 0.0
+                    
+                    if max_corr > 0.75:
+                        print(f"      🗑️ Rejected {name}: High Correlation ({max_corr:.2f})")
+                        is_correlated = True
+                
+                if not is_correlated:
+                    # Accept
+                    new_strat_data['horizon'] = horizon 
+                    candidates_to_add.append(new_strat_data)
+                    accepted_indices.append(full_idx)
+                    added_count += 1
+    
+    # Merge and Save
+    if candidates_to_add:
+        inbox_data.extend(candidates_to_add)
         with open(inbox_path, "w") as f: json.dump(inbox_data, f, indent=4)
-        print(f"📦 Added {new_inbox_count} new strategies to Inbox: {inbox_path}")
+        print(f"📦 Added {len(candidates_to_add)} new UNCORRELATED strategies to Inbox: {inbox_path}")
         play_success_sound()
+    else:
+        print("📦 No new strategies added (all duplicates or correlated).")
