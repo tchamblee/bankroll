@@ -11,7 +11,7 @@ def http_get(url: str) -> Optional[bytes]:
     try:
         resp = requests.get(url, timeout=HTTP_TIMEOUT)
         if resp.status_code == 404:
-            logger.info("HTTP 404: %s", url)
+            logger.debug("HTTP 404: %s", url)
             return None
         resp.raise_for_status()
         return resp.content

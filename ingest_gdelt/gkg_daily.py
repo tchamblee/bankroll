@@ -139,7 +139,7 @@ def ensure_gkg_recent():
 
         df = download_gkg_daily(day)
         if df is None or df.is_empty():
-            logger.info("[GKG %s] No data ingested.", ymd)
+            logger.debug("[GKG %s] No data ingested.", ymd)
             continue
 
         df.write_parquet(out_path)
