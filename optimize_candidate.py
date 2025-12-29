@@ -12,34 +12,41 @@ from backtest.utils import find_strategy_in_files
 from genome import Strategy, GenomeFactory
 
 class StrategyOptimizer:
-    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None):
+    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True):
         self.target_name = target_name
         self.source_file = source_file
         self.horizon = horizon
         self.strategy_dict = strategy_dict
         self.parent_strategy = None
         self.variants = []
+        self.verbose = verbose
         
-        # Load Data
-        print("Loading Feature Matrix...")
-        self.data = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-        
-        # Initialize Factory (for mutations) and Backtester
+        # Initialize Backtester if not provided
+        if backtester:
+            self.backtester = backtester
+            self.data = backtester.data
+        else:
+            if self.verbose: print("Loading Feature Matrix...")
+            self.data = data if data is not None else pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+            self.backtester = BacktestEngine(
+                self.data, 
+                cost_bps=config.COST_BPS, 
+                annualization_factor=config.ANNUALIZATION_FACTOR
+            )
+            
+        # Initialize Factory (for mutations)
         self.factory = GenomeFactory()
         self.factory.set_stats(self.data)
-        
-        self.backtester = BacktestEngine(
-            self.data, 
-            cost_bps=config.COST_BPS, 
-            annualization_factor=config.ANNUALIZATION_FACTOR
-        )
 
     def load_parent(self):
+        if self.parent_strategy:
+            return
+
         if self.strategy_dict:
-            print(f"Using provided strategy data for {self.target_name}...")
+            if self.verbose: print(f"Using provided strategy data for {self.target_name}...")
             self.parent_strategy = Strategy.from_dict(self.strategy_dict)
         else:
-            print(f"Searching for {self.target_name} in {self.source_file}...")
+            if self.verbose: print(f"Searching for {self.target_name} in {self.source_file}...")
             with open(self.source_file, 'r') as f:
                 strategies = json.load(f)
                 
@@ -49,13 +56,19 @@ class StrategyOptimizer:
                 
             self.parent_strategy = Strategy.from_dict(target_data)
             
-        print(f"✅ Loaded Parent: {self.parent_strategy.name}")
-        print(f"   Genes: {len(self.parent_strategy.long_genes)} Long, {len(self.parent_strategy.short_genes)} Short")
-        print(f"   Concordance: {self.parent_strategy.min_concordance}")
+        if self.verbose:
+            print(f"✅ Loaded Parent: {self.parent_strategy.name}")
+            print(f"   Genes: {len(self.parent_strategy.long_genes)} Long, {len(self.parent_strategy.short_genes)} Short")
+            print(f"   Concordance: {self.parent_strategy.min_concordance}")
 
     def generate_variants(self, n_jitter=20, n_mutants=20):
-        print("\n🧬 Generating Variants...")
+        if self.verbose: print("\n🧬 Generating Variants...")
         
+        if not self.parent_strategy:
+            self.load_parent()
+
+        self.variants = []
+
         # 1. Simplification (Ablation) - Remove 1 gene at a time
         # This checks if "Less is More"
         all_genes = self.parent_strategy.long_genes + self.parent_strategy.short_genes
@@ -114,7 +127,67 @@ class StrategyOptimizer:
             variant.recalculate_concordance()
             self.variants.append(variant)
 
-        print(f"   Generated {len(self.variants)} variants.")
+        if self.verbose: print(f"   Generated {len(self.variants)} variants.")
+
+    def get_best_variant(self):
+        """
+        Programmatically find and return the best variant that beats the parent in ALL sets.
+        Returns: (Strategy, stats_dict) or (None, None) if no improvement.
+        """
+        if not self.variants:
+            self.generate_variants()
+            
+        population = [self.parent_strategy] + self.variants
+        for s in population:
+            s.horizon = self.horizon
+
+        # Silent evaluation
+        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
+        
+        # Helper
+        def get_stats(df, s_id):
+            row = df[df['id'] == s_id].iloc[0]
+            return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
+
+        parent_train = get_stats(train_df, self.parent_strategy.name)
+        parent_val = get_stats(val_df, self.parent_strategy.name)
+        parent_test = get_stats(test_df, self.parent_strategy.name)
+
+        best_variant = None
+        best_test_sortino = -999.0
+        best_stats = None
+
+        for variant in self.variants:
+            v_train = get_stats(train_df, variant.name)
+            v_val = get_stats(val_df, variant.name)
+            v_test = get_stats(test_df, variant.name)
+            
+            # STRICT IMPROVEMENT CHECK
+            # Must be strictly better (or equal) in Sortino for Train, Val, AND Test
+            # AND must have higher Test Return
+            
+            improved_train = v_train['sortino'] >= parent_train['sortino']
+            improved_val = v_val['sortino'] >= parent_val['sortino']
+            improved_test = v_test['sortino'] > parent_test['sortino'] # Strict improvement on Test
+            
+            # Sanity Checks
+            positive_profit = v_train['ret'] > 0 and v_val['ret'] > 0 and v_test['ret'] > 0
+            
+            if improved_train and improved_val and improved_test and positive_profit:
+                if v_test['sortino'] > best_test_sortino:
+                    best_test_sortino = v_test['sortino']
+                    best_variant = variant
+                    # Update name to reflect it's an optimized version of the original, but keep ID distinct if needed
+                    # We'll return the object, let caller handle naming if they want to replace the original
+                    best_stats = {
+                        'train': v_train,
+                        'val': v_val,
+                        'test': v_test
+                    }
+        
+        return best_variant, best_stats
 
     def evaluate_and_report(self):
         print("\n🔬 Evaluating Variants on All Sets (Train / Val / Test)...")

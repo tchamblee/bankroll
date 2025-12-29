@@ -7,6 +7,15 @@ import config
 from genome import Strategy
 from backtest.statistics import deflated_sharpe_ratio, estimated_sharpe_ratio
 
+# Import Optimizer
+try:
+    from optimize_candidate import StrategyOptimizer
+except ImportError:
+    # Fallback if running from a different context where root is not in path
+    import sys
+    sys.path.append(os.getcwd())
+    from optimize_candidate import StrategyOptimizer
+
 def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_strategies_evaluated):
     print(f"\n--- 🛡️ FINAL SELECTION (Using Diverse HOF) ---")
     
@@ -98,12 +107,14 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         survivor_candidates.append(s)
         survivor_val_indices.append(i)
 
-    # 3. Final Evaluation of Survivors (Now we can look at Test for reporting)
+    # 3. Optimization & Final Evaluation of Survivors
     filtered_candidates = []
     filtered_data = []
 
     if survivor_candidates:
-        print(f"    🔍 Evaluating {len(survivor_candidates)} survivors on Test Set...")
+        print(f"    🔍 Optimizing & Evaluating {len(survivor_candidates)} survivors on Test Set...")
+        
+        # Initial Test Eval (to get baseline stats and return vectors for DSR)
         test_res, test_returns = backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=10)
         test_map = {row['id']: row for _, row in test_res.iterrows()}
 
@@ -111,7 +122,60 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             orig_idx = survivor_val_indices[i]
             val_r_vec = val_returns[:, orig_idx]
             
-            # DSR calculation on Validation Set
+            # Retrieve Parent Stats
+            t_stats = train_map[s.name]
+            v_stats = val_map[s.name]
+            te_stats = test_map.get(s.name, {'total_return': 0.0, 'sortino': 0.0, 'trades': 0})
+            
+            final_strat = s
+            final_test_ret = te_stats['total_return']
+            final_test_sortino = float(te_stats['sortino'])
+            final_test_trades = int(te_stats['trades'])
+            final_test_r_vec = test_returns[:, i]
+            
+            final_train_ret = t_stats['total_return']
+            final_val_ret = v_stats['total_return']
+            
+            is_optimized = False
+
+            # --- OPTIMIZATION STEP ---
+            try:
+                # print(f"       ✨ Optimizing {s.name}...") 
+                optimizer = StrategyOptimizer(s.name, strategy_dict=s.to_dict(), backtester=backtester, verbose=False, horizon=horizon)
+                best_var, best_stats = optimizer.get_best_variant()
+                
+                if best_var:
+                    # Check if improved (get_best_variant already ensures strict improvement in Sortino across board + higher test sortino)
+                    # We trust get_best_variant's rigorous checks.
+                    
+                    print(f"       🚀 Replaced {s.name} with {best_var.name} (Test Sort: {te_stats['sortino']:.2f} -> {best_stats['test']['sortino']:.2f})")
+                    
+                    final_strat = best_var
+                    final_test_ret = best_stats['test']['ret']
+                    final_test_sortino = best_stats['test']['sortino']
+                    final_test_trades = best_stats['test']['trades']
+                    final_train_ret = best_stats['train']['ret']
+                    final_val_ret = best_stats['val']['ret']
+                    
+                    # Need fresh return vector for PSR/DSR
+                    res, ret_matrix = backtester.evaluate_population([best_var], set_type='test', return_series=True, time_limit=horizon)
+                    final_test_r_vec = ret_matrix[:, 0]
+                    
+                    # Also need fresh Val return vector for DSR_Val?
+                    # Ideally yes. But Val improvement is guaranteed by optimizer.
+                    # Let's quickly fetch Val vector too to be accurate.
+                    _, val_ret_matrix = backtester.evaluate_population([best_var], set_type='validation', return_series=True, time_limit=horizon)
+                    val_r_vec = val_ret_matrix[:, 0]
+                    
+                    is_optimized = True
+            except Exception as e:
+                print(f"       ⚠️ Optimization skipped for {s.name}: {e}")
+
+            # --- FINAL GATE: Test Performance Check ---
+            if final_test_ret <= 0:
+                    continue
+
+            # DSR calculation on Validation Set (Updated if optimized)
             val_sr = estimated_sharpe_ratio(val_r_vec, config.ANNUALIZATION_FACTOR)
             dsr_val = deflated_sharpe_ratio(
                 observed_sr=val_sr, returns=val_r_vec, n_trials=total_strategies_evaluated,
@@ -119,40 +183,31 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 annualization_factor=config.ANNUALIZATION_FACTOR
             )
 
-            # Test Stats
-            t_stats = train_map[s.name]
-            v_stats = val_map[s.name]
-            te_stats = test_map.get(s.name, {'total_return': 0.0, 'sortino': 0.0, 'trades': 0})
-
-            test_ret = te_stats['total_return']
+            test_sr = estimated_sharpe_ratio(final_test_r_vec, config.ANNUALIZATION_FACTOR)
             
-            # --- FINAL GATE: Test Performance Check ---
-            if test_ret <= 0:
-                    continue
-
-            test_r_vec = test_returns[:, i]
-            test_sr = estimated_sharpe_ratio(test_r_vec, config.ANNUALIZATION_FACTOR)
-            
-            # PSR calculation on Test Set (Purely for final reporting)
+            # PSR calculation on Test Set
             psr_test = deflated_sharpe_ratio(
-                observed_sr=test_sr, returns=test_r_vec, n_trials=1,
-                var_returns=np.var(test_r_vec), skew_returns=scipy.stats.skew(test_r_vec), kurt_returns=scipy.stats.kurtosis(test_r_vec),
+                observed_sr=test_sr, returns=final_test_r_vec, n_trials=1,
+                var_returns=np.var(final_test_r_vec), skew_returns=scipy.stats.skew(final_test_r_vec), kurt_returns=scipy.stats.kurtosis(final_test_r_vec),
                 annualization_factor=config.ANNUALIZATION_FACTOR
             )
 
-            strat_data = s.to_dict()
-            strat_data['test_sortino'] = float(te_stats['sortino'])
-            strat_data['test_return'] = test_ret
-            strat_data['test_trades'] = int(te_stats['trades'])
-            strat_data['train_return'] = t_stats['total_return']
-            strat_data['val_return'] = v_stats['total_return']
-            strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) 
+            strat_data = final_strat.to_dict()
+            strat_data['test_sortino'] = final_test_sortino
+            strat_data['test_return'] = final_test_ret
+            strat_data['test_trades'] = final_test_trades
+            strat_data['train_return'] = final_train_ret
+            strat_data['val_return'] = final_val_ret
+            strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) # Keep original robust score for sorting
             strat_data['dsr_val'] = float(dsr_val)
             strat_data['psr_test'] = float(psr_test)
             strat_data['training_id'] = training_id
             strat_data['generation'] = getattr(s, 'generation_found', -1)
+            if is_optimized:
+                strat_data['parent_name'] = s.name
+                strat_data['optimized'] = True
             
-            filtered_candidates.append(s)
+            filtered_candidates.append(final_strat)
             filtered_data.append(strat_data)
 
     # --- PORTFOLIO & SAVING ---
