@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import subprocess
 import numpy as np
 import scipy.stats
 import config
@@ -15,6 +16,35 @@ except ImportError:
     import sys
     sys.path.append(os.getcwd())
     from optimize_candidate import StrategyOptimizer
+
+def play_success_sound():
+    """
+    Attempts to play a custom alert sound.
+    Falls back to system bell if file not found or player missing.
+    """
+    sound_path = os.path.join(os.getcwd(), 'resources', 'alert.mp3')
+    
+    if os.path.exists(sound_path):
+        # List of candidate players to try
+        # Note: 'aplay' is typically for wav, but some versions handle others. 
+        # We assume 'alert.mp3' for now, so mpg123/ffplay are best bets.
+        players = [
+            ['mpg123', '-q', sound_path],
+            ['ffplay', '-nodisp', '-autoexit', '-hide_banner', sound_path],
+            ['paplay', sound_path],
+            ['vlc', '--intf', 'dummy', '--play-and-exit', sound_path]
+        ]
+        
+        for cmd in players:
+            try:
+                # Use Popen to play asynchronously (don't block the loop)
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except (FileNotFoundError, OSError):
+                continue
+    
+    # Fallback
+    print('\a' * 3) # 🔔 Audible Alert
 
 def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_strategies_evaluated):
     print(f"\n--- 🛡️ FINAL SELECTION (Using Diverse HOF) ---")
@@ -273,4 +303,4 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     if new_inbox_count > 0:
         with open(inbox_path, "w") as f: json.dump(inbox_data, f, indent=4)
         print(f"📦 Added {new_inbox_count} new strategies to Inbox: {inbox_path}")
-        print('\a' * 3) # 🔔 Audible Alert
+        play_success_sound()
