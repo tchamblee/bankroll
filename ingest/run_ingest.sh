@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")"
 while true; do
     echo "[$(date)] Starting Ingest..."
     python3 ingest_live.py

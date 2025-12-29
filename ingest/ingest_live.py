@@ -4,6 +4,10 @@ Entry point for Live Ingestion (IBKR + GDELT + Macro).
 Logic has been refactored into the `ingest_live` package.
 """
 import sys
+import os
+# Add project root to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import asyncio
 import logging
 import config as cfg
