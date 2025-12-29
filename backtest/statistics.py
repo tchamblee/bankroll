@@ -23,7 +23,8 @@ def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = con
     # Downside Deviation (LPM_2)
     # Using target_return (usually 0) as the hurdle
     downside = np.minimum(returns - target_return, 0.0)
-    downside_std = np.std(downside) + config.EPSILON
+    # Correct Sortino uses Root Mean Square (RMS) of downside, not Standard Deviation
+    downside_std = np.sqrt(np.mean(downside**2)) + config.EPSILON
     
     return (avg_ret / downside_std) * np.sqrt(annualization_factor)
 

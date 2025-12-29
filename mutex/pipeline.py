@@ -48,6 +48,11 @@ def run_mutex_backtest():
         highs = backtester.high_vec[oos_start:].astype(np.float64)
         lows = backtester.low_vec[oos_start:].astype(np.float64)
         atr = backtester.atr_vec[oos_start:].astype(np.float64)
+        # CRITICAL: Shift ATR by 1 to prevent Look-Ahead Bias
+        if len(atr) > 1:
+            atr = np.roll(atr, 1)
+            atr[0] = atr[1]
+
         times = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
         
         if hasattr(times, 'dt'):

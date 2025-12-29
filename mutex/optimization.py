@@ -34,6 +34,11 @@ def optimize_mutex_portfolio(candidates, backtester):
     highs = backtester.high_vec[val_start:val_end].astype(np.float64)
     lows = backtester.low_vec[val_start:val_end].astype(np.float64)
     atr = backtester.atr_vec[val_start:val_end].astype(np.float64)
+    # CRITICAL: Shift ATR by 1 to prevent Look-Ahead Bias
+    if len(atr) > 1:
+        atr = np.roll(atr, 1)
+        atr[0] = atr[1]
+
     times = backtester.times_vec.iloc[val_start:val_end] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[val_start:val_end]
     
     if hasattr(times, 'dt'):
