@@ -52,8 +52,20 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
         # Check Force Close (EOD or Weekend)
         force_close = (hours[i] >= end_hour) or (weekdays[i] >= 5)
         
+        # MUTEX: Determine who currently holds the lock (if anyone)
+        # We look at 'positions' state at start of bar (carried from i-1)
+        active_strat = -1
+        for s in range(n_strats):
+            if positions[s] != 0:
+                active_strat = s
+                break
+        
         # Loop over strategies
         for s in range(n_strats):
+            # MUTEX LOCK: If someone else holds the position, skip this strategy entirely
+            if active_strat != -1 and active_strat != s:
+                continue
+                
             # Manage Cooldown
             if cooldowns[s] > 0:
                 cooldowns[s] -= 1
@@ -105,9 +117,18 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                     cooldowns[s] = cooldown_bars
             elif curr_pos == 0:
                 # Check Entry (Signal at i is for Open[i])
-                sig = signals[i, s]
-                if sig != 0 and cooldowns[s] == 0 and not force_close:
-                    target_pos = float(sig)
+                # MUTEX: Only allowed if active_strat is -1 (Free)
+                if active_strat == -1:
+                    sig = signals[i, s]
+                    if sig != 0 and cooldowns[s] == 0 and not force_close:
+                        target_pos = float(sig)
+                        # MUTEX: We claim the lock immediately for this bar loop
+                        # But wait, we update 'active_strat' implicitly by setting target_pos != 0
+                        # For subsequent strategies in this loop, we need to block them?
+                        # Yes. If strategy 0 enters, strategy 1 must see 'active_strat != -1' or similar?
+                        # Actually, we set target_pos. positions[s] is updated at end of loop.
+                        # So we need a temp flag.
+                        active_strat = s
             
             # --- 3. STATE UPDATE & COST ---
             if target_pos != curr_pos:
