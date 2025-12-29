@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from .event_decay import _jit_bars_since_true
 
 def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi):
     """Worker function for parallel window microstructure feature calculation."""
@@ -86,4 +87,35 @@ def add_microstructure_features(df, windows=[50, 100]):
         new_cols.update(r)
         
     df_new = pd.DataFrame(new_cols, index=df.index)
+    
+    # --- NEW: Event-Driven Microstructure ---
+    # 1. Liquidation Event (Large Volume + Large Move)
+    # Using Rolling 100-bar stats for Z-Score
+    w_event = 100
+    
+    # Volume Z-Score
+    vol_mean = vol.rolling(w_event).mean()
+    vol_std = vol.rolling(w_event).std().replace(0, 1)
+    vol_z = (vol - vol_mean) / vol_std
+    
+    # Return Z-Score
+    ret_std = log_ret.rolling(w_event).std().replace(0, 1)
+    ret_z = log_ret.abs() / ret_std
+    
+    # Liquidation = High Vol (>2.5) AND High Move (>2.5)
+    is_liquidation = (vol_z > 2.5) & (ret_z > 2.5)
+    df_new['bars_since_liquidation'] = _jit_bars_since_true(is_liquidation.values)
+    df_new['decay_liquidation'] = np.exp(-5.0 * df_new['bars_since_liquidation'] / 100.0).fillna(0)
+
+    # 2. Imbalance Spike
+    # Ticket Imbalance Z-Score
+    imb_mean = ticket_imbalance.rolling(w_event).mean()
+    imb_std = ticket_imbalance.rolling(w_event).std().replace(0, 1)
+    imb_z = (ticket_imbalance - imb_mean) / imb_std
+    
+    # Spike = |Imbalance| > 2.5 sigma
+    is_imb_spike = (imb_z.abs() > 2.5)
+    df_new['bars_since_imbalance_spike'] = _jit_bars_since_true(is_imb_spike.values)
+    df_new['decay_imbalance_spike'] = np.exp(-5.0 * df_new['bars_since_imbalance_spike'] / 100.0).fillna(0)
+
     return pd.concat([df, df_new], axis=1)

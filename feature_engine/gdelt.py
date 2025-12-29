@@ -124,6 +124,20 @@ def add_gdelt_features(df, gdelt_df):
 
     if 'news_tone_eur' in merged.columns and 'news_tone_usd' in merged.columns:
         merged['news_tone_diff'] = merged['news_tone_eur'] - merged['news_tone_usd']
+        
+    # --- SENTIMENT VELOCITY (24h Trend) ---
+    # Lag 96 bars (approx 24h)
+    vel_lag = 96
+    
+    if 'global_tone' in merged.columns:
+        merged['tone_velocity'] = merged['global_tone'] - merged['global_tone'].shift(vel_lag)
+        
+    if 'epu_total' in merged.columns:
+        # Pct Change for Counts
+        merged['epu_velocity'] = merged['epu_total'].pct_change(vel_lag).replace([np.inf, -np.inf], 0).fillna(0)
+        
+    if 'conflict_intensity' in merged.columns:
+        merged['conflict_velocity'] = merged['conflict_intensity'].pct_change(vel_lag).replace([np.inf, -np.inf], 0).fillna(0)
     
     # Cleanup
     drop_cols = ['total_vol', 'inflation_vol', 'central_bank_tone', 
