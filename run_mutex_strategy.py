@@ -17,6 +17,251 @@ from trade_simulator import TradeSimulator
 
 # ... (Previous Helper Functions) ...
 
+
+# --- JIT SIMULATOR FOR MUTEX PORTFOLIO ---
+@jit(nopython=True, nogil=True, cache=True)
+def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray, 
+                               highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
+                               hours: np.ndarray, weekdays: np.ndarray,
+                               horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
+                               lot_size: float, spread_pct: float, comm_pct: float, 
+                               account_size: float, end_hour: int, cooldown_bars: int):
+    """
+    Simulates a portfolio of strategies running concurrently on one account.
+    Each strategy manages its own position logic (Horizon, SL, TP).
+    Returns net returns vector for the aggregated account.
+    """
+    n_bars, n_strats = signals.shape
+    
+    # State tracking per strategy
+    # 0: Flat, 1: Long, -1: Short
+    positions = np.zeros(n_strats, dtype=np.float64) 
+    entry_prices = np.zeros(n_strats, dtype=np.float64)
+    entry_indices = np.zeros(n_strats, dtype=np.int64)
+    entry_atrs = np.zeros(n_strats, dtype=np.float64)
+    
+    # Cooldown tracking
+    cooldowns = np.zeros(n_strats, dtype=np.int64)
+    
+    net_returns = np.zeros(n_bars, dtype=np.float64)
+    
+    # Loop over bars
+    for i in range(1, n_bars):
+        bar_pnl = 0.0
+        
+        # Check Force Close (EOD or Weekend)
+        force_close = (hours[i] >= end_hour) or (weekdays[i] >= 5)
+        
+        # Loop over strategies
+        for s in range(n_strats):
+            # Manage Cooldown
+            if cooldowns[s] > 0:
+                cooldowns[s] -= 1
+                
+            curr_pos = positions[s]
+            
+            # --- 1. EXIT CHECKS (If in position) ---
+            exit_signal = False
+            is_sl_hit = False
+            
+            if curr_pos != 0:
+                # Barrier Checks (High/Low of PREVIOUS bar usually, but here we are at 'i'. 
+                # Standard practice: Check if High/Low of *current* bar hits barrier? 
+                # OR check if we held through previous bar? 
+                # Simplified: Check against High/Low of current bar i for SL/TP execution within bar i)
+                
+                # Check Time Limit
+                if (i - entry_indices[s]) >= horizons[s]:
+                    exit_signal = True
+                
+                # Check SL/TP
+                if not exit_signal:
+                    e_price = entry_prices[s]
+                    sl_dist = entry_atrs[s] * sl_mults[s]
+                    tp_dist = entry_atrs[s] * tp_mults[s]
+                    
+                    if curr_pos > 0:
+                        if lows[i] <= (e_price - sl_dist):
+                            exit_signal = True
+                            is_sl_hit = True
+                        elif tp_mults[s] > 0 and highs[i] >= (e_price + tp_dist):
+                            exit_signal = True
+                    else:
+                        if highs[i] >= (e_price + sl_dist):
+                            exit_signal = True
+                            is_sl_hit = True
+                        elif tp_mults[s] > 0 and lows[i] <= (e_price - tp_dist):
+                            exit_signal = True
+
+                if force_close:
+                    exit_signal = True
+                    # Don't trigger cooldown on EOD
+                    is_sl_hit = False 
+            
+            # --- 2. EXECUTION LOGIC ---
+            target_pos = curr_pos
+            
+            if exit_signal:
+                target_pos = 0.0
+                if is_sl_hit:
+                    cooldowns[s] = cooldown_bars
+            elif curr_pos == 0:
+                # Check Entry
+                sig = signals[i, s]
+                if sig != 0 and cooldowns[s] == 0 and not force_close:
+                    target_pos = float(sig)
+            
+            # --- 3. STATE UPDATE & COST ---
+            if target_pos != curr_pos:
+                price = prices[i]
+                
+                # If we exited via SL/TP within the bar, we should technically use the SL/TP price.
+                # Simplification: Use Close (or Open of next? No, we are simulating 'i').
+                # Better: Use 'price' (Open of i) if signal-based, or SL level if SL-based.
+                # For high-speed mutex, using 'price' (Open/Close proxy) is acceptable if slippage is high.
+                # To be precise:
+                # If SL hit, price = Entry +/- SL_Dist
+                
+                exec_price = price
+                if exit_signal and curr_pos != 0:
+                    e_price = entry_prices[s]
+                    sl_dist = entry_atrs[s] * sl_mults[s]
+                    tp_dist = entry_atrs[s] * tp_mults[s]
+                    
+                    if is_sl_hit:
+                        if curr_pos > 0: exec_price = e_price - sl_dist
+                        else: exec_price = e_price + sl_dist
+                    elif tp_mults[s] > 0:
+                        # Re-check TP condition to be sure
+                        if curr_pos > 0 and highs[i] >= (e_price + tp_dist):
+                            exec_price = e_price + tp_dist
+                        elif curr_pos < 0 and lows[i] <= (e_price - tp_dist):
+                            exec_price = e_price - tp_dist
+
+                change = abs(target_pos - curr_pos)
+                
+                # Costs
+                # Spread
+                cost_spread = change * lot_size * exec_price * (0.5 * spread_pct)
+                # Comm
+                raw_comm = change * lot_size * exec_price * comm_pct
+                comm = max(2.0, raw_comm) if change > 0.5 else 0.0 # Min comm per order
+                # Slippage (10% ATR)
+                slip = 0.1 * atr_vec[i] * lot_size * change
+                
+                total_cost = cost_spread + comm + slip
+                
+                # PnL from Trade Close
+                if curr_pos != 0 and target_pos == 0:
+                    trade_pnl = (exec_price - entry_prices[s]) * curr_pos * lot_size
+                    bar_pnl += (trade_pnl - total_cost)
+                elif curr_pos == 0 and target_pos != 0:
+                    # Entry
+                    bar_pnl -= total_cost
+                    entry_prices[s] = exec_price
+                    entry_indices[s] = i
+                    entry_atrs[s] = atr_vec[i]
+                
+                positions[s] = target_pos
+        
+        net_returns[i] = bar_pnl / account_size
+
+    return net_returns, positions.astype(np.int64), 0
+
+def optimize_mutex_portfolio(candidates, backtester):
+    print("\n" + "="*80)
+    print("⚔️ MUTEX COMBINATORIAL OPTIMIZATION")
+    print("="*80)
+    
+    if not candidates: return [], {}
+
+    # 1. Filter Candidates (Top 14 by Robust Score)
+    # We rely on 'robust_score' which comes from WFV
+    candidates.sort(key=lambda x: getattr(x, 'fitness', -999), reverse=True)
+    top_candidates = candidates[:14]
+    print(f"  Selected top {len(top_candidates)} candidates for combinatorial search.")
+    
+    # 2. Prepare Data (Validation Set)
+    val_start = backtester.train_idx
+    val_end = backtester.val_idx
+    
+    backtester.ensure_context(top_candidates)
+    raw_sig = backtester.generate_signal_matrix(top_candidates)
+    # Shift signals for Next-Open
+    shifted_sig = np.vstack([np.zeros((1, len(top_candidates)), dtype=raw_sig.dtype), raw_sig[:-1]])
+    
+    val_sig = shifted_sig[val_start:val_end]
+    prices = backtester.open_vec[val_start:val_end].astype(np.float64)
+    highs = backtester.high_vec[val_start:val_end].astype(np.float64)
+    lows = backtester.low_vec[val_start:val_end].astype(np.float64)
+    atr = backtester.atr_vec[val_start:val_end].astype(np.float64)
+    times = backtester.times_vec.iloc[val_start:val_end] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[val_start:val_end]
+    
+    if hasattr(times, 'dt'):
+        hours = times.dt.hour.values.astype(np.int8)
+        weekdays = times.dt.dayofweek.values.astype(np.int8)
+    else:
+        dt_idx = pd.to_datetime(times)
+        hours = dt_idx.hour.values.astype(np.int8)
+        weekdays = dt_idx.dayofweek.values.astype(np.int8)
+        
+    # Pre-extract params
+    horizons = np.array([c.horizon for c in top_candidates], dtype=np.int64)
+    sl_mults = np.array([getattr(c, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for c in top_candidates], dtype=np.float64)
+    tp_mults = np.array([getattr(c, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for c in top_candidates], dtype=np.float64)
+    
+    best_combo = []
+    best_profit = -99999.0
+    best_sortino = 0.0
+    
+    # 3. Combinatorial Loop
+    # We test combinations of size 1 to 5
+    for r in range(1, 6):
+        print(f"  Testing combinations of size {r}...")
+        for indices in itertools.combinations(range(len(top_candidates)), r):
+            idxs = np.array(indices)
+            
+            # Slice inputs
+            sub_sig = val_sig[:, idxs]
+            sub_horizons = horizons[idxs]
+            sub_sl = sl_mults[idxs]
+            sub_tp = tp_mults[idxs]
+            
+            # Run JIT Simulation
+            rets, _, _ = _jit_simulate_mutex_custom(
+                sub_sig.astype(np.float64), 
+                prices, highs, lows, atr, 
+                hours, weekdays, 
+                sub_horizons, sub_sl, sub_tp,
+                config.STANDARD_LOT_SIZE, 
+                config.SPREAD_BPS / 10000.0, 
+                config.COST_BPS / 10000.0, 
+                config.ACCOUNT_SIZE, 
+                config.TRADING_END_HOUR, 
+                config.STOP_LOSS_COOLDOWN_BARS
+            )
+            
+            # Metrics
+            total_ret = np.sum(rets)
+            profit = total_ret * config.ACCOUNT_SIZE
+            avg_ret = np.mean(rets)
+            downside = np.std(np.minimum(rets, 0)) + 1e-9
+            sortino = (avg_ret / downside) * np.sqrt(config.ANNUALIZATION_FACTOR)
+            
+            # Constraints
+            if sortino > 3.0 and profit > best_profit:
+                best_profit = profit
+                best_sortino = sortino
+                best_combo = [top_candidates[i] for i in idxs]
+                # print(f"    New Best: ${profit:.0f} (Sortino: {sortino:.2f}) -> {[c.name for c in best_combo]}")
+
+    print(f"✅ Mutex Optimization Complete.")
+    print(f"  Best Portfolio: {len(best_combo)} Strategies")
+    print(f"  Val Profit: ${best_profit:,.2f}")
+    print(f"  Val Sortino: {best_sortino:.2f}")
+    
+    return best_combo, {'profit': best_profit, 'sortino': best_sortino}
+
 import scipy.cluster.hierarchy as sch
 
 def get_ivp(cov):
@@ -173,6 +418,44 @@ def optimize_hrp_portfolio(candidates, backtester):
     
     return final_portfolio
 
+def load_all_candidates():
+    candidates_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+    if not os.path.exists(candidates_path):
+        print(f"⚠️ Candidates file not found: {candidates_path}")
+        return []
+
+    with open(candidates_path, 'r') as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            print("⚠️ Error decoding candidates.json")
+            return []
+
+    strategies = []
+    for s_dict in data:
+        try:
+            strat = Strategy.from_dict(s_dict)
+            # Hydrate Params
+            strat.horizon = s_dict.get('horizon', config.DEFAULT_TIME_LIMIT)
+            strat.stop_loss_pct = s_dict.get('stop_loss_pct', config.DEFAULT_STOP_LOSS)
+            strat.take_profit_pct = s_dict.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+            
+            # Store metrics for sorting/ranking
+            if 'test_stats' in s_dict:
+                 strat.fitness = s_dict['test_stats'].get('sortino', 0)
+            elif 'metrics' in s_dict:
+                 strat.fitness = s_dict['metrics'].get('sortino_oos', 0)
+            else:
+                 strat.fitness = 0.0
+            
+            strategies.append(strat)
+        except Exception as e:
+            print(f"⚠️ Error loading strategy {s_dict.get('name', 'Unknown')}: {e}")
+            continue
+            
+    print(f"✅ Loaded {len(strategies)} candidates from {candidates_path}")
+    return strategies
+
 def run_mutex_backtest():
     # 1. Setup
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
@@ -273,3 +556,6 @@ def run_mutex_backtest():
     
     # 4. Optimize HRP Portfolio (Robust)
     optimize_hrp_portfolio(candidates[:100], backtester)
+
+if __name__ == "__main__":
+    run_mutex_backtest()
