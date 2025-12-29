@@ -9,6 +9,7 @@ from genome import Strategy
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
 from backtest.strategy_loader import load_strategies
+from mutex.simulator import _jit_simulate_mutex_custom
 import config
 
 def plot_performance(df, strategies):
@@ -112,12 +113,11 @@ def filter_top_strategies(df, strategies, top_n=20, chunk_size=1000):
     
     return top_performers
 
-def simulate_mutex_breakdown(strategies, backtester):
+def print_mutex_breakdown(strategies, backtester):
     """
-    Simulates the Mutex portfolio and tracks the contribution of each strategy
-    (PnL and Trades) considering the priority locking.
+    Prints the Mutex portfolio contribution using the JIT simulator.
     """
-    print(f"\nRunning Mutex Contribution Analysis (OOS)...")
+    print(f"\nRunning Mutex Contribution Analysis (OOS) via JIT...")
     
     # Prepare Data
     oos_start = backtester.val_idx
@@ -147,142 +147,30 @@ def simulate_mutex_breakdown(strategies, backtester):
     sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in strategies], dtype=np.float64)
     tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in strategies], dtype=np.float64)
     
-    n_bars, n_strats = sig_matrix.shape
+    # JIT Simulation
+    strat_rets, strat_trades, strat_wins, _ = _jit_simulate_mutex_custom(
+        sig_matrix.astype(np.float64), 
+        prices, highs, lows, atr, 
+        hours, weekdays, 
+        horizons, sl_mults, tp_mults, 
+        config.STANDARD_LOT_SIZE, 
+        config.SPREAD_BPS / 10000.0, 
+        config.COST_BPS / 10000.0, 
+        config.ACCOUNT_SIZE, 
+        config.TRADING_END_HOUR, 
+        config.STOP_LOSS_COOLDOWN_BARS
+    )
     
-    # Tracking
-    strat_pnl = np.zeros(n_strats)
-    strat_trades = np.zeros(n_strats)
-    strat_wins = np.zeros(n_strats)
+    # Compute Stats
+    strat_pnl = np.sum(strat_rets, axis=0) * config.ACCOUNT_SIZE
+    total_pnl = np.sum(strat_pnl)
+    total_trades = np.sum(strat_trades)
     
-    # Simulation Loop
-    position = 0.0
-    entry_price = 0.0
-    entry_idx = 0
-    entry_atr = 0.0
-    active_strat_idx = -1
-    
-    current_horizon = 0
-    current_sl_mult = 0.0
-    current_tp_mult = 0.0
-    
-    prev_pos = 0.0
-    strat_cooldowns = np.zeros(n_strats, dtype=np.int64)
-    
-    end_hour = config.TRADING_END_HOUR
-    cooldown_bars = config.STOP_LOSS_COOLDOWN_BARS
-    lot_size = config.STANDARD_LOT_SIZE
-    spread = config.SPREAD_BPS / 10000.0
-    comm = config.COST_BPS / 10000.0
-    
-    for i in range(n_bars):
-        # Decrement Cooldowns
-        for s in range(n_strats):
-            if strat_cooldowns[s] > 0: strat_cooldowns[s] -= 1
-                
-        # 1. Check Barriers / Exits
-        exit_trade = False
-        barrier_price = 0.0
-        exit_reason = 0 
-        
-        if hours[i] >= end_hour or weekdays[i] >= 5:
-            exit_trade = True
-            exit_reason = 1
-        elif position != 0:
-            if (i - entry_idx) >= current_horizon:
-                exit_trade = True
-                exit_reason = 1
-            
-            if not exit_trade:
-                h_prev = highs[i-1] if i > 0 else prices[i]
-                l_prev = lows[i-1] if i > 0 else prices[i]
-                sl_dist = entry_atr * current_sl_mult
-                tp_dist = entry_atr * current_tp_mult
-                
-                if position > 0:
-                    if current_sl_mult > 0 and l_prev <= (entry_price - sl_dist):
-                        exit_trade = True
-                        barrier_price = entry_price - sl_dist
-                        exit_reason = 2 
-                    elif current_tp_mult > 0 and h_prev >= (entry_price + tp_dist):
-                        exit_trade = True
-                        barrier_price = entry_price + tp_dist
-                        exit_reason = 3
-                else:
-                    if current_sl_mult > 0 and h_prev >= (entry_price + sl_dist):
-                        exit_trade = True
-                        barrier_price = entry_price + sl_dist
-                        exit_reason = 2
-                    elif current_tp_mult > 0 and l_prev <= (entry_price - tp_dist):
-                        exit_trade = True
-                        barrier_price = entry_price - tp_dist
-                        exit_reason = 3
-            
-            # Reversal
-            if not exit_trade and active_strat_idx >= 0:
-                sig = sig_matrix[i, active_strat_idx]
-                if sig != 0 and np.sign(sig) != np.sign(position):
-                     # Close current (Simplified for PnL attribution)
-                     curr_price = prices[i]
-                     pos_change = abs(0.0 - position)
-                     cost = pos_change * lot_size * curr_price * (0.5 * spread + comm)
-                     gross_pnl = position * lot_size * (curr_price - entry_price)
-                     
-                     pnl = gross_pnl - cost
-                     strat_pnl[active_strat_idx] += pnl
-                     if pnl > 0: strat_wins[active_strat_idx] += 1
-                     
-                     # New Entry
-                     position = float(sig)
-                     entry_price = prices[i]
-                     entry_idx = i
-                     entry_atr = atr[i]
-                     strat_trades[active_strat_idx] += 1
-                     continue 
-                        
-        if exit_trade:
-            curr_price = prices[i]
-            if barrier_price != 0.0: curr_price = barrier_price
-            
-            gross = position * lot_size * (curr_price - entry_price)
-            # Roundtrip costs
-            cost_entry = abs(position) * lot_size * entry_price * (0.5 * spread + comm)
-            cost_exit = abs(position) * lot_size * curr_price * (0.5 * spread + comm)
-            net_pnl = gross - cost_entry - cost_exit
-            
-            if active_strat_idx >= 0:
-                strat_pnl[active_strat_idx] += net_pnl
-                if net_pnl > 0: strat_wins[active_strat_idx] += 1
-                if exit_reason == 2: strat_cooldowns[active_strat_idx] = cooldown_bars
-            
-            position = 0.0
-            active_strat_idx = -1
-            
-        # 2. Check Entries
-        if position == 0.0 and not (hours[i] >= end_hour or weekdays[i] >= 5):
-            for s_idx in range(n_strats):
-                if strat_cooldowns[s_idx] > 0: continue
-                sig = sig_matrix[i, s_idx]
-                if sig != 0:
-                    position = float(sig)
-                    entry_price = prices[i]
-                    entry_idx = i
-                    entry_atr = atr[i]
-                    active_strat_idx = s_idx
-                    current_horizon = horizons[s_idx]
-                    current_sl_mult = sl_mults[s_idx]
-                    current_tp_mult = tp_mults[s_idx]
-                    
-                    strat_trades[s_idx] += 1
-                    break
-                    
     # Print Table
     print("\n" + "="*80)
     print(f"MUTEX CONTRIBUTION ANALYSIS (Actual Execution)")
-    print(f"{'Strategy':<20} | {'Trades':<8} | {'PnL ($)':<12} | {'Win Rate':<10} | {'Avg ($)':<10}")
+    print(f"{'{Strategy':<20} | {'Trades':<8} | {'PnL ($)':<12} | {'Win Rate':<10} | {'Avg ($)':<10}")
     print("-" * 80)
-    
-    total_pnl = 0
-    total_trades = 0
     
     for i, s in enumerate(strategies):
         pnl = strat_pnl[i]
@@ -294,9 +182,6 @@ def simulate_mutex_breakdown(strategies, backtester):
         prefix = "✅" if pnl > 0 else "❌"
         
         print(f"{prefix} {s.name:<18} | {int(tr):<8} | {pnl:>12.2f} | {wr:>9.1f}% | {avg:>9.2f}")
-        
-        total_pnl += pnl
-        total_trades += tr
         
     print("-" * 80)
     print(f"TOTAL                | {int(total_trades):<8} | {total_pnl:>12.2f} |")
@@ -344,7 +229,7 @@ if __name__ == "__main__":
     # If Mutex, run the detailed breakdown
     if is_mutex_run:
         backtester = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
-        simulate_mutex_breakdown(strategies, backtester)
+        print_mutex_breakdown(strategies, backtester)
     
     # Pass df directly
     top_strategies = filter_top_strategies(df, strategies, top_n=20)

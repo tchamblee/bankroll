@@ -113,6 +113,45 @@ class GeneTranslator:
             op = gene_dict['operator']
             thresh = f"{gene_dict['threshold']:.2f}"
             return f"Efficiency({f}, {win}) is {op} {thresh}"
+
+        elif g_type == 'event':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            op = gene_dict['operator']
+            val = f"{gene_dict['threshold']:.4f}"
+            win = gene_dict['window']
+            return f"{f} was {op} {val} at least once in last {win} bars"
+
+        elif g_type == 'soft_zscore':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            win = gene_dict['window']
+            op = gene_dict['operator']
+            sigma = f"{gene_dict['threshold']:.2f}σ"
+            slope = f"{gene_dict['slope']:.1f}"
+            return f"Soft {f} ({win}-bar Z-Score) is {op} {sigma} (Slope: {slope})"
+
+        elif g_type == 'flux':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            lag = gene_dict['lag']
+            op = gene_dict['operator']
+            val = f"{gene_dict['threshold']:.4f}"
+            return f"Flux (Accel) of {f} (Lag {lag}) is {op} {val}"
+
+        elif g_type == 'extrema':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            mode = gene_dict['mode'].upper()
+            win = gene_dict['window']
+            return f"{f} is at {win}-bar {mode}"
+
+        elif g_type == 'divergence':
+            f1 = GeneTranslator.translate_feature(gene_dict['feature_a'])
+            f2 = GeneTranslator.translate_feature(gene_dict['feature_b'])
+            win = gene_dict['window']
+            return f"Divergence between {f1} and {f2} (Window {win})"
+
+        elif g_type == 'seasonality':
+            op = gene_dict['operator']
+            sigma = f"{gene_dict['threshold']:.2f}σ"
+            return f"Seasonal Deviation is {op} {sigma}"
             
         return "Unknown Rule"
 

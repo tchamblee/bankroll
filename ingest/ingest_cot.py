@@ -10,10 +10,10 @@ import io
 from datetime import datetime
 import logging
 import config
-from utils import setup_logging
+from shared import get_logger, save_data
 
 # Setup Logging
-logger = setup_logging("COT_Ingest", "ingest_cot.log")
+logger = get_logger("COT_Ingest", "ingest_cot.log")
 
 # Constants
 COT_BASE_URL = "https://www.cftc.gov/files/dea/history/fut_fin_txt_{year}.zip"
@@ -140,9 +140,7 @@ def process_cot_data():
     merged_df = merged_df.reset_index()
     
     # Save
-    output_path = os.path.join(config.DIRS['DATA_DIR'], "cot_weekly.parquet")
-    merged_df.to_parquet(output_path, index=False)
-    logger.info(f"Saved COT data to {output_path} ({len(merged_df)} rows)")
+    save_data(merged_df, "cot_weekly.parquet", logger)
 
 if __name__ == "__main__":
     # Suppress SSL warnings for CFTC

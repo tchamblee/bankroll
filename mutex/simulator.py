@@ -11,7 +11,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
     """
     Simulates a portfolio of strategies running concurrently on one account.
     Each strategy manages its own position logic (Horizon, SL, TP).
-    Returns net returns vector for the aggregated account.
+    Returns breakdown of returns and stats per strategy.
     """
     n_bars, n_strats = signals.shape
     
@@ -22,14 +22,16 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
     entry_indices = np.zeros(n_strats, dtype=np.int64)
     entry_atrs = np.zeros(n_strats, dtype=np.float64)
     
+    # Stats tracking
+    strat_returns = np.zeros((n_bars, n_strats), dtype=np.float64)
+    strat_trades = np.zeros(n_strats, dtype=np.int64)
+    strat_wins = np.zeros(n_strats, dtype=np.int64)
+    
     # Cooldown tracking
     cooldowns = np.zeros(n_strats, dtype=np.int64)
     
-    net_returns = np.zeros(n_bars, dtype=np.float64)
-    
     # Loop over bars
     for i in range(1, n_bars):
-        bar_pnl = 0.0
         
         # Check Force Close (EOD or Weekend)
         force_close = (hours[i] >= end_hour) or (weekdays[i] >= 5)
@@ -143,16 +145,20 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                 # PnL from Trade Close
                 if curr_pos != 0 and target_pos == 0:
                     trade_pnl = (exec_price - entry_prices[s]) * curr_pos * lot_size
-                    bar_pnl += (trade_pnl - total_cost)
+                    net_pnl = trade_pnl - total_cost
+                    strat_returns[i, s] = net_pnl / account_size
+                    
+                    if net_pnl > 0:
+                        strat_wins[s] += 1
+                        
                 elif curr_pos == 0 and target_pos != 0:
                     # Entry
-                    bar_pnl -= total_cost
+                    strat_returns[i, s] = -total_cost / account_size
                     entry_prices[s] = exec_price
                     entry_indices[s] = i
                     entry_atrs[s] = atr_vec[i]
+                    strat_trades[s] += 1
                 
                 positions[s] = target_pos
         
-        net_returns[i] = bar_pnl / account_size
-
-    return net_returns, positions.astype(np.int64), 0
+    return strat_returns, strat_trades, strat_wins, positions.astype(np.int64)

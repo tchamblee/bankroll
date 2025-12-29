@@ -63,7 +63,7 @@ def optimize_mutex_portfolio(candidates, backtester):
             sub_sl = sl_mults[idxs]
             sub_tp = tp_mults[idxs]
             
-            rets, _, _ = _jit_simulate_mutex_custom(
+            strat_rets, _, _, _ = _jit_simulate_mutex_custom(
                 sub_sig.astype(np.float64), 
                 prices, highs, lows, atr, 
                 hours, weekdays, 
@@ -76,6 +76,7 @@ def optimize_mutex_portfolio(candidates, backtester):
                 config.STOP_LOSS_COOLDOWN_BARS
             )
             
+            rets = np.sum(strat_rets, axis=1)
             total_ret = np.sum(rets)
             profit = total_ret * config.ACCOUNT_SIZE
             sortino = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)

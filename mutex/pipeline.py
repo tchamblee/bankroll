@@ -67,7 +67,7 @@ def run_mutex_backtest():
         sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
         tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
         
-        rets, _, _ = _jit_simulate_mutex_custom(
+        strat_rets, _, _, _ = _jit_simulate_mutex_custom(
             oos_sig.astype(np.float64), 
             prices, highs, lows, atr, hours, weekdays, 
             horizons, sl_mults, tp_mults, 
@@ -78,6 +78,8 @@ def run_mutex_backtest():
             config.TRADING_END_HOUR, 
             config.STOP_LOSS_COOLDOWN_BARS
         )
+        
+        rets = np.sum(strat_rets, axis=1)
             
         cum_profit = np.cumsum(rets) * config.ACCOUNT_SIZE
         total_oos_profit = cum_profit[-1] if len(cum_profit) > 0 else 0.0

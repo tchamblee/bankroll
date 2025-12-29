@@ -7,10 +7,10 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import logging
-from utils import setup_logging
+from shared import get_logger, save_data
 
 # Setup Logging
-logger = setup_logging("FRED_Ingest", "ingest_fred.log")
+logger = get_logger("FRED_Ingest", "ingest_fred.log")
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
@@ -122,10 +122,7 @@ def ingest_fred_data(lookback_days=365*5):
     merged_df = merged_df.reset_index().rename(columns={'index': 'date'})
     
     # Save to Parquet
-    import config
-    output_path = os.path.join(config.DIRS['DATA_DIR'], "fred_macro_daily.parquet")
-    merged_df.to_parquet(output_path, index=False)
-    logger.info(f"Saved FRED data to {output_path} ({len(merged_df)} rows)")
+    save_data(merged_df, "fred_macro_daily.parquet", logger)
 
 if __name__ == "__main__":
     # Test Run
