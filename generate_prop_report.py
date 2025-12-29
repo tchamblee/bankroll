@@ -7,81 +7,12 @@ from genome import Strategy
 from backtest import BacktestEngine
 from backtest.utils import refresh_strategies
 from backtest.reporting import GeneTranslator
+from backtest.strategy_loader import load_strategies
 import glob
-
-def load_mutex_portfolio():
-    """Loads the optimized mutex portfolio."""
-    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
-    if not os.path.exists(file_path):
-        return []
-    
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-        
-    strategies = []
-    for d in data:
-        try:
-            strat = Strategy.from_dict(d)
-            # Ensure horizon is set
-            strat.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
-            strat.data = d # Store original dict
-            strategies.append(strat)
-        except Exception:
-            pass
-    return strategies
-
-def load_and_rank_strategies(horizon):
-    """
-    Consolidated Strategy Loading Logic.
-    Matches the logic in generate_trade_atlas.py to ensure the same 'Champion' is selected.
-    """
-    # Prefer the Top 5 Unique file which contains pre-calculated metrics from report_top_strategies.py
-    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
-    if not os.path.exists(file_path):
-        # Fallback to Top 10 if Top 5 Unique doesn't exist (legacy support)
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
-    
-    if not os.path.exists(file_path):
-        # Final Fallback to raw file (metrics might be missing/defaulted to -999)
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
-        
-    if not os.path.exists(file_path):
-        return [], []
-    
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    
-    strategies = []
-    # Preserve original dictionary data for reporting logic
-    strategy_dicts = []
-    
-    for d in data:
-        try:
-            strat = Strategy.from_dict(d)
-            # Hydrate metrics if available, or assume they are in the dict
-            metrics = d.get('metrics', {})
-            # Use metrics dict if available, otherwise check root
-            strat.robust_return = metrics.get('robust_return', d.get('robust_return', -999))
-            strat.full_return = metrics.get('full_return', d.get('full_return', -999))
-            
-            strategies.append(strat)
-            strategy_dicts.append(d)
-        except Exception as e:
-            pass
-            
-    # Sort: Primary = Robust%, Secondary = Ret%(Full)
-    # We zip them to sort both lists in sync
-    combined = list(zip(strategies, strategy_dicts))
-    combined.sort(key=lambda x: (x[0].robust_return, x[0].full_return), reverse=True)
-    
-    if not combined:
-        return [], []
-        
-    return zip(*combined)
 
 def generate_mutex_report():
     print("Generating Report for MUTEX PORTFOLIO...")
-    strategies = load_mutex_portfolio()
+    strategies, _ = load_strategies('mutex')
     if not strategies:
         print("No mutex portfolio found. Skipping.")
         return
@@ -143,7 +74,19 @@ def generate_mutex_report():
 
 def generate_report(horizon):
     # Use standard loading/ranking logic
-    strategies, strategy_dicts = load_and_rank_strategies(horizon)
+    strategies, strategy_dicts = load_strategies('champion', horizon=horizon)
+    
+    # Sort locally to ensure Champion is #1 (Strategy Loader returns order in file, which might not be sorted if using raw apex file)
+    # But 'champion' mode in loader uses 'apex' logic which has priority logic (Top 5 Unique is usually sorted).
+    # To be safe, let's sort if we got anything.
+    if strategies:
+        # Assuming we want to sort by robust return if not already sorted
+        # But 'load_strategies' doesn't sort.
+        combined = list(zip(strategies, strategy_dicts))
+        combined.sort(key=lambda x: getattr(x[0], 'robust_return', -999), reverse=True)
+        strategies, strategy_dicts = zip(*combined)
+        strategies = list(strategies)
+        strategy_dicts = list(strategy_dicts)
     
     if not strategies:
         print(f"Skipping Horizon {horizon}: No valid strategies found.")
@@ -267,35 +210,16 @@ def generate_report(horizon):
         
     print(f"✅ Generated Prop Report: {report_path}")
 
-def load_inbox_strategies():
-    """Loads the strategies from the inbox."""
-    file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "found_strategies.json")
-    if not os.path.exists(file_path):
-        return []
-    
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-        
-    strategies = []
-    for d in data:
-        try:
-            strat = Strategy.from_dict(d)
-            # Ensure horizon is set
-            strat.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
-            strat.data = d # Store original dict
-            strategies.append(strat)
-        except Exception:
-            pass
-    return strategies
-
 def generate_inbox_report(skip_refresh=False):
     print("Generating Report for INBOX STRATEGIES...")
-    strategies = load_inbox_strategies()
+    strategies, _ = load_strategies('inbox')
+    
     if not strategies:
         print("No inbox strategies found. Skipping.")
         return
 
     # Convert Strategy objects to dicts for refresh_strategies
+    # We use .data which is populated by load_strategies
     strat_dicts = [s.data for s in strategies]
     
     if not skip_refresh:

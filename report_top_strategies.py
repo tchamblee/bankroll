@@ -7,93 +7,9 @@ import numpy as np
 import config
 from collections import Counter
 from backtest import BacktestEngine
+from backtest.reporting import GeneTranslator
+from backtest.strategy_loader import load_strategies
 from genome import Strategy
-
-class MockEngine:
-    def __init__(self, df):
-        self.bars = df
-
-def get_gene_description(gene_dict):
-    """Translates a single gene dictionary into a sentence."""
-    if hasattr(gene_dict, 'to_dict'): gene_dict = gene_dict.to_dict()
-    g_type = gene_dict['type']
-    
-    if g_type == 'static':
-        # f = GeneTranslator.translate_feature(gene_dict['feature']) # Assuming GeneTranslator isn't used here directly based on prev context
-        f = gene_dict['feature']
-        op = gene_dict['operator']
-        val = f"{gene_dict['threshold']:.6g}"
-        return f"{f} is {op} {val}"
-        
-    elif g_type == 'relational':
-        f1 = gene_dict['feature_left']
-        f2 = gene_dict['feature_right']
-        op = gene_dict['operator']
-        return f"{f1} is {op} {f2}"
-        
-    elif g_type == 'delta':
-        f = gene_dict['feature']
-        lookback = gene_dict['lookback']
-        op = gene_dict['operator']
-        val = f"{gene_dict['threshold']:.6g}"
-        return f"Change in {f} ({lookback} bars) is {op} {val}"
-        
-    elif g_type == 'zscore':
-        f = gene_dict['feature']
-        win = gene_dict['window']
-        op = gene_dict['operator']
-        sigma = f"{gene_dict['threshold']:.3g}σ"
-        return f"{f} ({win}-bar Z-Score) is {op} {sigma}"
-        
-    elif g_type == 'time':
-        mode = gene_dict['mode'].title() 
-        op = gene_dict['operator']
-        val = gene_dict['value']
-        return f"Current {mode} is {op} {val}"
-        
-    elif g_type == 'consecutive':
-        direction = gene_dict['direction'].upper()
-        count = gene_dict['count']
-        op = gene_dict['operator']
-        return f"Consecutive {direction} Candles {op} {count}"
-        
-    elif g_type == 'cross':
-        f1 = gene_dict['feature_left']
-        f2 = gene_dict['feature_right']
-        direction = gene_dict['direction'].upper()
-        return f"{f1} crosses {direction} {f2}"
-        
-    elif g_type == 'persistence':
-        f = gene_dict['feature']
-        op = gene_dict['operator']
-        thresh = f"{gene_dict['threshold']:.6g}"
-        win = gene_dict['window']
-        return f"({f} {op} {thresh}) FOR {win} BARS"
-
-    elif g_type == 'correlation':
-        return f"Corr({gene_dict['feature_left']}, {gene_dict['feature_right']}, {gene_dict['window']}) {gene_dict['operator']} {gene_dict['threshold']:.2f}"
-    
-    elif g_type == 'divergence':
-        return f"Divergence({gene_dict['feature_a']}, {gene_dict['feature_b']}) in last {gene_dict['window']} bars"
-    
-    elif g_type == 'efficiency':
-        return f"Efficiency({gene_dict['feature']}, {gene_dict['window']}) {gene_dict['operator']} {gene_dict['threshold']:.2f}"
-        
-    elif g_type == 'event':
-        return f"({gene_dict['feature']} {gene_dict['operator']} {gene_dict['threshold']:.2f}) occurred in last {gene_dict['window']} bars"
-        
-    elif g_type == 'extrema':
-        return f"{gene_dict['feature']} is {gene_dict['mode'].upper()} of last {gene_dict['window']} bars"
-        
-    elif g_type == 'flux':
-        return f"Flux({gene_dict['feature']}, {gene_dict['lag']}) {gene_dict['operator']} {gene_dict['threshold']:.4f}"
-
-    elif g_type == 'squeeze':
-        return f"{gene_dict['feature_short']} < {gene_dict['multiplier']:.4g} * {gene_dict['feature_long']}"
-    elif g_type == 'range':
-        f = gene_dict['feature']
-        return f"{gene_dict['min_val']:.6g} < {f} < {gene_dict['max_val']:.6g}"
-    return "Unknown"
 
 def evaluate_batch(backtester, batch, horizon):
     """Evaluates a batch on Train, Val, and Test sets, returning a list of result dicts."""
@@ -151,163 +67,153 @@ def main():
     global_gene_counts = Counter()
     
     for h in horizons:
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}.json")
-        if not os.path.exists(file_path): continue
-            
         print(f"\n--- Horizon: {h} Bars ---")
-        try:
-            with open(file_path, 'r') as f:
-                strategies_data = json.load(f)
-            
-            strategies = []
-            for d in strategies_data:
-                try:
-                    s = Strategy.from_dict(d)
-                    s.generation_found = d.get('generation', '?')
-                    strategies.append(s)
-                except: pass
-            
-            if not strategies: continue
+        strategies, _ = load_strategies('all_apex', horizon=h, load_metrics=False)
+        
+        if not strategies: 
+            continue
 
-            # Batch Processing
-            chunk_size = 1000
-            all_horizon_results = []
+        # Batch Processing
+        chunk_size = 1000
+        all_horizon_results = []
+        
+        total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
+        
+        for i in range(0, len(strategies), chunk_size):
+            batch = strategies[i:i+chunk_size]
+            batch_results = evaluate_batch(backtester, batch, horizon=h)
+            all_horizon_results.extend(batch_results)
+            backtester.reset_jit_context()
             
-            total_chunks = (len(strategies) + chunk_size - 1) // chunk_size
-            
-            for i in range(0, len(strategies), chunk_size):
-                batch = strategies[i:i+chunk_size]
-                batch_results = evaluate_batch(backtester, batch, horizon=h)
-                all_horizon_results.extend(batch_results)
-                backtester.reset_jit_context()
-                
-            if not all_horizon_results:
-                print("  No active strategies found.")
-                continue
+        if not all_horizon_results:
+            print("  No active strategies found.")
+            continue
 
-            # Convert to DataFrame
-            df_rows = []
-            horizon_genes = []
+        # Convert to DataFrame
+        df_rows = []
+        horizon_genes = []
+        
+        for res in all_horizon_results:
+            strat = res['Strategy']
+            # Convert genes to dict for translator if they are objects, but Strategy stores them as dicts in .long_genes/short_genes lists?
+            # Strategy object has .long_genes as list of dicts.
             
-            for res in all_horizon_results:
-                strat = res['Strategy']
-                strat_genes = [get_gene_description(g) for g in strat.long_genes + strat.short_genes]
-                horizon_genes.extend(strat_genes)
-                
-                df_rows.append({
-                    'Gen': res['Gen'],
-                    'Name': strat.name,
-                    'Ret%(Train)': res['Ret_Train'] * 100,
-                    'Ret%(Val)': res['Ret_Val'] * 100,
-                    'Ret%(Test)': res['Ret_Test'] * 100,
-                    'Robust%': res['Robust_Ret'] * 100,
-                    'Sortino(OOS)': res['Sortino_OOS'],
-                    'Trades': int(res['Trades']),
-                    'Genes': ", ".join(strat_genes[:2]) + ("..." if len(strat_genes)>2 else "")
-                })
+            strat_genes = [GeneTranslator.translate_gene(g) for g in strat.long_genes + strat.short_genes]
+            horizon_genes.extend(strat_genes)
+            
+            df_rows.append({
+                'Gen': res['Gen'],
+                'Name': strat.name,
+                'Ret%(Train)': res['Ret_Train'] * 100,
+                'Ret%(Val)': res['Ret_Val'] * 100,
+                'Ret%(Test)': res['Ret_Test'] * 100,
+                'Robust%': res['Robust_Ret'] * 100,
+                'Sortino(OOS)': res['Sortino_OOS'],
+                'Trades': int(res['Trades']),
+                'Genes': ", ".join(strat_genes[:2]) + ("..." if len(strat_genes)>2 else "")
+            })
                 
             global_gene_counts.update(horizon_genes)
             
-            df = pd.DataFrame(df_rows)
-            # Sort by Robust Return (Primary) then Sortino OOS (Secondary)
-            df = df.sort_values(by=['Robust%', 'Sortino(OOS)'], ascending=[False, False])
-            
-            # --- CORRELATION CLUSTERING (Hierarchical) ---
-            print("  Performing Hierarchical Correlation Clustering (Threshold 0.7)...")
-            from scipy.cluster.hierarchy import linkage, fcluster
-            from scipy.spatial.distance import squareform
-            
-            results_map = {res['Strategy'].name: res for res in all_horizon_results}
-            # Initial sort by Robust Return to prioritize better strategies within clusters
-            df = df.sort_values(by='Robust%', ascending=False)
-            sorted_names = df['Name'].values
-            candidates = [results_map[name]['Strategy'] for name in sorted_names]
-            
-            # Use all candidates, not just top 50, but cap at 200 for performance if needed
-            top_candidates = candidates[:200]
-            selected_strats = []
-            
-            if top_candidates:
-                if len(top_candidates) == 1:
-                    selected_strats = top_candidates
-                else:
-                    sig_matrix = backtester.generate_signal_matrix(top_candidates)
-                    
-                    # 1. Correlation Matrix
-                    # Handle constant signals (std=0) to avoid NaNs
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        corr_matrix = np.corrcoef(sig_matrix, rowvar=False)
-                    
-                    # Fix NaNs (0 variance signals usually uncorrelated with everything else, or perfectly correlated with other 0 var?)
-                    # If signal is constant 0, correlation is undefined. Treat as uncorrelated (0).
-                    corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
-                    
-                    # 2. Distance Matrix (1 - |Correlation|)
-                    # We want to group strategies that are highly correlated (pos or neg)
-                    dist_matrix = 1.0 - np.abs(corr_matrix)
-                    
-                    # Ensure symmetry and zero diagonal for numerical stability
-                    np.fill_diagonal(dist_matrix, 0)
-                    dist_matrix = np.clip(dist_matrix, 0, 1)
-                    
-                    # Condensed matrix for linkage
-                    condensed_dist = squareform(dist_matrix, checks=False)
-                    
-                    # 3. Clustering
-                    # Complete linkage: max distance between clusters must be < threshold
-                    # Threshold 0.3 means correlations > 0.7 are grouped
-                    Z = linkage(condensed_dist, method='complete')
-                    cluster_labels = fcluster(Z, t=0.3, criterion='distance')
-                    
-                    # 4. Select Best per Cluster
-                    cluster_map = {}
-                    for i, label in enumerate(cluster_labels):
-                        if label not in cluster_map:
-                            cluster_map[label] = []
-                        cluster_map[label].append(top_candidates[i])
-                    
-                    for label, cluster_members in cluster_map.items():
-                        # Pick member with highest Robust Return
-                        best_in_cluster = max(cluster_members, key=lambda s: results_map[s.name]['Robust_Ret'])
-                        selected_strats.append(best_in_cluster)
+        df = pd.DataFrame(df_rows)
+        # Sort by Robust Return (Primary) then Sortino OOS (Secondary)
+        df = df.sort_values(by=['Robust%', 'Sortino(OOS)'], ascending=[False, False])
+        
+        # --- CORRELATION CLUSTERING (Hierarchical) ---
+        print("  Performing Hierarchical Correlation Clustering (Threshold 0.7)...")
+        from scipy.cluster.hierarchy import linkage, fcluster
+        from scipy.spatial.distance import squareform
+        
+        results_map = {res['Strategy'].name: res for res in all_horizon_results}
+        # Initial sort by Robust Return to prioritize better strategies within clusters
+        df = df.sort_values(by='Robust%', ascending=False)
+        sorted_names = df['Name'].values
+        candidates = [results_map[name]['Strategy'] for name in sorted_names]
+        
+        # Use all candidates, not just top 50, but cap at 200 for performance if needed
+        top_candidates = candidates[:200]
+        selected_strats = []
+        
+        if top_candidates:
+            if len(top_candidates) == 1:
+                selected_strats = top_candidates
+            else:
+                sig_matrix = backtester.generate_signal_matrix(top_candidates)
+                
+                # 1. Correlation Matrix
+                # Handle constant signals (std=0) to avoid NaNs
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    corr_matrix = np.corrcoef(sig_matrix, rowvar=False)
+                
+                # Fix NaNs (0 variance signals usually uncorrelated with everything else, or perfectly correlated with other 0 var?)
+                # If signal is constant 0, correlation is undefined. Treat as uncorrelated (0).
+                corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
+                
+                # 2. Distance Matrix (1 - |Correlation|)
+                # We want to group strategies that are highly correlated (pos or neg)
+                dist_matrix = 1.0 - np.abs(corr_matrix)
+                
+                # Ensure symmetry and zero diagonal for numerical stability
+                np.fill_diagonal(dist_matrix, 0)
+                dist_matrix = np.clip(dist_matrix, 0, 1)
+                
+                # Condensed matrix for linkage
+                condensed_dist = squareform(dist_matrix, checks=False)
+                
+                # 3. Clustering
+                # Complete linkage: max distance between clusters must be < threshold
+                # Threshold 0.3 means correlations > 0.7 are grouped
+                Z = linkage(condensed_dist, method='complete')
+                cluster_labels = fcluster(Z, t=0.3, criterion='distance')
+                
+                # 4. Select Best per Cluster
+                cluster_map = {}
+                for i, label in enumerate(cluster_labels):
+                    if label not in cluster_map:
+                        cluster_map[label] = []
+                    cluster_map[label].append(top_candidates[i])
+                
+                for label, cluster_members in cluster_map.items():
+                    # Pick member with highest Robust Return
+                    best_in_cluster = max(cluster_members, key=lambda s: results_map[s.name]['Robust_Ret'])
+                    selected_strats.append(best_in_cluster)
 
-            print(f"  Found {len(selected_strats)} distinct strategy clusters.")
+        print(f"  Found {len(selected_strats)} distinct strategy clusters.")
+        
+        # Create DF for display
+        selected_names = {s.name for s in selected_strats}
+        top_unique_df = df[df['Name'].isin(selected_names)].copy()
+        top_unique_df = top_unique_df.sort_values(by='Robust%', ascending=False)
+        
+        # Formatting for Display
+        display_df = top_unique_df.copy()
+        for col in ['Ret%(Train)', 'Ret%(Val)', 'Ret%(Test)', 'Robust%', 'Sortino(OOS)']:
+            display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
             
-            # Create DF for display
-            selected_names = {s.name for s in selected_strats}
-            top_unique_df = df[df['Name'].isin(selected_names)].copy()
-            top_unique_df = top_unique_df.sort_values(by='Robust%', ascending=False)
-            
-            # Formatting for Display
-            display_df = top_unique_df.copy()
-            for col in ['Ret%(Train)', 'Ret%(Val)', 'Ret%(Test)', 'Robust%', 'Sortino(OOS)']:
-                display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}")
+        print(display_df.to_string(index=False))
+        
+        # Save ALL Unique to JSON
+        top_unique_strategies = []
+        for s in selected_strats:
+            res = results_map[s.name]
+            s_dict = s.to_dict()
+            s_dict['metrics'] = {
+                'robust_return': float(res['Robust_Ret']),
+                'train_return': float(res['Ret_Train']),
+                'val_return': float(res['Ret_Val']),
+                'test_return': float(res['Ret_Test']),
+                'sortino_oos': float(res['Sortino_OOS'])
+            }
+            top_unique_strategies.append(s_dict)
+        
+        top_unique_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
+        
+        out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
+        with open(out_path, "w") as f:
+            json.dump(top_unique_strategies, f, indent=4)
+        print(f"  💾 Saved {len(top_unique_strategies)} Unique Cluster Champions to: {out_path}")
                 
-            print(display_df.to_string(index=False))
-            
-            # Save ALL Unique to JSON
-            top_unique_strategies = []
-            for s in selected_strats:
-                res = results_map[s.name]
-                s_dict = s.to_dict()
-                s_dict['metrics'] = {
-                    'robust_return': float(res['Robust_Ret']),
-                    'train_return': float(res['Ret_Train']),
-                    'val_return': float(res['Ret_Val']),
-                    'test_return': float(res['Ret_Test']),
-                    'sortino_oos': float(res['Sortino_OOS'])
-                }
-                top_unique_strategies.append(s_dict)
-            
-            top_unique_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
-            
-            out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
-            with open(out_path, "w") as f:
-                json.dump(top_unique_strategies, f, indent=4)
-            print(f"  💾 Saved {len(top_unique_strategies)} Unique Cluster Champions to: {out_path}")
-                
-        except Exception as e:
-            print(f"  Error processing horizon {h}: {e}")
+
 
     print("\n" + "="*120)
     print("🧬 GLOBAL DOMINANT GENES 🧬")

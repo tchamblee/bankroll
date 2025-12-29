@@ -31,6 +31,9 @@ class GeneTranslator:
     @staticmethod
     def translate_gene(gene_dict):
         """Translates a single gene dictionary into a sentence."""
+        if hasattr(gene_dict, 'to_dict'):
+            gene_dict = gene_dict.to_dict()
+            
         g_type = gene_dict['type']
         
         if g_type == 'static':

@@ -8,13 +8,15 @@ import pandas as pd
 import config
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
+from backtest.utils import find_strategy_in_files
 from genome import Strategy, GenomeFactory
 
 class StrategyOptimizer:
-    def __init__(self, target_name, source_file, horizon=180):
+    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None):
         self.target_name = target_name
         self.source_file = source_file
         self.horizon = horizon
+        self.strategy_dict = strategy_dict
         self.parent_strategy = None
         self.variants = []
         
@@ -33,15 +35,20 @@ class StrategyOptimizer:
         )
 
     def load_parent(self):
-        print(f"Searching for {self.target_name} in {self.source_file}...")
-        with open(self.source_file, 'r') as f:
-            strategies = json.load(f)
+        if self.strategy_dict:
+            print(f"Using provided strategy data for {self.target_name}...")
+            self.parent_strategy = Strategy.from_dict(self.strategy_dict)
+        else:
+            print(f"Searching for {self.target_name} in {self.source_file}...")
+            with open(self.source_file, 'r') as f:
+                strategies = json.load(f)
+                
+            target_data = next((s for s in strategies if s['name'] == self.target_name), None)
+            if not target_data:
+                raise ValueError(f"Strategy {self.target_name} not found in {self.source_file}")
+                
+            self.parent_strategy = Strategy.from_dict(target_data)
             
-        target_data = next((s for s in strategies if s['name'] == self.target_name), None)
-        if not target_data:
-            raise ValueError(f"Strategy {self.target_name} not found in {self.source_file}")
-            
-        self.parent_strategy = Strategy.from_dict(target_data)
         print(f"✅ Loaded Parent: {self.parent_strategy.name}")
         print(f"   Genes: {len(self.parent_strategy.long_genes)} Long, {len(self.parent_strategy.short_genes)} Short")
         print(f"   Concordance: {self.parent_strategy.min_concordance}")
@@ -256,48 +263,6 @@ class StrategyOptimizer:
                 json.dump(to_save, f, indent=4)
             print(f"\n💾 Saved {len(to_save)} variants to {out_file}")
 
-
-def find_strategy_context(name):
-    """Locates the strategy file and infers horizon."""
-    search_patterns = [
-        "found_strategies.json",
-        "candidates.json",
-        "apex_strategies_*.json",
-        "optimized_*.json"
-    ]
-    
-    # Search in standard output directory
-    import glob
-    for pattern in search_patterns:
-        files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], pattern))
-        for file_path in files:
-            try:
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                    for s in data:
-                        if s.get('name') == name:
-                            # Found it
-                            horizon = s.get('horizon')
-                            
-                            # Try to infer horizon from filename if missing
-                            if not horizon:
-                                basename = os.path.basename(file_path)
-                                parts = basename.split('_')
-                                for p in parts:
-                                    if p.isdigit():
-                                        horizon = int(p)
-                                        break
-                            
-                            # Default fallback
-                            if not horizon:
-                                horizon = 60 # Default to shortest common horizon
-                                print(f"⚠️  Warning: Horizon not found for {name}, defaulting to {horizon}")
-                            
-                            return file_path, horizon
-            except:
-                continue
-    return None, None
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Optimize a specific strategy variant")
     parser.add_argument("name", type=str, help="Name of the strategy (e.g., Child_3604)")
@@ -306,31 +271,51 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
+    target_dict = None
     file_path = args.file
     horizon = args.horizon
     
-    if not file_path or not horizon:
-        print(f"🔍 Searching for strategy '{args.name}'...")
-        found_file, found_horizon = find_strategy_context(args.name)
-        
-        if not file_path and found_file:
-            file_path = found_file
-            print(f"   ✅ Found in: {file_path}")
-            
-        if not horizon and found_horizon:
-            horizon = found_horizon
-            print(f"   ✅ Inferred Horizon: {horizon}")
-            
+    # Auto-discovery if file/horizon missing
     if not file_path:
-        print(f"❌ Error: Could not locate strategy '{args.name}' in any standard output files.")
-        print("   Please provide --file and --horizon manually.")
-        exit(1)
-        
-    if not horizon:
-         print(f"❌ Error: Could not infer horizon for '{args.name}'. Please provide --horizon.")
-         exit(1)
+        print(f"🔍 Searching for strategy '{args.name}'...")
+        # find_strategy_in_files returns the dict, but we can't get the filename easily from it currently.
+        # But StrategyOptimizer needs the logic. We can instantiate Strategy directly.
+        found_dict = find_strategy_in_files(args.name)
+        if found_dict:
+            target_dict = found_dict
+            if not horizon:
+                horizon = found_dict.get('horizon', 60)
+                print(f"   ✅ Inferred Horizon: {horizon}")
+            print(f"   ✅ Found strategy data in index.")
+        else:
+            print(f"❌ Error: Could not locate strategy '{args.name}' in standard files.")
+            exit(1)
     
-    opt = StrategyOptimizer(args.name, file_path, horizon)
-    opt.load_parent()
-    opt.generate_variants(n_jitter=30, n_mutants=20)
-    opt.evaluate_and_report()
+    if not horizon:
+        print(f"❌ Error: Could not infer horizon for '{args.name}'. Please provide --horizon.")
+        exit(1)
+    
+    # We need to hack StrategyOptimizer slightly because it expects a file in __init__ and uses it in load_parent
+    # We will subclass or modify it on the fly, or just modify the class definition in previous step?
+    # I didn't modify the class definition yet. I only changed imports.
+    
+    # Let's modify the class definition now to handle this.
+    # But I am in the instruction block for "remove find_strategy_context".
+    
+    # I will modify StrategyOptimizer class first in a separate call? 
+    # No, I can do it here if I include the class def in replace.
+    # But the file is large.
+    
+    # I'll stick to replacing the main block and `find_strategy_context` first.
+    # But wait, if I don't modify StrategyOptimizer, I can't pass the dict.
+    # StrategyOptimizer requires `source_file`.
+    
+    # Alternative: Use `find_strategy_in_files` to get the dict, then write it to a temp file? No that's ugly.
+    
+    # I MUST modify StrategyOptimizer to accept direct data.
+    pass
+
+# I will cancel this tool call and do it in two steps.
+# 1. Modify StrategyOptimizer class.
+# 2. Modify Main block and remove find_strategy_context.
+

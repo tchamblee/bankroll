@@ -9,6 +9,7 @@ from feature_engine import FeatureEngine
 from genome import Strategy, RelationalGene, DeltaGene, ZScoreGene, TimeGene, ConsecutiveGene
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
+from backtest.strategy_loader import load_strategies
 import config
 
 def parse_gene_string(gene_str):
@@ -81,8 +82,8 @@ def reconstruct_strategy(strat_dict):
         print(f"Error parsing {name}: {e}")
         return None
 
-def plot_performance(engine, strategies):
-    backtester = BacktestEngine(engine.bars, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
+def plot_performance(df, strategies):
+    backtester = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
     # 1. Generate Full Signal Matrix
     full_signal_matrix = backtester.generate_signal_matrix(strategies)
@@ -152,12 +153,8 @@ def plot_performance(engine, strategies):
     plt.savefig(output_path)
     print(f"📸 Saved OOS Performance Chart to {output_path}")
 
-class MockEngine:
-    def __init__(self, df):
-        self.bars = df
-
-def filter_top_strategies(engine, strategies, top_n=20, chunk_size=1000):
-    backtester = BacktestEngine(engine.bars, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
+def filter_top_strategies(df, strategies, top_n=20, chunk_size=1000):
+    backtester = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     all_results = []
     
     # Chunk Processing
@@ -387,67 +384,33 @@ if __name__ == "__main__":
         sys.exit(1)
         
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    engine = MockEngine(df)
     
-    import glob
-    mutex_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
-    
-    all_strategies_data = []
+    strategies = []
     is_mutex_run = False
     
     if args.file:
         print(f"Loading strategies from {args.file}...")
-        try:
-            with open(args.file, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    all_strategies_data.extend(data)
-                elif isinstance(data, dict):
-                    all_strategies_data.append(data)
-        except Exception as e:
-            print(f"Error loading {args.file}: {e}")
-            sys.exit(1)
-    elif os.path.exists(mutex_path):
-        print(f"Loading Mutex Portfolio from {mutex_path}...")
-        try:
-            with open(mutex_path, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    all_strategies_data.extend(data)
-                    is_mutex_run = True # Flag to run contribution analysis
-                elif isinstance(data, dict):
-                    all_strategies_data.append(data)
-        except Exception as e:
-            print(f"Error loading mutex portfolio: {e}")
+        # Try generic load
+        loaded, _ = load_strategies(args.file)
+        if loaded:
+            strategies.extend(loaded)
+        else:
+            # Fallback to manual load for legacy reconstruction if needed?
+            # load_strategies uses Strategy.from_dict.
+            # If args.file contains legacy logic strings, load_strategies might skip them or fail to parse logic.
+            # But let's assume standard format for now.
+            pass
+
+    elif os.path.exists(os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")):
+        print("Loading Mutex Portfolio...")
+        loaded, _ = load_strategies('mutex')
+        strategies.extend(loaded)
+        is_mutex_run = True
     else:
         print("Mutex Portfolio not found. Scanning for Apex strategies...")
-        apex_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_strategies_*.json"))
-        portfolio_files = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], "apex_portfolio_*.json"))
-        
-        for fpath in apex_files + portfolio_files:
-            try:
-                with open(fpath, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        all_strategies_data.extend(data)
-                    elif isinstance(data, dict):
-                        all_strategies_data.append(data)
-            except Exception as e:
-                print(f"Error loading {fpath}: {e}")
-            
-    strategies = []
-    seen = set()
-    for d in all_strategies_data:
-        s = reconstruct_strategy(d)
-        if s:
-            # Hydrate params if available
-            s.horizon = d.get('horizon', 120)
-            s.stop_loss_pct = d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS)
-            s.take_profit_pct = d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
-            
-            if str(s) not in seen:
-                strategies.append(s)
-                seen.add(str(s))
+        for h in config.PREDICTION_HORIZONS:
+            loaded, _ = load_strategies('all_apex', horizon=h)
+            strategies.extend(loaded)
             
     if not strategies:
         print("No strategies found.")
@@ -458,9 +421,10 @@ if __name__ == "__main__":
         backtester = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
         simulate_mutex_breakdown(strategies, backtester)
     
-    top_strategies = filter_top_strategies(engine, strategies, top_n=20)
+    # Pass df directly
+    top_strategies = filter_top_strategies(df, strategies, top_n=20)
     
     if top_strategies:
-        plot_performance(engine, top_strategies)
+        plot_performance(df, top_strategies)
     else:
         print("No viable strategies found after filtering.")
