@@ -5,7 +5,7 @@ from itertools import combinations
 from typing import List, Tuple, Dict
 import config
 
-def estimated_sharpe_ratio(returns: np.ndarray, annualization_factor: int = 252) -> float:
+def estimated_sharpe_ratio(returns: np.ndarray, annualization_factor: int = config.ANNUALIZATION_FACTOR) -> float:
     """Calculates standard annualized Sharpe Ratio."""
     if len(returns) < 2 or np.std(returns) == 0:
         return 0.0

@@ -149,8 +149,9 @@ class EvaluationMixin:
             stability_ratio = max_win / (total_ret + config.EPSILON)
             
             avg = np.mean(net_returns, axis=0)
-            downside_std = np.std(np.minimum(net_returns, 0), axis=0)
-            downside_std = np.maximum(downside_std, config.EPSILON)
+            # Correct Sortino (RMS of Downside)
+            downside_rms = np.sqrt(np.mean(np.minimum(net_returns, 0)**2, axis=0))
+            downside_std = np.maximum(downside_rms, config.EPSILON)
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             sortino = np.nan_to_num(sortino, nan=-10.0)
@@ -216,7 +217,8 @@ class EvaluationMixin:
             
             avg = np.mean(net_returns, axis=0)
             downside = np.minimum(net_returns, 0)
-            downside_std = np.std(downside, axis=0) + config.EPSILON
+            # Correct Sortino (RMS of Downside)
+            downside_std = np.sqrt(np.mean(downside**2, axis=0)) + config.EPSILON
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
