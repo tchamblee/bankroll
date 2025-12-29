@@ -72,7 +72,6 @@ def main():
     run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
     run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
     run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")
-    run_step("analyze_genome_dna.py", "Genome DNA Analysis")
     run_step("generate_prop_report.py", "Prop Desk Strategy Analysis Reports")
     
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
