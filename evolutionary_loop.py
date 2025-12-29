@@ -548,7 +548,10 @@ class EvolutionaryAlphaFactory:
             existing_data = []
             if os.path.exists(out_path):
                 try:
-                    with open(out_path, "r") as f: existing_data = json.load(f)
+                    with open(out_path, "r") as f: 
+                        raw_existing = json.load(f)
+                        # Filter existing data on the fly to prevent zombies
+                        existing_data = [x for x in raw_existing if x.get('test_return', 0) > 0]
                 except: pass
             
             combined = existing_data + output
