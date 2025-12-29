@@ -69,9 +69,33 @@ def precompute_cot_features(cot_df):
             df[f'{p}_net_change_1w'] = df[net_col].diff()
             
         if sent_col in df.columns:
-            # Sentiment Extremes
-            df[f'{p}_sentiment_extreme'] = np.where(df[sent_col] > 0.8, 1, 
-                                           np.where(df[sent_col] < 0.2, -1, 0))
+            # Sentiment Extremes (Dynamic using Rolling Quantiles)
+            # Fixed thresholds (0.2/0.8) fail because sentiment ranges vary per asset (e.g. ES is structurally negative)
+            
+            # Compute Rolling Quantiles (52 weeks / 1 year)
+            roll_low = df[sent_col].rolling(52, min_periods=20).quantile(0.10)
+            roll_high = df[sent_col].rolling(52, min_periods=20).quantile(0.90)
+            
+            # 1 = Bullish Extreme (Top 10%), -1 = Bearish Extreme (Bottom 10%), 0 = Neutral
+            # logic: Default to NaN. If valid and not extreme, 0. If extreme, 1/-1.
+            
+            sent_ext = pd.Series(np.nan, index=df.index)
+            
+            # Mask for valid comparisons (where both current val and quantiles exist)
+            valid_mask = df[sent_col].notna() & roll_high.notna() & roll_low.notna()
+            
+            if valid_mask.any():
+                # Default valid to 0 (Neutral)
+                sent_ext.loc[valid_mask] = 0.0
+                
+                # Apply Extremes
+                is_high = (df[sent_col] >= roll_high) & valid_mask
+                is_low = (df[sent_col] <= roll_low) & valid_mask
+                
+                sent_ext.loc[is_high] = 1.0
+                sent_ext.loc[is_low] = -1.0
+            
+            df[f'{p}_sentiment_extreme'] = sent_ext
 
     return df
 
@@ -132,30 +156,54 @@ def add_cot_features(bars_df, symbol=None):
     # So we map Report_Date + 4 Days -> Available Date
     cot_df['merge_date'] = cot_df['date'] + pd.Timedelta(days=4)
     
-    # Prepare Bars
-    if 'time_start' not in bars_df.columns: return bars_df
-    bars_df['_date_only'] = bars_df['time_start'].dt.normalize()
-    
-    # Merge
-    # Since COT is weekly, we have gaps. We need to forward fill.
-    # Using merge_asof is better than merge on date for sparse data?
-    # No, merge on date + ffill is standard for daily/weekly to intraday.
-    
-    # Filter COT df to needed cols
+    # Check if cols exist
     cols_to_merge = list(set(cols_to_merge)) # dedup
     # Ensure merge_date is in it
     if 'merge_date' not in cols_to_merge: cols_to_merge.append('merge_date')
+    # Ensure original date is in it for staleness check
+    if 'date' not in cols_to_merge: cols_to_merge.append('date')
     
-    # Check if cols exist
     available_cols = [c for c in cols_to_merge if c in cot_df.columns]
+    cot_subset = cot_df[available_cols].rename(columns={'date': 'cot_report_date'}).sort_values('merge_date').copy()
     
-    merged = pd.merge(bars_df, cot_df[available_cols], left_on='_date_only', right_on='merge_date', how='left')
+    # Ensure bars are sorted
+    if 'time_start' not in bars_df.columns: return bars_df
+    # bars_df should be sorted by time_start for merge_asof
     
-    # Forward Fill features
-    feat_cols = [c for c in available_cols if c != 'merge_date']
-    merged[feat_cols] = merged[feat_cols].ffill()
+    # Use merge_asof to handle the "Last Known Value" logic (Forward Fill effectively)
+    # This solves the issue where merge_date (Saturday) doesn't exist in bars_df (Monday-Friday)
+    merged = pd.merge_asof(
+        bars_df,
+        cot_subset,
+        left_on='time_start',
+        right_on='merge_date',
+        direction='backward'
+    )
     
-    # Cleanup
-    merged.drop(columns=['_date_only', 'merge_date'], inplace=True, errors='ignore')
+    # STALENESS CHECK:
+    # If the carry-forward is too long (e.g. > 30 days), the data is stale (e.g. ZN 2024 data for 2025 bars).
+    # We must set these to NaN so they can be dropped.
+    if 'cot_report_date' in merged.columns:
+        staleness = merged['time_start'] - merged['cot_report_date']
+        is_stale = staleness > pd.Timedelta(days=30)
+        
+        if is_stale.any():
+            # Identify COT columns (excluding keys)
+            cot_feat_cols = [c for c in available_cols if c not in ['merge_date', 'date', 'cot_report_date']]
+            # Mask stale rows
+            merged.loc[is_stale, cot_feat_cols] = np.nan
+            
+    # Cleanup: Remove merge keys
+    merged.drop(columns=['merge_date', 'cot_report_date'], inplace=True, errors='ignore')
     
+    # Validation: Check if newly added columns are entirely NaN in the merged result
+    # This happens if the source COT data stops before the bars begin (e.g., ZN missing in 2025)
+    added_cols = [c for c in available_cols if c != 'merge_date' and c != 'date']
+    if added_cols:
+        # Check for all-NaN columns among the added ones
+        nan_cols = [c for c in added_cols if c in merged.columns and merged[c].isna().all()]
+        if nan_cols:
+            # print(f"Warning: Dropping empty COT features: {nan_cols}") # useful for debug but keep silent for CLI
+            merged.drop(columns=nan_cols, inplace=True)
+
     return merged

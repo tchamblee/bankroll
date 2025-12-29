@@ -455,7 +455,10 @@ async def ingest_stream(ib: IB, stop_event: asyncio.Event):
         
         elif t_conf["mode"] == "BARS_TRADES_1MIN":
             ib.reqMktData(contract, "", False, False)
-            logger.info(f"   ✅ Subscribed Updates: {contract.localSymbol}")
+            if "TICK" in t_conf["name"] or "TRIN" in t_conf["name"]:
+                logger.info(f"   📊 Monitoring Market Breadth: {contract.localSymbol}")
+            else:
+                logger.info(f"   ✅ Subscribed Updates: {contract.localSymbol}")
 
     logger.info("🔴 STREAM ACTIVE. Waiting for events...")
 

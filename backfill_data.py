@@ -404,15 +404,24 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
 
     # Correct whatToShow for Asset Type
     what_to_show = 'TRADES'
+    use_rth_override = USE_RTH
+    
     if contract.secType == 'CASH':
         what_to_show = 'MIDPOINT'
+        
+    # Special handling for Market Internals (TICK/TRIN)
+    if "TICK" in name or "TRIN" in name:
+        # These are strictly RTH (9:30-16:00 ET)
+        # Requesting outside RTH might return empty or errors
+        use_rth_override = True
+        logger.info(f"      [INTERNAL] Fetching Market Breadth: {name} (Forcing RTH)")
 
     MAX_RETRIES = 3
     for retry in range(MAX_RETRIES + 1):
         try:
             bars = await ib.reqHistoricalDataAsync(
                 contract, endDateTime=req_end, durationStr=duration,
-                barSizeSetting='1 min', whatToShow=what_to_show, useRTH=USE_RTH, formatDate=2,
+                barSizeSetting='1 min', whatToShow=what_to_show, useRTH=use_rth_override, formatDate=2,
                 timeout=300.0
             )
             

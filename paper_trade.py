@@ -427,7 +427,11 @@ class PaperTradeApp:
 
     async def run(self):
         try:
-            if not self.load_strategies(): return
+            if not self.load_strategies():
+                logger.warning("⚠️ No strategies found. Running in DATA ONLY mode (Accumulating Bars).")
+            else:
+                logger.info(f"✅ Loaded {len(self.strategies)} strategies.")
+                
             self.data_manager.warmup()
             await self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=CLIENT_ID)
             self.executor = ExecutionEngine(self.strategies)

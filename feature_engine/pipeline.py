@@ -58,13 +58,16 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
 
     # 4. Intermarket Robust Features (ES, ZN, 6E)
     # Pass dictionary of DataFrames
-    intermarket_dfs = {
+    raw_intermarket = {
         '_es': data_cache['es'],
         '_zn': data_cache['zn'],
         '_6e': data_cache['6e'],
-        '_tick_nyse': data_cache['tick_nyse'],
-        '_trin_nyse': data_cache['trin_nyse']
+        '_tick_nyse': data_cache.get('tick_nyse'),
+        '_trin_nyse': data_cache.get('trin_nyse')
     }
+    # Filter out None to avoid warnings in intermarket.py
+    intermarket_dfs = {k: v for k, v in raw_intermarket.items() if v is not None}
+    
     engine.add_intermarket_features(intermarket_dfs)
 
     # DROP REDUNDANT RESIDUALS 
