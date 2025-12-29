@@ -495,6 +495,8 @@ class PaperTradeApp:
                 context[key] = np.load(os.path.join(self.temp_dir, f"{key}.npy"))
             except: pass
             
+        context['__len__'] = len(full_df)
+            
         atr = full_df['atr'].iloc[-1] if 'atr' in full_df.columns else full_df['close'].iloc[-1]*0.001
 
         # --- ENFORCE TRADING HOURS ---

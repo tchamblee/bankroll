@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import config
 
 def add_gdelt_features(df, gdelt_df):
     """
