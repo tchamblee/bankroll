@@ -18,11 +18,16 @@ def clean_inbox():
         val_ret = s.get('val_return', 0.0)
         test_ret = s.get('test_return', 0.0)
         
-        # Strict check: Must be >= MIN_RETURN_THRESHOLD in ALL sets
+        # Strict check: Train/Val must be >= Threshold (In-Sample Quality)
+        # Test must be > 0 (OOS Profitability - just don't lose money)
         threshold = config.MIN_RETURN_THRESHOLD
-        if train_ret < threshold or val_ret < threshold or test_ret < threshold:
-            removed_count += 1
-            print(f"Removing {s['name']}: Train {train_ret*100:.2f}%, Val {val_ret*100:.2f}%, Test {test_ret*100:.2f}%")
+        
+        if train_ret < threshold or val_ret < threshold:
+             removed_count += 1
+             print(f"Removing {s['name']} (In-Sample): Train {train_ret*100:.2f}%, Val {val_ret*100:.2f}%")
+        elif test_ret <= 0:
+             removed_count += 1
+             print(f"Removing {s['name']} (OOS Failure): Test {test_ret*100:.2f}%")
         else:
             cleaned.append(s)
             

@@ -477,6 +477,12 @@ class EvolutionaryAlphaFactory:
                     te_stats = test_map.get(s.name, {'total_return': 0.0, 'sortino': 0.0, 'trades': 0})
 
                     test_ret = te_stats['total_return']
+                    
+                    # --- FINAL GATE: Test Performance Check ---
+                    # The user explicitly requested: "Strategies that do poorly in test should NOT be allowed in inbox."
+                    if test_ret <= 0:
+                         continue
+
                     test_r_vec = test_returns[:, i]
                     test_sr = estimated_sharpe_ratio(test_r_vec, config.ANNUALIZATION_FACTOR)
                     

@@ -45,14 +45,12 @@ class BacktestEngine:
         # Stored for passed to TradeSimulator
         self.cost_bps = cost_bps if cost_bps is not None else config.COST_BPS
         self.spread_bps = spread_bps if spread_bps is not None else config.SPREAD_BPS
+        self.min_comm = fixed_cost # "fixed_cost" argument acts as min_comm
         
-        # Variable Commission: 0.2 bps (0.00002)
-        var_comm_pct = self.cost_bps / 10000.0
-        # Fixed Commission approximation
-        fixed_comm_pct = fixed_cost / config.STANDARD_LOT_SIZE
-        effective_comm_pct = max(var_comm_pct, fixed_comm_pct)
-        
-        self.effective_cost_bps = effective_comm_pct * 10000.0
+        # Variable Commission: 0.20 bps (0.00002)
+        # We pass this raw to the simulator which handles the max(min, variable) logic.
+        # self.effective_cost_bps is just the variable rate now.
+        self.effective_cost_bps = self.cost_bps
         
         # Pre-calculate log returns if needed (mostly for reference now)
         if target_col == 'log_ret' and 'log_ret' not in self.raw_data.columns:
@@ -239,6 +237,7 @@ class BacktestEngine:
                 times, 
                 self.spread_bps, 
                 self.effective_cost_bps, 
+                self.min_comm,
                 self.standard_lot, 
                 self.account_size,
                 time_limit,

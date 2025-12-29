@@ -21,7 +21,7 @@ def _worker_generate_signals(strategies, context_dir):
         
     return chunk_matrix
 
-def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, standard_lot, account_size, time_limit, hours, weekdays, highs, lows, atr=None):
+def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, effective_cost_bps, min_comm, standard_lot, account_size, time_limit, hours, weekdays, highs, lows, atr=None):
     """
     Worker function to simulate a chunk of strategy signals.
     """
@@ -30,6 +30,7 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
         times=times,
         spread_bps=spread_bps,
         cost_bps=effective_cost_bps,
+        min_comm=min_comm,
         lot_size=standard_lot,
         account_size=account_size
     )

@@ -9,7 +9,7 @@ import config
 def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
                        highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,
-                       lot_size: float, spread_pct: float, comm_pct: float, 
+                       lot_size: float, spread_pct: float, comm_pct: float, min_comm: float,
                        account_size: float, sl_mult: float, 
                        tp_mult: float, time_limit_bars: int) -> Tuple[np.ndarray, int]:
     """
@@ -141,17 +141,41 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             pos_change = abs(curr_pos - prev_pos)
             
             # Dynamic Slippage (10% of ATR)
-            slippage = 0.1 * atr_vec[i]
-            cost = pos_change * lot_size * (current_price * (0.5 * spread_pct + comm_pct) + slippage)
+            slippage = 0.1 * atr_vec[i] * lot_size * pos_change
+            
+            # Spread Cost
+            spread_cost = pos_change * lot_size * current_price * (0.5 * spread_pct)
+            
+            # Commission (Max of Variable vs Min)
+            raw_comm = pos_change * lot_size * current_price * comm_pct
+            # If pos_change > 0 (trade happened), apply min. Else 0.
+            # However, pos_change is float. If partial trade?
+            # Assuming 'min_comm' applies per order.
+            # If pos_change is significant (e.g. > 0.01 lots), we charge min.
+            
+            comm = 0.0
+            if pos_change > 1e-6:
+                comm = max(min_comm, raw_comm)
+            
+            cost = spread_cost + comm + slippage
             
             net_pnl = gross_pnl - cost
             net_returns[i] = net_pnl / account_size
             if pos_change > 0: trade_count += 1
         else:
             pos_change = abs(curr_pos - 0.0)
+            
             # Dynamic Slippage (10% of ATR)
-            slippage = 0.1 * atr_vec[i]
-            cost = pos_change * lot_size * (prices[i] * (0.5 * spread_pct + comm_pct) + slippage)
+            slippage = 0.1 * atr_vec[i] * lot_size * pos_change
+            
+            spread_cost = pos_change * lot_size * prices[i] * (0.5 * spread_pct)
+            raw_comm = pos_change * lot_size * prices[i] * comm_pct
+            
+            comm = 0.0
+            if pos_change > 1e-6:
+                comm = max(min_comm, raw_comm)
+            
+            cost = spread_cost + comm + slippage
             
             net_returns[i] = -cost / account_size
             if pos_change > 0: trade_count += 1
@@ -182,6 +206,7 @@ class TradeSimulator:
                  times: pd.Series,
                  spread_bps: float = config.SPREAD_BPS, 
                  cost_bps: float = config.COST_BPS,
+                 min_comm: float = 2.0,
                  lot_size: float = config.STANDARD_LOT_SIZE,
                  account_size: float = config.ACCOUNT_SIZE):
         
@@ -202,6 +227,7 @@ class TradeSimulator:
         # Cost Model
         self.spread_pct = spread_bps / 10000.0
         self.comm_pct = cost_bps / 10000.0
+        self.min_comm = min_comm
         self.lot_size = lot_size
         self.account_size = account_size
 
@@ -286,7 +312,16 @@ class TradeSimulator:
             
             if target_pos != position:
                 change = target_pos - position
-                cost = abs(change) * self.lot_size * price * (0.5 * self.spread_pct + self.comm_pct)
+                
+                # Cost Calculation
+                spread_cost = abs(change) * self.lot_size * price * (0.5 * self.spread_pct)
+                raw_comm = abs(change) * self.lot_size * price * self.comm_pct
+                
+                comm = 0.0
+                if abs(change) > 1e-6:
+                     comm = max(self.min_comm, raw_comm)
+                
+                cost = spread_cost + comm
                 step_pnl -= cost
                 
                 if position != 0:
@@ -354,6 +389,7 @@ class TradeSimulator:
             self.lot_size,
             self.spread_pct,
             self.comm_pct,
+            self.min_comm,
             self.account_size,
             sl_mult,
             tp_mult,
