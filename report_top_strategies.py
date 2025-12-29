@@ -63,12 +63,38 @@ def main():
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     backtester = BacktestEngine(base_df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
-    horizons = config.PREDICTION_HORIZONS
+    # NEW LOGIC: Load from Candidates File
+    candidates_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+    if not os.path.exists(candidates_path):
+         print("❌ No candidates.json found.")
+         sys.exit(0)
+         
+    with open(candidates_path, 'r') as f:
+        candidate_dicts = json.load(f)
+        
+    if not candidate_dicts:
+        print("❌ Candidate list is empty.")
+        sys.exit(0)
+
+    strategies_by_horizon = {}
+    for d in candidate_dicts:
+        s = Strategy.from_dict(d)
+        # Manually attach horizon
+        h = d.get('horizon')
+        if h is None:
+             print(f"⚠️ Strategy {s.name} missing horizon. Skipping.")
+             continue
+        s.horizon = h
+        if h not in strategies_by_horizon:
+            strategies_by_horizon[h] = []
+        strategies_by_horizon[h].append(s)
+
+    sorted_horizons = sorted(strategies_by_horizon.keys())
     global_gene_counts = Counter()
     
-    for h in horizons:
+    for h in sorted_horizons:
         print(f"\n--- Horizon: {h} Bars ---")
-        strategies, _ = load_strategies('all_apex', horizon=h, load_metrics=False)
+        strategies = strategies_by_horizon[h]
         
         if not strategies: 
             continue

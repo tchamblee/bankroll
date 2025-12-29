@@ -295,27 +295,8 @@ if __name__ == "__main__":
         print(f"❌ Error: Could not infer horizon for '{args.name}'. Please provide --horizon.")
         exit(1)
     
-    # We need to hack StrategyOptimizer slightly because it expects a file in __init__ and uses it in load_parent
-    # We will subclass or modify it on the fly, or just modify the class definition in previous step?
-    # I didn't modify the class definition yet. I only changed imports.
-    
-    # Let's modify the class definition now to handle this.
-    # But I am in the instruction block for "remove find_strategy_context".
-    
-    # I will modify StrategyOptimizer class first in a separate call? 
-    # No, I can do it here if I include the class def in replace.
-    # But the file is large.
-    
-    # I'll stick to replacing the main block and `find_strategy_context` first.
-    # But wait, if I don't modify StrategyOptimizer, I can't pass the dict.
-    # StrategyOptimizer requires `source_file`.
-    
-    # Alternative: Use `find_strategy_in_files` to get the dict, then write it to a temp file? No that's ugly.
-    
-    # I MUST modify StrategyOptimizer to accept direct data.
-    pass
-
-# I will cancel this tool call and do it in two steps.
-# 1. Modify StrategyOptimizer class.
-# 2. Modify Main block and remove find_strategy_context.
+    optimizer = StrategyOptimizer(args.name, source_file=file_path, horizon=horizon, strategy_dict=target_dict)
+    optimizer.load_parent()
+    optimizer.generate_variants(n_jitter=20, n_mutants=20)
+    optimizer.evaluate_and_report()
 
