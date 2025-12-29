@@ -58,7 +58,19 @@ def add_intermarket_features(primary_df, correlator_dfs):
             right_on='ts_event',
             direction='backward'
         )
-        
+
+        # Special Handling for Market Internals (TICK/TRIN) which are Stationary Levels
+        if 'tick' in suffix.lower() or 'trin' in suffix.lower():
+            # Just add the Level and a Z-Score
+            df[f'level{suffix}'] = merged[f'price{suffix}'].fillna(method='ffill')
+            
+            # Simple Z-Score (Regime) - Short term (50) and Long term (200)
+            roll_mean = df[f'level{suffix}'].rolling(50).mean()
+            roll_std = df[f'level{suffix}'].rolling(50).std().replace(0, 1)
+            df[f'zscore_50{suffix}'] = (df[f'level{suffix}'] - roll_mean) / roll_std
+            
+            continue # Skip the Returns/Correlation logic for these
+
         # Calculate Returns of Correlator aligned to Primary Bars
         # Ret = ln(P_t / P_{t-1})
         merged[f'ret{suffix}'] = np.log(merged[f'price{suffix}'] / merged[f'price{suffix}'].shift(1))

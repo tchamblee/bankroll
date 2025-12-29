@@ -87,6 +87,23 @@ def precompute_fred_derived(fred_df):
     if 'inflation_breakeven' in df.columns:
         df['inflation_expectations_trend'] = df['inflation_breakeven'].diff(20)
 
+    # 4. VIX Regime (Volatility)
+    if 'vix' in df.columns:
+        df['vix_zscore_60d'] = (df['vix'] - df['vix'].rolling(60).mean()) / df['vix'].rolling(60).std()
+        df['vix_trend_10d'] = df['vix'].diff(10)
+        
+        if 'vix3m' in df.columns:
+            # VIX Term Structure: Spot VIX / 3-Month VIX
+            # Ratio > 1.0 = Backwardation (Extreme Fear)
+            # Ratio < 0.9 = Contango (Normal Bull Market)
+            df['vix_term_structure'] = df['vix'] / df['vix3m'].replace(0, 1)
+
+    # 5. Financial Conditions (NFCI)
+    if 'financial_conditions' in df.columns:
+        # NFCI is weekly. Forward fill should handle it, but trends might be step-like.
+        df['nfci_level'] = df['financial_conditions'] # Already Z-score like (0 = Avg)
+        df['nfci_delta_4w'] = df['financial_conditions'].diff(20) # Approx 1 month (20 trading days)
+
     return df
 
 def add_fred_features_v2(bars_df):
@@ -119,7 +136,8 @@ def add_fred_features_v2(bars_df):
     # Merge
     # Select only feature columns + merge key
     cols_to_use = ['merge_date', 'net_liquidity_bil', 'net_liq_zscore_60d', 'net_liq_trend_20d', 
-                   'credit_spread', 'credit_stress_zscore_60d', 'inflation_breakeven', 'inflation_expectations_trend']
+                   'credit_spread', 'credit_stress_zscore_60d', 'inflation_breakeven', 'inflation_expectations_trend',
+                   'vix_zscore_60d', 'vix_trend_10d', 'nfci_level', 'nfci_delta_4w', 'vix_term_structure']
     cols_present = [c for c in cols_to_use if c in fred_df.columns]
     
     merged = pd.merge(bars_df, fred_df[cols_present], left_on='_date_only', right_on='merge_date', how='left')

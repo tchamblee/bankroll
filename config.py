@@ -177,5 +177,21 @@ TARGETS = [
         "currency": "USD",
         "exchange": "CBOT",
         "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "TICK_NYSE",
+        "symbol": "TICK-NYSE",
+        "secType": "IND",
+        "currency": "USD",
+        "exchange": "NYSE",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "TRIN_NYSE",
+        "symbol": "TRIN-NYSE",
+        "secType": "IND",
+        "currency": "USD",
+        "exchange": "NYSE",
+        "mode": "BARS_TRADES_1MIN",
     }
 ]

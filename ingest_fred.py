@@ -17,7 +17,10 @@ SERIES_MAP = {
     'WTREGEN': 'tga_balance',     # Weekly (Wed) - Treasury General Account
     'RRPONTSYD': 'reverse_repo',  # Daily - Overnight Reverse Repurchase Agreements
     'BAMLC0A0CM': 'credit_spread',# Daily - ICE BofA US Corp Master Option-Adjusted Spread
-    'T10YIE': 'inflation_breakeven' # Daily - 10-Year Breakeven Inflation Rate
+    'T10YIE': 'inflation_breakeven', # Daily - 10-Year Breakeven Inflation Rate
+    'VIXCLS': 'vix',              # Daily - CBOE Volatility Index
+    'VXVCLS': 'vix3m',            # Daily - CBOE 3-Month Volatility Index
+    'NFCI': 'financial_conditions' # Weekly - Chicago Fed National Financial Conditions Index
 }
 
 def fetch_series(series_id, start_date=None):

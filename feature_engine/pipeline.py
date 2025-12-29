@@ -2,6 +2,7 @@ import config
 from .core import FeatureEngine
 from .seasonality import add_seasonality_features
 from .fred import add_fred_features_v2 as add_fred_features
+from .cot import add_cot_features
 
 def create_full_feature_engine(data_dir=None, volume_threshold=250):
     """
@@ -40,7 +41,9 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         'es': "CLEAN_ES.parquet",
         'zn': "CLEAN_ZN.parquet",
         '6e': "CLEAN_6E.parquet",
-        'ibit': "CLEAN_IBIT.parquet"
+        'ibit': "CLEAN_IBIT.parquet",
+        'tick_nyse': "CLEAN_TICK_NYSE.parquet",
+        'trin_nyse': "CLEAN_TRIN_NYSE.parquet"
     }
     
     data_cache = {}
@@ -58,7 +61,9 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     intermarket_dfs = {
         '_es': data_cache['es'],
         '_zn': data_cache['zn'],
-        '_6e': data_cache['6e']
+        '_6e': data_cache['6e'],
+        '_tick_nyse': data_cache['tick_nyse'],
+        '_trin_nyse': data_cache['trin_nyse']
     }
     engine.add_intermarket_features(intermarket_dfs)
 
@@ -111,5 +116,9 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
     # 12. FRED Macro Features (NEW)
     if engine.bars is not None:
         engine.bars = add_fred_features(engine.bars)
+
+    # 13. COT Positioning Features (NEW)
+    if engine.bars is not None:
+        engine.bars = add_cot_features(engine.bars)
     
     return engine
