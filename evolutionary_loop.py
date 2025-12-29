@@ -396,7 +396,7 @@ class EvolutionaryAlphaFactory:
                 # 2. Positive Return + High Stability (Conservative/Sniper) -> Pass
                 
                 min_ret_threshold = config.MIN_RETURN_THRESHOLD
-                min_sortino_threshold = 1.5 # Allow low-return strategies if they are very stable
+                min_sortino_threshold = 1.65 # Allow low-return strategies if they are very stable
                 
                 passed_gate = False
                 rejection_reason = []

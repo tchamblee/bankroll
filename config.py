@@ -52,8 +52,8 @@ ANNUALIZATION_FACTOR = 189000
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
-MIN_TRADES_FOR_METRICS = 60
-MIN_TRADES_COEFFICIENT = 5000 # target = max(60, coeff/horizon + 5)
+MIN_TRADES_FOR_METRICS = 30
+MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
 
 # --- DATA & VALIDATION SETTINGS ---
