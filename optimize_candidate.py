@@ -24,7 +24,7 @@ class StrategyOptimizer:
         # Initialize Backtester if not provided
         if backtester:
             self.backtester = backtester
-            self.data = backtester.data
+            self.data = backtester.raw_data
         else:
             if self.verbose: print("Loading Feature Matrix...")
             self.data = data if data is not None else pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
