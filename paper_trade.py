@@ -300,6 +300,8 @@ class ExecutionEngine:
         self.position = 0 
         self.entry_price = 0.0
         self.active_strat_idx = -1
+        self.current_sl = 0.0
+        self.current_tp = 0.0
         self.cooldowns = np.zeros(len(strategies), dtype=int)
         self.lot_size = cfg.STANDARD_LOT_SIZE
         
@@ -317,6 +319,8 @@ class ExecutionEngine:
                     self.position = state.get('position', 0)
                     self.entry_price = state.get('entry_price', 0.0)
                     self.active_strat_idx = state.get('active_strat_idx', -1)
+                    self.current_sl = state.get('current_sl', 0.0)
+                    self.current_tp = state.get('current_tp', 0.0)
                     
                     self.balance = state.get('balance', cfg.ACCOUNT_SIZE)
                     self.realized_pnl = state.get('realized_pnl', 0.0)
@@ -335,6 +339,8 @@ class ExecutionEngine:
                 'position': int(self.position),
                 'entry_price': float(self.entry_price),
                 'active_strat_idx': int(self.active_strat_idx),
+                'current_sl': float(self.current_sl),
+                'current_tp': float(self.current_tp),
                 'cooldowns': self.cooldowns.tolist(),
                 'balance': float(self.balance),
                 'realized_pnl': float(self.realized_pnl),
@@ -375,20 +381,24 @@ class ExecutionEngine:
             logger.info(f"📝 VIRTUAL EXIT: {reason} @ {current_price:.5f}")
             
             # --- PnL Calculation ---
-            raw_pnl = (current_price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
-            comm = self.calculate_commission(self.entry_price, self.position) + \
-                   self.calculate_commission(current_price, self.position)
-            net_pnl = raw_pnl - comm
-            
-            self.balance += net_pnl
-            self.realized_pnl += net_pnl
-            logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            try:
+                raw_pnl = (current_price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
+                comm = self.calculate_commission(self.entry_price, self.position) + \
+                       self.calculate_commission(current_price, self.position)
+                net_pnl = raw_pnl - comm
+                
+                self.balance += net_pnl
+                self.realized_pnl += net_pnl
+                logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            except Exception as e:
+                logger.error(f"❌ PnL Calculation Error: {e}")
             # -----------------------
 
             # Capture index BEFORE resetting
             idx_to_cool = self.active_strat_idx
             
             self.position, self.active_strat_idx, self.entry_price = 0, -1, 0.0
+            self.current_sl, self.current_tp = 0.0, 0.0
             
             if reason == "SL":
                 self.cooldowns[idx_to_cool] = cfg.STOP_LOSS_COOLDOWN_BARS
@@ -405,7 +415,23 @@ class ExecutionEngine:
 
     async def execute_signal(self, signal, strat_idx, price, atr):
         self.last_atr = atr
-        if signal == self.position: return
+        if signal == self.position:
+            # Ensure SL/TP are hydrated for the dashboard even on restored positions
+            if self.position != 0 and (self.current_sl == 0.0 or self.current_tp == 0.0):
+                try:
+                    strat = self.strategies[self.active_strat_idx]
+                    sl_dist = atr * strat.stop_loss_pct
+                    tp_dist = atr * strat.take_profit_pct
+                    if self.position > 0:
+                        self.current_sl = self.entry_price - sl_dist
+                        self.current_tp = self.entry_price + tp_dist
+                    else:
+                        self.current_sl = self.entry_price + sl_dist
+                        self.current_tp = self.entry_price - tp_dist
+                    self.save_state()
+                except Exception as e:
+                    logger.error(f"❌ Failed to hydrate SL/TP on restore: {e}")
+            return
         
         state_changed = False
         
@@ -413,23 +439,40 @@ class ExecutionEngine:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
             
             # --- PnL Calculation ---
-            raw_pnl = (price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
-            comm = self.calculate_commission(self.entry_price, self.position) + \
-                   self.calculate_commission(price, self.position)
-            net_pnl = raw_pnl - comm
-            
-            self.balance += net_pnl
-            self.realized_pnl += net_pnl
-            logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            try:
+                raw_pnl = (price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
+                comm = self.calculate_commission(self.entry_price, self.position) + \
+                       self.calculate_commission(price, self.position)
+                net_pnl = raw_pnl - comm
+                
+                self.balance += net_pnl
+                self.realized_pnl += net_pnl
+                logger.info(f"💰 Trade PnL: ${net_pnl:.2f} | Bal: ${self.balance:.2f}")
+            except Exception as e:
+                logger.error(f"❌ PnL Calculation Error: {e}")
             # -----------------------
 
             self.position = 0
+            self.current_sl, self.current_tp = 0.0, 0.0
             state_changed = True
             
         if signal != 0:
             action = 'BUY' if signal > 0 else 'SELL'
             logger.info(f"📝 VIRTUAL ENTRY: {action} {abs(signal)} lots (Strat {strat_idx}) @ {price:.5f}")
             self.position, self.active_strat_idx, self.entry_price = signal, strat_idx, price
+            
+            # Calculate SL/TP
+            strat = self.strategies[strat_idx]
+            sl_dist = atr * strat.stop_loss_pct
+            tp_dist = atr * strat.take_profit_pct
+            
+            if signal > 0: # Long
+                self.current_sl = price - sl_dist
+                self.current_tp = price + tp_dist
+            else: # Short
+                self.current_sl = price + sl_dist
+                self.current_tp = price - tp_dist
+                
             state_changed = True
             
         if state_changed:
@@ -584,8 +627,9 @@ class PaperTradeApp:
                     break
             except Exception as e: 
                 logger.error(f"Strategy {i} Error: {e}")
-                
-        await self.executor.execute_signal(active_sig, active_idx, full_df['close'].iloc[-1], atr)
+        
+        if active_sig != 0:
+            await self.executor.execute_signal(active_sig, active_idx, full_df['close'].iloc[-1], atr)
 
 if __name__ == "__main__":
     app = PaperTradeApp()

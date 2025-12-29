@@ -3,6 +3,7 @@ import json
 import random
 import subprocess
 import numpy as np
+import pandas as pd
 import scipy.stats
 import config
 from genome import Strategy

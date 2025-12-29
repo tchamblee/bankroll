@@ -134,7 +134,7 @@ def format_age(seconds):
 
 # --- MAIN UI ---
 
-st.title("💸 Bankroll Paper Trade Cockpit")
+st.title("Paper Trade Dashboard")
 
 # Sidebar
 st.sidebar.header("Controls")
@@ -239,7 +239,21 @@ if view == "Cockpit":
         # Add Entry Line if active
         if state and state.get("position", 0) != 0:
             entry_price = state.get("entry_price", 0.0)
-            fig.add_hline(y=entry_price, line_dash="dash", line_color="blue", annotation_text="Active Entry")
+            position = state.get("position", 0)
+            
+            # Entry Line
+            color = "green" if position > 0 else "red"
+            label = f"Active {'LONG' if position > 0 else 'SHORT'} Entry"
+            fig.add_hline(y=entry_price, line_dash="solid", line_color=color, annotation_text=label)
+            
+            # SL/TP Lines
+            current_sl = state.get("current_sl", 0.0)
+            current_tp = state.get("current_tp", 0.0)
+            
+            if current_sl > 0:
+                fig.add_hline(y=current_sl, line_dash="dash", line_color="red", annotation_text="Stop Loss")
+            if current_tp > 0:
+                fig.add_hline(y=current_tp, line_dash="dash", line_color="green", annotation_text="Take Profit")
 
         # Add Historical Trade Markers
         if not trade_events.empty:

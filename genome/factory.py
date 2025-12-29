@@ -55,7 +55,6 @@ class GenomeFactory:
                           'time_hour', 'time_weekday', 'log_ret', 'target', 'symbol'}
             self.features = [c for c in df.columns if c not in ignore_cols and not c.startswith('metadata_')]
             self.update_pools()
-            print(f"  GenomeFactory: Auto-detected {len(self.features)} features from Dataframe.")
 
         for f in self.features:
             if f in df.columns:
