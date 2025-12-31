@@ -38,154 +38,142 @@ def find_contract_for_date(chain, target_date, days_offset=10):
     return None
 
 async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: datetime, end_dt: datetime):
-    """Specific logic for dense tick-by-tick data (FX/Futures)"""
+    """Specific logic for dense tick-by-tick data (FX/Futures) with GAP DETECTION."""
     date_str = end_dt.strftime("%Y%m%d")
     filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"{cfg.RAW_DATA_PREFIX_TICKS}_{name}_{date_str}.parquet")
 
-    existing_max_ts = None
+    # 1. Detect Gaps
+    fetch_ranges = [] # list of (start, end)
+    GAP_THRESHOLD_SEC = 1800 # 30 mins
 
     if os.path.exists(filename):
         try:
             existing_df = pd.read_parquet(filename, columns=["ts_event"])
             if not existing_df.empty:
-                last_ts = existing_df["ts_event"].max()
-                if last_ts.tzinfo is None: last_ts = last_ts.replace(tzinfo=timezone.utc)
-                existing_max_ts = last_ts
-                if (end_dt - last_ts).total_seconds() < 14400: 
-                    logger.info(f"   [SKIP] {name} {date_str} exists and looks complete (Last: {last_ts}).")
-                    return
-                else:
-                    logger.warning(f"   [REPAIR] {name} {date_str} ends early ({last_ts}). Fetching missing tail...")
-            else:
-                logger.warning(f"   [REPAIR] {name} {date_str} exists but is empty. Re-fetching...")
-        except Exception as e:
-             logger.warning(f"   [REPAIR] {name} {date_str} exists but could not be read ({e}). Re-fetching...")
+                existing_df = existing_df.sort_values("ts_event")
+                timestamps = existing_df["ts_event"].dt.to_pydatetime()
+                # Ensure UTC
+                if timestamps[0].tzinfo is None:
+                    timestamps = [t.replace(tzinfo=timezone.utc) for t in timestamps]
+                
+                # Check Head
+                if (timestamps[0] - start_dt).total_seconds() > GAP_THRESHOLD_SEC:
+                    logger.warning(f"   [GAP] {name} {date_str}: Missing HEAD ({start_dt} -> {timestamps[0]})")
+                    fetch_ranges.append((start_dt, timestamps[0]))
+                
+                # Check Internal Gaps
+                for i in range(len(timestamps) - 1):
+                    diff = (timestamps[i+1] - timestamps[i]).total_seconds()
+                    if diff > GAP_THRESHOLD_SEC:
+                        logger.warning(f"   [GAP] {name} {date_str}: Missing INTERNAL ({timestamps[i]} -> {timestamps[i+1]} | {diff/60:.0f}m)")
+                        fetch_ranges.append((timestamps[i], timestamps[i+1]))
 
-    logger.info(f"   [TICK] Fetching {name} for {date_str}...")
-    current_end = end_dt
-    total_saved = 0
-    buffer = []
-    
+                # Check Tail
+                if (end_dt - timestamps[-1]).total_seconds() > 14400: # 4h tail check (same as before)
+                     logger.warning(f"   [GAP] {name} {date_str}: Missing TAIL ({timestamps[-1]} -> {end_dt})")
+                     fetch_ranges.append((timestamps[-1], end_dt))
+                
+                if not fetch_ranges:
+                    logger.info(f"   [SKIP] {name} {date_str} looks complete.")
+                    return
+            else:
+                logger.warning(f"   [REPAIR] {name} {date_str} exists but is empty. Re-fetching ALL.")
+                fetch_ranges.append((start_dt, end_dt))
+        except Exception as e:
+             logger.warning(f"   [REPAIR] {name} {date_str} exists but could not be read ({e}). Re-fetching ALL.")
+             fetch_ranges.append((start_dt, end_dt))
+    else:
+        fetch_ranges.append((start_dt, end_dt))
+
+    # 2. Process Each Gap
     what_to_show = "BID_ASK"
     if contract.secType in ["FUT", "CONTFUT", "STK"]:
         what_to_show = "BID_ASK" 
 
-    retries = 0
-    MAX_RETRIES = 5
-    PACING_SLEEP = 11.0 
-
-    while True:
-        if bf_cfg.STOP_REQUESTED:
-            logger.info("🛑 Stop requested. Aborting tick fetch.")
-            break
-
-        if existing_max_ts and current_end <= existing_max_ts:
-            logger.info(f"      [MERGE] Reached existing data at {current_end}. Stopping fetch.")
-            break
-
-        try:
-            if len(buffer) > 0: 
-                await asyncio.sleep(PACING_SLEEP)
-
-            ticks = await asyncio.wait_for(
-                ib.reqHistoricalTicksAsync(
-                    contract, startDateTime=None, endDateTime=current_end,
-                    numberOfTicks=1000, whatToShow=what_to_show, useRth=USE_RTH, ignoreSize=False
-                ),
-                timeout=300.0
-            )
-            
-            retries = 0
-
-            if not ticks:
-                break
-                
-            valid_ticks = [t for t in ticks if t.time >= start_dt]
-            if not valid_ticks:
-                break
-                
-            buffer.extend(valid_ticks)
-            current_end = ticks[0].time - timedelta(microseconds=1)
-            
-            if len(buffer) >= 10000:
-                data = []
-                for t in buffer:
-                    if isinstance(t, HistoricalTickBidAsk):
-                        data.append({
-                            "ts_event": t.time, "pricebid": t.priceBid, "priceask": t.priceAsk,
-                            "sizebid": t.sizeBid, "sizeask": t.sizeAsk,
-                            "last_price": float("nan"), "last_size": float("nan"), "volume": float("nan")
-                        })
-                    elif isinstance(t, (HistoricalTickLast, HistoricalTick)):
-                        data.append({
-                            "ts_event": t.time, "pricebid": float("nan"), "priceask": float("nan"),
-                            "sizebid": float("nan"), "sizeask": float("nan"),
-                            "last_price": t.price, "last_size": t.size, "volume": float("nan")
-                        })
-                
-                if data:
-                    df = pd.DataFrame(data).drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
-                    
-                    if os.path.exists(filename):
-                        existing_df = pd.read_parquet(filename)
-                        combined_df = pd.concat([existing_df, df], ignore_index=True)
-                        combined_df = combined_df.drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
-                        combined_df = combined_df.sort_values(by="ts_event")
-                        combined_df.to_parquet(filename, index=False)
-                    else:
-                        df = df.sort_values(by="ts_event")
-                        df.to_parquet(filename, index=False)
-                        
-                    total_saved += len(data)
-                    logger.info(f"      Saved {len(data)} ticks (Total: {total_saved}). Cursor: {current_end}")
-                
-                buffer = []
-
-        except (asyncio.TimeoutError, Exception) as e:
-            retries += 1
-            if retries > MAX_RETRIES:
-                logger.error(f"      MAX RETRIES EXCEEDED fetching ticks for {name} @ {current_end}. Error: {e}")
-                break
-            
-            is_pacing_error = "162" in str(e) or "cancelled" in str(e).lower()
-            
-            if is_pacing_error:
-                wait_time = 600 
-                logger.warning(f"      PACING VIOLATION detected for {name}. Sleeping {wait_time}s to reset IBKR limits...")
-            else:
-                wait_time = 5 * retries
-                logger.warning(f"      Retry {retries}/{MAX_RETRIES} fetching ticks for {name} @ {current_end} after error: {e}. Waiting {wait_time}s...")
-            
-            await asyncio.sleep(wait_time)
-            
-    if buffer:
-        data = []
-        for t in buffer:
-            if isinstance(t, HistoricalTickBidAsk):
-                data.append({
-                    "ts_event": t.time, "pricebid": t.priceBid, "priceask": t.priceAsk,
-                    "sizebid": t.sizeBid, "sizeask": t.sizeAsk,
-                    "last_price": float("nan"), "last_size": float("nan"), "volume": float("nan")
-                })
-            elif isinstance(t, (HistoricalTickLast, HistoricalTick)):
-                data.append({
-                    "ts_event": t.time, "pricebid": float("nan"), "priceask": float("nan"),
-                    "sizebid": float("nan"), "sizeask": float("nan"),
-                    "last_price": t.price, "last_size": t.size, "volume": float("nan")
-                })
+    for rng_start, rng_end in fetch_ranges:
+        logger.info(f"   [TICK] Fetching {name} range: {rng_start.strftime('%H:%M')} -> {rng_end.strftime('%H:%M')}...")
+        current_end = rng_end
+        buffer = []
+        retries = 0
+        MAX_RETRIES = 5
+        PACING_SLEEP = 11.0 
         
-        if data:
-            df = pd.DataFrame(data).drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
-            if os.path.exists(filename):
+        while True:
+            if bf_cfg.STOP_REQUESTED: break
+            if current_end <= rng_start: break
+
+            try:
+                if len(buffer) > 0: await asyncio.sleep(PACING_SLEEP)
+
+                ticks = await asyncio.wait_for(
+                    ib.reqHistoricalTicksAsync(
+                        contract, startDateTime=None, endDateTime=current_end,
+                        numberOfTicks=1000, whatToShow=what_to_show, useRth=USE_RTH, ignoreSize=False
+                    ),
+                    timeout=300.0
+                )
+                
+                retries = 0
+                if not ticks: break
+                
+                # Filter strictly within range
+                valid_ticks = [t for t in ticks if t.time >= rng_start and t.time <= rng_end]
+                if not valid_ticks: break
+                    
+                buffer.extend(valid_ticks)
+                current_end = ticks[0].time - timedelta(microseconds=1)
+                
+                # Flush Buffer Logic
+                if len(buffer) >= 10000 or current_end <= rng_start:
+                    _save_buffer_to_parquet(buffer, filename)
+                    buffer = []
+
+            except (asyncio.TimeoutError, Exception) as e:
+                retries += 1
+                if retries > MAX_RETRIES:
+                    logger.error(f"      MAX RETRIES EXCEEDED. Error: {e}")
+                    break
+                
+                is_pacing_error = "162" in str(e) or "cancelled" in str(e).lower()
+                if is_pacing_error:
+                    logger.warning(f"      PACING VIOLATION. Sleeping 600s...")
+                    await asyncio.sleep(600)
+                else:
+                    await asyncio.sleep(5 * retries)
+
+        # Final flush for this range
+        if buffer: _save_buffer_to_parquet(buffer, filename)
+
+def _save_buffer_to_parquet(buffer, filename):
+    data = []
+    for t in buffer:
+        if isinstance(t, HistoricalTickBidAsk):
+            data.append({
+                "ts_event": t.time, "pricebid": t.priceBid, "priceask": t.priceAsk,
+                "sizebid": t.sizeBid, "sizeask": t.sizeAsk,
+                "last_price": float("nan"), "last_size": float("nan"), "volume": float("nan")
+            })
+        elif isinstance(t, (HistoricalTickLast, HistoricalTick)):
+            data.append({
+                "ts_event": t.time, "pricebid": float("nan"), "priceask": float("nan"),
+                "sizebid": float("nan"), "sizeask": float("nan"),
+                "last_price": t.price, "last_size": t.size, "volume": float("nan")
+            })
+    
+    if data:
+        df = pd.DataFrame(data).drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
+        if os.path.exists(filename):
+            try:
                 existing_df = pd.read_parquet(filename)
                 combined_df = pd.concat([existing_df, df], ignore_index=True)
                 combined_df = combined_df.drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
                 combined_df = combined_df.sort_values(by="ts_event")
                 combined_df.to_parquet(filename, index=False)
-            else:
-                df = df.sort_values(by="ts_event")
-                df.to_parquet(filename, index=False)
-            logger.info(f"      Final flush {len(data)} ticks. Total for day: {total_saved + len(data)}")
+            except:
+                df.sort_values(by="ts_event").to_parquet(filename, index=False)
+        else:
+            df.sort_values(by="ts_event").to_parquet(filename, index=False)
+        logger.info(f"      💾 Saved {len(data)} ticks.")
 
 async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime, duration="86400 S"):
     date_str = end_dt.strftime("%Y%m%d")
