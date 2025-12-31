@@ -60,5 +60,11 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     for r in results:
         new_cols.update(r)
         
+    # Add ATR (Window 50 for consistency with backtest engine)
+    h, l, c = df['high'].values, df['low'].values, df['close'].values
+    c_prev = np.roll(c, 1); c_prev[0] = c[0]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - c_prev), np.abs(l - c_prev)))
+    df['atr'] = pd.Series(tr).rolling(50, min_periods=1).mean().values
+
     df_new = pd.DataFrame(new_cols, index=df.index)
     return pd.concat([df, df_new], axis=1)

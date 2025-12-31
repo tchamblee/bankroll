@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import glob
 import time
+import subprocess
 from pathlib import Path
 import datetime as dt
 from datetime import datetime, timezone
@@ -29,6 +30,14 @@ nest_asyncio.apply()
 # --------------------------------------------------------------------------------------
 
 logger = setup_logging("PaperTrade", "paper_trade.log")
+
+def play_sound(sound_file):
+    """Plays a sound file using mpg123 in a non-blocking subprocess."""
+    if os.path.exists(sound_file):
+        try:
+            subprocess.Popen(['mpg123', '-q', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            logger.error(f"Failed to play sound {sound_file}: {e}")
 
 # Capture ib_insync and asyncio logs to the same file
 try:
@@ -302,6 +311,7 @@ class ExecutionEngine:
         self.active_strat_idx = -1
         self.current_sl = 0.0
         self.current_tp = 0.0
+        self.current_atr = 0.0
         self.cooldowns = np.zeros(len(strategies), dtype=int)
         self.lot_size = cfg.STANDARD_LOT_SIZE
         
@@ -321,6 +331,7 @@ class ExecutionEngine:
                     self.active_strat_idx = state.get('active_strat_idx', -1)
                     self.current_sl = state.get('current_sl', 0.0)
                     self.current_tp = state.get('current_tp', 0.0)
+                    self.current_atr = state.get('current_atr', 0.0)
                     
                     self.balance = state.get('balance', cfg.ACCOUNT_SIZE)
                     self.realized_pnl = state.get('realized_pnl', 0.0)
@@ -333,6 +344,33 @@ class ExecutionEngine:
             except Exception as e:
                 logger.error(f"❌ Failed to load state: {e}")
 
+    def check_reset(self):
+        """Checks for external reset signal and wipes state if found."""
+        trigger_path = os.path.join(cfg.DIRS['OUTPUT_DIR'], "RESET_TRIGGER")
+        if os.path.exists(trigger_path):
+            logger.warning("⚠️ RESET TRIGGER RECEIVED: Wiping Internal State...")
+            
+            # Reset Memory
+            self.position = 0
+            self.entry_price = 0.0
+            self.active_strat_idx = -1
+            self.current_sl = 0.0
+            self.current_tp = 0.0
+            self.current_atr = 0.0
+            self.cooldowns = np.zeros(len(self.strategies), dtype=int)
+            self.balance = cfg.ACCOUNT_SIZE
+            self.realized_pnl = 0.0
+            
+            # Delete Trigger
+            try: os.remove(trigger_path)
+            except: pass
+            
+            # Save Clean State
+            self.save_state()
+            logger.warning("✅ State Reset Complete.")
+            return True
+        return False
+
     def save_state(self):
         try:
             state = {
@@ -341,6 +379,7 @@ class ExecutionEngine:
                 'active_strat_idx': int(self.active_strat_idx),
                 'current_sl': float(self.current_sl),
                 'current_tp': float(self.current_tp),
+                'current_atr': float(self.current_atr),
                 'cooldowns': self.cooldowns.tolist(),
                 'balance': float(self.balance),
                 'realized_pnl': float(self.realized_pnl),
@@ -379,6 +418,7 @@ class ExecutionEngine:
             
         if exit_signal:
             logger.info(f"📝 VIRTUAL EXIT: {reason} @ {current_price:.5f}")
+            play_sound("resources/exit.mp3")
             
             # --- PnL Calculation ---
             try:
@@ -437,6 +477,7 @@ class ExecutionEngine:
         
         if self.position != 0:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
+            play_sound("resources/exit.mp3")
             
             # --- PnL Calculation ---
             try:
@@ -459,6 +500,7 @@ class ExecutionEngine:
         if signal != 0:
             action = 'BUY' if signal > 0 else 'SELL'
             logger.info(f"📝 VIRTUAL ENTRY: {action} {abs(signal)} lots (Strat {strat_idx}) @ {price:.5f}")
+            play_sound("resources/entry.mp3")
             self.position, self.active_strat_idx, self.entry_price = signal, strat_idx, price
             
             # Calculate SL/TP
@@ -538,7 +580,33 @@ class PaperTradeApp:
             self.ib.pendingTickersEvent += self.on_pending_tickers
             logger.info("🟢 VIRTUAL PAPER TRADING ACTIVE (NO BROKER ORDERS)")
             
-            while not self.stop_event.is_set(): await asyncio.sleep(1)
+            disconnect_time = None
+            last_state_update = datetime.now()
+            
+            while not self.stop_event.is_set():
+                # Heartbeat
+                Path("logs/paper_trade_heartbeat").touch()
+
+                if self.executor: 
+                    self.executor.check_reset()
+                    
+                    # Periodic State Flush (Keep Dashboard Green)
+                    if (datetime.now() - last_state_update).total_seconds() > 60:
+                        self.executor.save_state()
+                        last_state_update = datetime.now()
+                
+                if not self.ib.isConnected():
+                    if disconnect_time is None:
+                        disconnect_time = datetime.now()
+                        logger.warning("⚠️ IBKR Disconnected!")
+                    elif (datetime.now() - disconnect_time).total_seconds() > 60:
+                         logger.error("💀 Disconnected for > 60s. Exiting for restart.")
+                         self.stop_event.set()
+                         sys.exit(1)
+                else:
+                    disconnect_time = None
+                    
+                await asyncio.sleep(1)
         finally:
             self.ib.disconnect()
             if os.path.exists(self.temp_dir):
@@ -595,7 +663,14 @@ class PaperTradeApp:
         if context['__len__'] > 0 and any(len(v) == 0 for v in context.values() if isinstance(v, np.ndarray)):
              logger.error(f"CRITICAL: Context has {context['__len__']} rows but contains empty features!")
             
-        atr = full_df['atr'].iloc[-1] if 'atr' in full_df.columns else full_df['close'].iloc[-1]*0.001
+        # Use precomputed ATR if available
+        atr_vec = context.get('atr_base')
+        if atr_vec is not None and len(atr_vec) > 0:
+            atr = float(atr_vec[-1])
+        else:
+            atr = full_df['close'].iloc[-1] * 0.001 # Fallback 10 bps
+
+        self.executor.current_atr = atr
 
         # --- ENFORCE TRADING HOURS ---
         last_ts = full_df['time_start'].iloc[-1]

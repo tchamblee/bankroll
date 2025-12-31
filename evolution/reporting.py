@@ -222,6 +222,10 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 var_returns=np.var(final_test_r_vec), skew_returns=scipy.stats.skew(final_test_r_vec), kurt_returns=scipy.stats.kurtosis(final_test_r_vec),
                 annualization_factor=config.ANNUALIZATION_FACTOR
             )
+            
+            # Determine final stats for saving
+            final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
+            final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
 
             strat_data = final_strat.to_dict()
             strat_data['test_sortino'] = float(final_test_sortino)
@@ -229,6 +233,8 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             strat_data['test_trades'] = int(final_test_trades)
             strat_data['train_return'] = float(final_train_ret)
             strat_data['val_return'] = float(final_val_ret)
+            strat_data['train_sortino'] = float(final_train_sortino)
+            strat_data['val_sortino'] = float(final_val_sortino)
             strat_data['robust_score'] = float(val_fitness_map.get(s.name, -999.0)) # Keep original robust score for sorting
             strat_data['dsr_val'] = float(dsr_val)
             strat_data['psr_test'] = float(psr_test)
@@ -297,7 +303,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     # Filter Inbox for SAME HORIZON to check correlation
     # We only care about redundancy within the same timeframe
     existing_inbox_objs = []
-    existing_inbox_names = set()
+    existing_inbox_dicts = []
     
     for d in inbox_data:
         h = d.get('horizon', None)
@@ -306,13 +312,14 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 s = Strategy.from_dict(d)
                 s.horizon = h
                 existing_inbox_objs.append(s)
-                existing_inbox_names.add(s.name)
+                existing_inbox_dicts.append(d)
             except: pass
 
     # Prepare New Candidates (filtered_candidates matches output list index-wise)
     # We need to simulate both Existing and New to get aligned return vectors
     
-    candidates_to_add = []
+    candidates_to_add_map = {} # full_idx -> data
+    strategies_to_remove = set() # names of existing strategies to remove
     
     if not output:
         print("No candidates to add.")
@@ -330,7 +337,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             print("    ⚠️  Correlation check failed (Simulation Error). Adding all unique names.")
             # Fallback to name check only
             for s_data in output:
-                candidates_to_add.append(s_data)
+                candidates_to_add_map[output.index(s_data) + len(existing_inbox_objs)] = s_data
         else:
             # Calculate Correlation Matrix
             df_rets = pd.DataFrame(ret_matrix)
@@ -342,9 +349,10 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             n_new = len(filtered_candidates)
             
             # Indices of accepted strategies (starts with Existing)
-            accepted_indices = list(range(n_existing))
+            accepted_indices = set(range(n_existing))
             
             added_count = 0
+            replaced_count = 0
             
             for i in range(n_new):
                 full_idx = n_existing + i
@@ -356,30 +364,100 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                     continue
                     
                 # 2. Correlation Check
-                is_correlated = False
+                max_corr = -1.0
+                conflict_idx = -1
+                
                 if accepted_indices:
                     # Check against ALL currently accepted (Existing + Accepted New)
-                    corrs = corr_matrix[full_idx, accepted_indices]
-                    # Handle NaNs in correlation (e.g. if variance is 0)
-                    corrs = np.nan_to_num(corrs, nan=0.0)
-                    max_corr = np.max(corrs) if len(corrs) > 0 else 0.0
-                    
-                    if max_corr > 0.75:
-                        print(f"      🗑️ Rejected {name}: High Correlation ({max_corr:.2f})")
-                        is_correlated = True
+                    # We iterate to find max
+                    for acc_idx in accepted_indices:
+                        c = corr_matrix[full_idx, acc_idx]
+                        if np.isnan(c): c = 0.0
+                        if c > max_corr:
+                            max_corr = c
+                            conflict_idx = acc_idx
                 
-                if not is_correlated:
-                    # Accept
+                if max_corr > 0.75:
+                    # Identify Conflict Source
+                    conflict_data = None
+                    is_existing_conflict = False
+                    
+                    if conflict_idx < n_existing:
+                        # Conflict with Existing Inbox Strategy
+                        conflict_data = existing_inbox_dicts[conflict_idx]
+                        is_existing_conflict = True
+                    else:
+                        # Conflict with Newly Accepted Strategy
+                        conflict_data = candidates_to_add_map.get(conflict_idx)
+                        is_existing_conflict = False
+
+                    if conflict_data:
+                        # STRICT COMPARISON: Better on EVERY dataset?
+                        # Prefer Sortino, fallback to Return
+                        
+                        # New Stats
+                        n_tr_sort = new_strat_data.get('train_sortino', 0)
+                        n_val_sort = new_strat_data.get('val_sortino', 0)
+                        n_te_sort = new_strat_data.get('test_sortino', 0)
+                        
+                        # Old Stats (Handle missing legacy keys)
+                        o_tr_sort = conflict_data.get('train_sortino', 0)
+                        o_val_sort = conflict_data.get('val_sortino', 0)
+                        o_te_sort = conflict_data.get('test_sortino', 0)
+                        
+                        # If Sortinos are missing (legacy), try Returns?
+                        # Actually, newly generated dicts will have them. 
+                        # We will stick to Sortino if present in New. If Old is 0 (missing), New wins.
+                        # Wait, if Old is missing, it's 0. New > 0 is easy. 
+                        # But is it fair? Yes, we want to upgrade legacy data.
+                        
+                        better_train = n_tr_sort > o_tr_sort
+                        better_val = n_val_sort > o_val_sort
+                        better_test = n_te_sort > o_te_sort
+                        
+                        if better_train and better_val and better_test:
+                            print(f"      🔄 Replacing Correlated Strategy ({max_corr:.2f}): {conflict_data['name']} -> {name}")
+                            
+                            # Remove Conflict
+                            accepted_indices.remove(conflict_idx)
+                            if is_existing_conflict:
+                                strategies_to_remove.add(conflict_data['name'])
+                            else:
+                                if conflict_idx in candidates_to_add_map:
+                                    del candidates_to_add_map[conflict_idx]
+                            
+                            # Accept New
+                            new_strat_data['horizon'] = horizon
+                            candidates_to_add_map[full_idx] = new_strat_data
+                            accepted_indices.add(full_idx)
+                            replaced_count += 1
+                        else:
+                            print(f"      🗑️ Rejected {name}: High Correlation ({max_corr:.2f}) with {conflict_data['name']} and not strictly better.")
+                    else:
+                        # Should not happen
+                        print(f"      ⚠️ Conflict data missing for idx {conflict_idx}. Rejecting {name}.")
+                        
+                else:
+                    # No Correlation -> Accept
                     new_strat_data['horizon'] = horizon 
-                    candidates_to_add.append(new_strat_data)
-                    accepted_indices.append(full_idx)
+                    candidates_to_add_map[full_idx] = new_strat_data
+                    accepted_indices.add(full_idx)
                     added_count += 1
     
     # Merge and Save
-    if candidates_to_add:
-        inbox_data.extend(candidates_to_add)
+    if candidates_to_add_map or strategies_to_remove:
+        # 1. Remove
+        if strategies_to_remove:
+            inbox_data = [d for d in inbox_data if d['name'] not in strategies_to_remove]
+            print(f"      ✂️ Removed {len(strategies_to_remove)} inferior existing strategies.")
+            
+        # 2. Add
+        to_add_list = list(candidates_to_add_map.values())
+        if to_add_list:
+            inbox_data.extend(to_add_list)
+            print(f"      📦 Added {len(to_add_list)} new strategies to Inbox.")
+
         with open(inbox_path, "w") as f: json.dump(inbox_data, f, indent=4)
-        print(f"📦 Added {len(candidates_to_add)} new UNCORRELATED strategies to Inbox: {inbox_path}")
         play_success_sound()
     else:
-        print("📦 No new strategies added (all duplicates or correlated).")
+        print("📦 No new strategies added (all duplicates or correlated and inferior).")

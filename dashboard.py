@@ -148,11 +148,20 @@ st.sidebar.markdown("### System Status")
 
 # --- RESET DATA ---
 if st.sidebar.button("⚠️ RESET DATA", type="primary"):
+    # 1. Create Trigger for Backend Process
+    trigger_file = os.path.join(BASE_DIR, "output", "RESET_TRIGGER")
+    with open(trigger_file, "w") as f:
+        f.write("RESET")
+        
+    # 2. Clear Local Files (Immediate Feedback)
     if os.path.exists(STATE_FILE):
-        os.remove(STATE_FILE)
+        try: os.remove(STATE_FILE)
+        except: pass
+        
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "w") as f: f.write("")
-    st.toast("State and Logs Cleared!", icon="🗑️")
+        
+    st.toast("Reset Signal Sent!", icon="🗑️")
     time.sleep(1)
     st.rerun()
 
@@ -180,7 +189,7 @@ else:
 if view == "Cockpit":
     # --- METRICS ROW ---
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
     if state:
         pos = state.get("position", 0)
@@ -188,6 +197,7 @@ if view == "Cockpit":
         strat_idx = state.get("active_strat_idx", -1)
         balance = state.get("balance", 60000.0)
         realized = state.get("realized_pnl", 0.0)
+        current_atr = state.get("current_atr", 0.0)
         
         # Calculate Unrealized PnL
         bars = load_bars(1)
@@ -211,6 +221,8 @@ if view == "Cockpit":
         with col5:
             st.metric("Unrealized PnL", f"${pnl:.2f}", delta_color="normal")
         with col6:
+            st.metric("ATR (Bars)", f"{current_atr:.6f}")
+        with col7:
             st.metric("Active Strat", f"#{strat_idx}")
     else:
         col1.metric("Balance", "---")
@@ -218,7 +230,8 @@ if view == "Cockpit":
         col3.metric("Position", "OFFLINE")
         col4.metric("Entry Price", "---")
         col5.metric("Unrealized PnL", "---")
-        col6.metric("Active Strat", "---")
+        col6.metric("ATR", "---")
+        col7.metric("Active Strat", "---")
 
     st.divider()
 
@@ -287,8 +300,15 @@ if view == "Cockpit":
                     name='Exit'
                 ))
 
-        fig.update_layout(height=600, xaxis_rangeslider_visible=False, template="plotly_dark")
-        st.plotly_chart(fig, width="stretch")
+        fig.update_layout(
+            height=600, 
+            xaxis_rangeslider_visible=False, 
+            template="plotly_dark", 
+            uirevision='constant',
+            xaxis=dict(uirevision='constant'),
+            yaxis=dict(uirevision='constant'),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="main_chart")
     else:
         st.info("Waiting for bar data to generate chart...")
 

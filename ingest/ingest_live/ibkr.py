@@ -3,11 +3,12 @@ import datetime as dt
 from datetime import datetime, timezone
 import os
 import logging
+from pathlib import Path
 import pandas as pd
 from ib_insync import IB, Forex, Index, Future, ContFuture, Stock, Contract, TickByTickBidAsk, TickByTickAllLast
 import config as cfg
 from utils import save_chunk
-from .config import logger, DATA_DIR, CHUNK_SIZE, DATA_TIMEOUT, RECONNECT_DELAY
+from .config import logger, DATA_DIR, CHUNK_SIZE, DATA_TIMEOUT, RECONNECT_DELAY, FLUSH_INTERVAL_SEC
 
 class IBKRStreamer:
     def __init__(self):
@@ -99,17 +100,29 @@ class IBKRStreamer:
         self.ib.pendingTickersEvent += self.on_new_tick
 
         last_warning_time = datetime.min.replace(tzinfo=timezone.utc)
+        last_flush_check = datetime.now(timezone.utc)
         
         while not stop_event.is_set():
             await asyncio.sleep(1) 
             now_utc = datetime.now(timezone.utc)
-            if (now_utc - self.last_data_time).total_seconds() > DATA_TIMEOUT:
+            
+            # Heartbeat (Touch file)
+            Path("logs/ingest_heartbeat").touch()
+            
+            delta_s = (now_utc - self.last_data_time).total_seconds()
+            
+            if delta_s > DATA_TIMEOUT:
+                if delta_s > (DATA_TIMEOUT * 5): # 10 minutes of silence -> Kill it
+                    raise ConnectionError(f"💀 Dead Connection: No data for {delta_s}s. Forcing Reconnect.")
+                    
                 if (now_utc - last_warning_time).total_seconds() > 300:
-                    logger.warning(f"⚠️ NO IBKR DATA received for {DATA_TIMEOUT}s (Market likely closed or idle).")
+                    logger.warning(f"⚠️ NO IBKR DATA received for {delta_s:.0f}s (Market likely closed or idle).")
                     last_warning_time = now_utc
 
+            should_flush_time = (now_utc - last_flush_check).total_seconds() > FLUSH_INTERVAL_SEC
+
             for name, buffer in self.buffers.items():
-                if len(buffer) >= CHUNK_SIZE:
+                if len(buffer) >= CHUNK_SIZE or (should_flush_time and len(buffer) > 0):
                     chunk_data = list(buffer) 
                     self.buffers[name] = [] 
                     chunk_data.sort(key=lambda x: x[0])
@@ -123,6 +136,9 @@ class IBKRStreamer:
                             # Use global save_chunk
                             await loop.run_in_executor(None, save_chunk, group[save_cols], fn)
                             print(f"\r💾 Saved {name} Chunk to {fn} ({len(group)} rows)...", end="")
+
+            if should_flush_time:
+                last_flush_check = now_utc
 
         self.ib.pendingTickersEvent -= self.on_new_tick
 

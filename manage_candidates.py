@@ -26,111 +26,6 @@ def save_candidates(candidates):
         json.dump(candidates, f, indent=4)
     print(f"💾 Saved {len(candidates)} candidates to {CANDIDATES_FILE}")
 
-def flag_correlations(inbox_strategies, candidates, threshold=0.85):
-    """Checks inbox strategies for correlation with existing candidates."""
-    if not candidates or not inbox_strategies:
-        return inbox_strategies
-
-    print("🔍 Checking for correlations with existing portfolio...")
-    
-    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
-        return inbox_strategies
-    
-    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    backtester = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
-    
-    # Prepare Strategy Objects
-    inbox_objs = []
-    for d in inbox_strategies:
-        try:
-            s = Strategy.from_dict(d)
-            s.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
-            inbox_objs.append(s)
-        except: pass
-        
-    cand_objs = []
-    for d in candidates:
-        try:
-            s = Strategy.from_dict(d)
-            s.horizon = d.get('horizon', config.DEFAULT_TIME_LIMIT)
-            cand_objs.append(s)
-        except: pass
-    
-    if not inbox_objs or not cand_objs:
-        return inbox_strategies
-
-    # Deduplicate strategies by name to avoid correlation matrix issues
-    all_strats_raw = inbox_objs + cand_objs
-    all_strats = []
-    seen_names = set()
-    for s in all_strats_raw:
-        if s.name not in seen_names:
-            all_strats.append(s)
-            seen_names.add(s.name)
-
-    backtester.ensure_context(all_strats)
-    
-    # Generate & Simulate
-    raw_sig = backtester.generate_signal_matrix(all_strats)
-    # Open Execution Shift
-    shifted_sig = np.vstack([np.zeros((1, len(all_strats)), dtype=raw_sig.dtype), raw_sig[:-1]])
-    
-    rets, _ = backtester.run_simulation_batch(
-        shifted_sig, all_strats, 
-        backtester.open_vec, backtester.times_vec, 
-        highs=backtester.high_vec, lows=backtester.low_vec, atr=backtester.atr_vec
-    )
-    
-    # Correlation
-    rets_df = pd.DataFrame(rets, columns=[s.name for s in all_strats])
-    rets_df = rets_df.loc[:, rets_df.std() > 0] # Drop dead strategies
-    
-    if rets_df.empty:
-        backtester.shutdown()
-        return inbox_strategies
-        
-    corr_matrix = rets_df.corr()
-    
-    # Check and Filter
-    kept_strategies = []
-    rejected_count = 0
-    
-    for s_inbox in inbox_strategies:
-        name = s_inbox.get('name')
-        
-        # If simulation failed for this strategy, keep it (benefit of doubt) or warn?
-        # Let's keep it but it won't be checked.
-        if not name or name not in rets_df.columns: 
-            kept_strategies.append(s_inbox)
-            continue
-        
-        is_rejected = False
-        
-        for s_cand in cand_objs:
-            cand_name = s_cand.name
-            if cand_name not in rets_df.columns: continue
-            
-            # Skip self-correlation if strategy is in both lists (should be deduplicated by caller logic ideally)
-            if name == cand_name: continue
-            
-            c = corr_matrix.loc[name, cand_name]
-            if c > threshold:
-                print(f"❌ Rejected '{name}': High Correlation ({c:.2f}) with candidate '{cand_name}'")
-                is_rejected = True
-                break
-        
-        if not is_rejected:
-            kept_strategies.append(s_inbox)
-        else:
-            rejected_count += 1
-            
-    backtester.shutdown()
-    
-    if rejected_count > 0:
-        print(f"🗑️  Auto-rejected {rejected_count} strategies due to high correlation with existing candidates.")
-        
-    return kept_strategies
-
 def list_candidates():
     candidates = load_candidates()
     if not candidates:
@@ -231,10 +126,6 @@ def list_inbox():
     # REFRESH METRICS
     strategies = refresh_strategies(strategies)
     
-    # CHECK CORRELATIONS with Portfolio
-    candidates = load_candidates()
-    strategies = flag_correlations(strategies, candidates)
-
     # Save back to inbox
     with open(inbox_path, 'w') as f:
         json.dump(strategies, f, indent=4)

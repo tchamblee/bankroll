@@ -7,6 +7,7 @@ from utils import setup_logging
 # IBKR Config
 DATA_DIR = cfg.DIRS["DATA_RAW_TICKS"]
 CHUNK_SIZE = 1000
+FLUSH_INTERVAL_SEC = 60 # Force flush every minute even if chunk not full
 RECONNECT_DELAY = 15
 DATA_TIMEOUT = 120  
 
