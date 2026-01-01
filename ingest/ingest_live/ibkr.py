@@ -27,7 +27,7 @@ class IBKRStreamer:
         try:
             logger.info("🔄 Connecting to IBKR...")
             await asyncio.wait_for(self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=15)
-            self.ib.reqMarketDataType(3) 
+            self.ib.reqMarketDataType(1) 
             logger.info("✅ Connected. Starting Stream...")
             await self.ingest_stream(stop_event)
         except (OSError, ConnectionError, asyncio.TimeoutError) as e:

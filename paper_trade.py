@@ -528,6 +528,7 @@ class PaperTradeApp:
         self.executor = None
         self.stop_event = asyncio.Event()
         self.contract_map = {}
+        self.last_eur_tick = datetime.now()
         
         # Temp dir for JIT feature calculation (JIT Parity)
         self.temp_dir = tempfile.mkdtemp(prefix="paper_trade_jit_")
@@ -561,9 +562,10 @@ class PaperTradeApp:
             self.data_manager.warmup()
             await self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=CLIENT_ID)
             self.executor = ExecutionEngine(self.strategies)
-            self.ib.reqMarketDataType(3)
+            self.ib.reqMarketDataType(1)
             eur = Forex('EURUSD')
             await self.ib.qualifyContractsAsync(eur)
+            self.ib.reqMktData(eur, "", False, False)
             self.ib.reqTickByTickData(eur, "BidAsk", 0, False)
             self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']=='EURUSD'][0]
             for t in cfg.TARGETS:
@@ -582,7 +584,9 @@ class PaperTradeApp:
             
             disconnect_time = None
             last_state_update = datetime.now()
+            self.last_eur_tick = datetime.now() # Reset on start
             
+            exit_code = 0
             while not self.stop_event.is_set():
                 # Heartbeat
                 Path("logs/paper_trade_heartbeat").touch()
@@ -595,6 +599,13 @@ class PaperTradeApp:
                         self.executor.save_state()
                         last_state_update = datetime.now()
                 
+                # Check for Data Staleness (EURUSD specifically)
+                if (datetime.now() - self.last_eur_tick).total_seconds() > 60:
+                    logger.error("💀 EURUSD Data Stalled (>60s). Exiting for restart.")
+                    self.stop_event.set()
+                    exit_code = 1
+                    break
+
                 if not self.ib.isConnected():
                     if disconnect_time is None:
                         disconnect_time = datetime.now()
@@ -602,11 +613,14 @@ class PaperTradeApp:
                     elif (datetime.now() - disconnect_time).total_seconds() > 60:
                          logger.error("💀 Disconnected for > 60s. Exiting for restart.")
                          self.stop_event.set()
-                         sys.exit(1)
+                         exit_code = 1
+                         break
                 else:
                     disconnect_time = None
                     
                 await asyncio.sleep(1)
+            
+            return exit_code
         finally:
             self.ib.disconnect()
             if os.path.exists(self.temp_dir):
@@ -618,8 +632,10 @@ class PaperTradeApp:
             conf = self.contract_map.get(t.contract.conId)
             if not conf: continue
             if conf['name'] == 'EURUSD':
+                self.last_eur_tick = datetime.now()
                 price = (t.bid + t.ask)/2 if t.bidSize > 0 and t.askSize > 0 else (t.last if t.last > 0 else 0)
                 if price > 0: asyncio.create_task(self.executor.check_intraday_exits(price))
+                
                 if t.tickByTicks:
                     for tick in t.tickByTicks:
                         bar = self.data_manager.add_tick(tick, conf)
@@ -708,5 +724,9 @@ class PaperTradeApp:
 
 if __name__ == "__main__":
     app = PaperTradeApp()
-    try: asyncio.run(app.run())
-    except KeyboardInterrupt: logger.info("Exiting...")
+    exit_code = 0
+    try: 
+        exit_code = asyncio.run(app.run())
+    except KeyboardInterrupt: 
+        logger.info("Exiting...")
+    sys.exit(exit_code)
