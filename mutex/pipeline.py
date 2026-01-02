@@ -7,7 +7,7 @@ import config
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
 from .simulator import _jit_simulate_mutex_custom
-from .optimization import optimize_mutex_portfolio, optimize_hrp_portfolio
+from .optimization import optimize_mutex_portfolio
 from .utils import load_all_candidates
 
 def run_mutex_backtest():
@@ -111,6 +111,3 @@ def run_mutex_backtest():
         out_path = os.path.join(config.DIRS['PLOTS_DIR'], "mutex_optimized.png")
         plt.savefig(out_path)
         print(f"📸 Saved Performance Chart to {out_path}")
-    
-    # 4. Optimize HRP Portfolio (Robust)
-    optimize_hrp_portfolio(candidates[:100], backtester)

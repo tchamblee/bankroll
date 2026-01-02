@@ -26,8 +26,20 @@ FRED_FILE = os.path.join(BASE_DIR, "data", "fred_macro_daily.parquet")
 COT_FILE = os.path.join(BASE_DIR, "data", "cot_weekly.parquet")
 GDELT_DIR = os.path.join(BASE_DIR, "data", "gdelt", "v2_gkg")
 RAW_TICKS_DIR = os.path.join(BASE_DIR, "data", "raw_ticks")
+MUTEX_FILE = os.path.join(BASE_DIR, "output", "strategies", "mutex_portfolio.json")
 
 # --- HELPER FUNCTIONS ---
+
+def load_strategy_names():
+    if not os.path.exists(MUTEX_FILE):
+        return {}
+    try:
+        with open(MUTEX_FILE, "r") as f:
+            data = json.load(f)
+            # Map Index -> Name
+            return {i: s.get('name', f"Strat_{i}") for i, s in enumerate(data)}
+    except Exception as e:
+        return {}
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -63,7 +75,7 @@ def load_logs(lines=100):
         st.error(f"Error loading logs: {e}")
         return []
 
-def parse_trades_from_logs():
+def parse_trades_from_logs(strat_map=None):
     """Parses paper_trade.log to extract recent Entry/Exit events for plotting."""
     if not os.path.exists(LOG_FILE):
         return []
@@ -85,12 +97,15 @@ def parse_trades_from_logs():
                 # Check Entry
                 m_entry = entry_pattern.search(line)
                 if m_entry:
+                    s_idx = int(m_entry.group(3))
+                    s_name = strat_map.get(s_idx, str(s_idx)) if strat_map else str(s_idx)
+                    
                     events.append({
                         "time": ts,
                         "type": "ENTRY",
                         "side": m_entry.group(1),
                         "lots": m_entry.group(2),
-                        "strat": m_entry.group(3),
+                        "strat": s_name,
                         "price": float(m_entry.group(4))
                     })
                     continue
@@ -188,7 +203,8 @@ else:
 
 if view == "Cockpit":
     # --- METRICS ROW ---
-
+    
+    strat_map = load_strategy_names()
     col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
     if state:
@@ -198,6 +214,11 @@ if view == "Cockpit":
         balance = state.get("balance", 60000.0)
         realized = state.get("realized_pnl", 0.0)
         current_atr = state.get("current_atr", 0.0)
+        
+        # Resolve Strategy Name
+        strat_name = "None"
+        if strat_idx >= 0:
+            strat_name = strat_map.get(strat_idx, f"#{strat_idx}")
         
         # Calculate Unrealized PnL
         bars = load_bars(1)
@@ -223,7 +244,7 @@ if view == "Cockpit":
         with col6:
             st.metric("ATR (Bars)", f"{current_atr:.6f}")
         with col7:
-            st.metric("Active Strat", f"#{strat_idx}")
+            st.metric("Active Strat", strat_name)
     else:
         col1.metric("Balance", "---")
         col2.metric("Realized PnL", "---")
@@ -239,7 +260,7 @@ if view == "Cockpit":
     st.subheader("Market View (EURUSD)")
 
     bars_df = load_bars(300)
-    trade_events = parse_trades_from_logs()
+    trade_events = parse_trades_from_logs(strat_map)
 
     if bars_df is not None and not bars_df.empty:
         fig = go.Figure(data=[go.Candlestick(x=bars_df['time_start'],

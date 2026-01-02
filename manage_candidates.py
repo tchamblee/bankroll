@@ -178,6 +178,7 @@ def main():
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
     subparsers.add_parser('prune', help='Remove candidates from inbox')
+    subparsers.add_parser('help', help='Show this help message')
     
     args = parser.parse_args()
     
@@ -197,6 +198,8 @@ def main():
         clear_inbox()
     elif args.command == 'prune':
         prune_inbox()
+    elif args.command == 'help':
+        parser.print_help()
     else:
         parser.print_help()
 
