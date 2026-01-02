@@ -84,7 +84,11 @@ def optimize_mutex_portfolio(candidates, backtester):
             profit = total_ret * config.ACCOUNT_SIZE
             sortino = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)
             
-            if sortino > 1.0 and profit > best_profit:
+            # Constraint: No individual losers in the portfolio (Validation Set)
+            strat_profits = np.sum(strat_rets, axis=0)
+            no_losers = np.all(strat_profits > 0)
+            
+            if sortino > 1.0 and profit > best_profit and no_losers:
                 best_profit = profit
                 best_sortino = sortino
                 best_combo = [top_candidates[i] for i in idxs]
