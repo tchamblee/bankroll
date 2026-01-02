@@ -56,7 +56,7 @@ except Exception as e:
 
 CLIENT_ID = 2
 WINDOW_SIZE = 4000 
-WARMUP_DAYS = 5
+WARMUP_DAYS = 7
 LIVE_STATE_FILE = os.path.join(cfg.DIRS['OUTPUT_DIR'], "live_state.json")
 LIVE_BARS_FILE = os.path.join(cfg.DIRS['PROCESSED_DIR'], "live_bars.parquet")
 
@@ -600,11 +600,14 @@ class PaperTradeApp:
                         last_state_update = datetime.now()
                 
                 # Check for Data Staleness (EURUSD specifically)
-                if (datetime.now() - self.last_eur_tick).total_seconds() > 60:
-                    logger.error("💀 EURUSD Data Stalled (>60s). Exiting for restart.")
+                stall_delta = (datetime.now() - self.last_eur_tick).total_seconds()
+                if stall_delta > 1800:
+                    logger.error(f"💀 EURUSD Data Stalled (>{stall_delta:.0f}s). Exiting for restart.")
                     self.stop_event.set()
                     exit_code = 1
                     break
+                elif stall_delta > 60 and int(stall_delta) % 60 == 0:
+                    logger.warning(f"⚠️ EURUSD Idle for {stall_delta:.0f}s (Market Closed/Slow?)")
 
                 if not self.ib.isConnected():
                     if disconnect_time is None:

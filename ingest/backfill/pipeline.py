@@ -83,3 +83,6 @@ async def main():
     finally:
         ib.disconnect()
         logger.info("DONE.")
+
+if __name__ == "__main__":
+    asyncio.run(main())
