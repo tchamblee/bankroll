@@ -82,7 +82,7 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
 def add_crypto_features(df, ibit_df):
     """
     Adds Crypto-Lead features using IBIT data.
-    1. Resamples EURUSD (df) and IBIT to 1-min fixed intervals.
+    1. Resamples Primary Ticker (df) and IBIT to 1-min fixed intervals.
     2. Calculates Time-Based correlations and lags.
     3. Merges back to Volume Clock.
     """
@@ -92,11 +92,11 @@ def add_crypto_features(df, ibit_df):
         print("Skipping Crypto Features (IBIT not found).")
         return df
         
-    print("Calculating Crypto Features (IBIT/EURUSD)...")
+    print(f"Calculating Crypto Features (IBIT/{config.PRIMARY_TICKER})...")
     df = df.copy()
     
     # 1. Resample to 1-Minute Grid
-    # EURUSD (From Bars - approximate but good enough if bars are granular)
+    # Primary (From Bars - approximate but good enough if bars are granular)
     # We use time_end as the timestamp
     eur_1m = df.set_index('time_end')[['close']].resample('1min').last().ffill()
     eur_1m.columns = ['eur_close']

@@ -213,11 +213,9 @@ if __name__ == "__main__":
             print(f"❌ Failed to load any strategies from {args.file}")
             sys.exit(1)
 
-    elif os.path.exists(os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")):
-        print("Loading Mutex Portfolio...")
-        loaded, _ = load_strategies('mutex')
-        strategies.extend(loaded)
-        is_mutex_run = True
+    elif os.path.exists(config.MUTEX_PORTFOLIO_FILE):
+        strategies = load_strategies(config.MUTEX_PORTFOLIO_FILE)
+        title = "Mutex Portfolio OOS Performance"
     else:
         print("Mutex Portfolio not found. Scanning for Apex strategies...")
         for h in config.PREDICTION_HORIZONS:

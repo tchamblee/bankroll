@@ -56,7 +56,10 @@ def main():
         
     # 4. Strategy Evolution (The Brain)
     for horizon in config.PREDICTION_HORIZONS:
-        survivors_file = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
+    # 4. Filter Survivors (if requested)
+    if use_survivors:
+        survivors_file = config.SURVIVORS_FILE_TEMPLATE.format(horizon)
+        if os.path.exists(survivors_file):
         run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 8000 --gens 10", 
                  f"Evolutionary Strategy Discovery (Horizon: {horizon})")
     

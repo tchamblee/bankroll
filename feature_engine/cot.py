@@ -99,15 +99,13 @@ def precompute_cot_features(cot_df):
 
     return df
 
-def add_cot_features(bars_df, symbol=None):
+def add_cot_features(bars_df, cot_path=None):
     """
-    Merges COT data.
-    
-    Args:
-        bars_df (pd.DataFrame): Intraday bars.
-        symbol (str): The ticker symbol (e.g. 'ES'). If None, tries to merge all (messy).
+    Adds Commitment of Traders (COT) features to intraday bars.
     """
-    cot_path = os.path.join(config.DIRS['DATA_DIR'], "cot_weekly.parquet")
+    if cot_path is None:
+        cot_path = config.COT_DATA_FILE
+
     if not os.path.exists(cot_path):
         return bars_df
         

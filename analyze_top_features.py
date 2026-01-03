@@ -42,8 +42,8 @@ def analyze_horizon(df, horizon, top_n=20, use_survivors=False):
     noise_patterns = ['kyle_lambda', 'tick_spread', 'tick_volatility', 'tick_ofi', 'pres_imbalance', 'avg_spread']
     
     if use_survivors:
-        survivors_path = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{horizon}.json")
-        if os.path.exists(survivors_path):
+    survivors_path = config.SURVIVORS_FILE_TEMPLATE.format(horizon)
+    if not os.path.exists(survivors_path):
             import json
             with open(survivors_path, 'r') as f:
                 feature_cols = json.load(f)

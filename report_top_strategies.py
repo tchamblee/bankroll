@@ -64,7 +64,7 @@ def main():
     backtester = BacktestEngine(base_df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
     # NEW LOGIC: Load from Candidates File
-    candidates_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+    candidates_path = config.CANDIDATES_FILE
     if not os.path.exists(candidates_path):
          print("❌ No candidates.json found.")
          sys.exit(0)
@@ -181,7 +181,7 @@ def main():
         
         top_unique_strategies.sort(key=lambda x: x['metrics']['robust_return'], reverse=True)
         
-        out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{h}_top5_unique.json")
+        out_path = config.APEX_FILE_TEMPLATE.format(h).replace(".json", "_top5_unique.json")
         with open(out_path, "w") as f:
             json.dump(top_unique_strategies, f, indent=4)
         print(f"  💾 Saved {len(top_unique_strategies)} Unique Cluster Champions to: {out_path}")

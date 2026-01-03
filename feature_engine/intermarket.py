@@ -115,10 +115,10 @@ def add_intermarket_features(primary_df, correlator_dfs):
         cols = [f'corr_100{suffix}', f'rel_strength_z{suffix}', f'divergence_50{suffix}']
         df[cols] = df[cols].fillna(0)
 
-    # --- COMPOSITE FEATURES (The Matrix) ---
+    # --- COMPUTE FEATURES (The Matrix) ---
     # "USD Coherence": Are Majors moving together?
-    # EURUSD and GBPUSD should be POSITIVELY correlated (both /USD)
-    # EURUSD and USDJPY should be NEGATIVELY correlated (USD/ vs /USD)
+    # {config.PRIMARY_TICKER} and GBPUSD should be POSITIVELY correlated (both /USD)
+    # {config.PRIMARY_TICKER} and USDJPY should be NEGATIVELY correlated (USD/ vs /USD)
     # If USD is driving: corr(EUR, GBP) ~ 1.0, corr(EUR, JPY) ~ -1.0
     # Coherence = (corr_GBP - corr_JPY) / 2.0  -> Target 1.0
     if 'corr_100_gbpusd' in df.columns and 'corr_100_usdjpy' in df.columns:

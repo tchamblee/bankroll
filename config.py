@@ -20,6 +20,19 @@ DIRS = {
     "LOGS": os.path.join(BASE_DIR, "logs"),
 }
 
+# --- SHARED FILE PATHS & CONSTANTS ---
+CANDIDATES_FILE = os.path.join(DIRS['STRATEGIES_DIR'], "candidates.json")
+MUTEX_PORTFOLIO_FILE = os.path.join(DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+PURGE_MARKER_FILE = os.path.join(DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
+FRED_DATA_FILE = os.path.join(DIRS['DATA_DIR'], "fred_macro_daily.parquet")
+COT_DATA_FILE = os.path.join(DIRS['DATA_DIR'], "cot_weekly.parquet")
+
+# Templates for formatted strings (usage: config.SURVIVORS_FILE_TEMPLATE.format(horizon))
+SURVIVORS_FILE_TEMPLATE = os.path.join(DIRS['FEATURES_DIR'], "survivors_{}.json")
+APEX_FILE_TEMPLATE = os.path.join(DIRS['STRATEGIES_DIR'], "apex_strategies_{}.json")
+
+PRIMARY_TICKER = "EURUSD"
+
 # Data File Conventions
 RAW_DATA_PREFIX_TICKS = "RAW_TICKS"
 RAW_DATA_PREFIX_BARS = "RAW_BARS"
@@ -44,7 +57,7 @@ SLIPPAGE_ATR_FACTOR = 0.1
 EPSILON = 1e-9
 
 # --- BAR DEFINITION ---
-# 600M units is approx 250 ticks for EURUSD (High Resolution)
+# 600M units is approx 250 ticks for PRIMARY_TICKER (High Resolution)
 VOLUME_THRESHOLD = 600_000_000 
 AVG_BAR_MINS = 3.2 # Average duration of a volume bar in minutes
 

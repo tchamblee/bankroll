@@ -102,11 +102,13 @@ def precompute_fred_derived(fred_df):
 
     return df
 
-def add_fred_features_v2(bars_df):
+def add_fred_features_v2(bars_df, fred_path=None):
     """
-    Robust Version: Computes features on Daily FRED data first, then merges.
+    Adds FRED Macro Economic Features (V2 - Consolidated Daily).
     """
-    fred_path = os.path.join(config.DIRS['DATA_DIR'], "fred_macro_daily.parquet")
+    if fred_path is None:
+        fred_path = config.FRED_DATA_FILE
+        
     if not os.path.exists(fred_path):
         return bars_df
 

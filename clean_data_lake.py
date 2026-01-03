@@ -15,7 +15,7 @@ def _process_ticker(ticker, raw_dir, clean_dir):
             print(f"  ⏭️ {ticker}: Cleaned data already exists. Skipping.")
             return
 
-        if ticker == 'EURUSD':
+        if ticker == config.PRIMARY_TICKER:
             pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
         else:
             pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")

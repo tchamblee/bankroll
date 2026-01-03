@@ -3,11 +3,13 @@ import json
 import config
 from genome import Strategy
 
-def load_all_candidates():
-    candidates_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+def load_candidates_grouped():
+    """
+    Loads candidates from candidates.json and groups them by horizon.
+    """
+    candidates_path = config.CANDIDATES_FILE
     if not os.path.exists(candidates_path):
-        print(f"⚠️ Candidates file not found: {candidates_path}")
-        return []
+        return {}
 
     with open(candidates_path, 'r') as f:
         try:

@@ -22,7 +22,7 @@ import backfill.config as bf_cfg
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill Data Pipeline Wrapper")
-    parser.add_argument("--symbols", nargs="+", help="Specific symbols to backfill (e.g. VIX EURUSD)")
+    parser.add_argument("--symbols", nargs="+", help=f"Specific symbols to backfill (e.g. VIX {config.PRIMARY_TICKER})")
     parser.add_argument("--days", type=int, help="Number of days to backfill (overrides config)")
     args = parser.parse_args()
 

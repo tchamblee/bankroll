@@ -116,10 +116,10 @@ def main():
         print("❌ Feature Matrix missing.")
         return
 
-    portfolio_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
-    if not os.path.exists(portfolio_path):
-         print("❌ Mutex portfolio not found. Run 'run_mutex_strategy.py' first.")
-         return
+    if args.mutex:
+        portfolio_path = config.MUTEX_PORTFOLIO_FILE
+        if os.path.exists(portfolio_path):
+            print(f"Generating Atlas for Mutex Portfolio: {portfolio_path}")
     
     with open(portfolio_path, 'r') as f:
          portfolio_data = json.load(f)

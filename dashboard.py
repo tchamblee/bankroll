@@ -39,7 +39,7 @@ FRED_FILE = os.path.join(BASE_DIR, "data", "fred_macro_daily.parquet")
 COT_FILE = os.path.join(BASE_DIR, "data", "cot_weekly.parquet")
 GDELT_DIR = os.path.join(BASE_DIR, "data", "gdelt", "v2_gkg")
 RAW_TICKS_DIR = os.path.join(BASE_DIR, "data", "raw_ticks")
-MUTEX_FILE = os.path.join(BASE_DIR, "output", "strategies", "mutex_portfolio.json")
+MUTEX_FILE = config.MUTEX_PORTFOLIO_FILE
 
 # --- HELPER FUNCTIONS ---
 
@@ -443,7 +443,8 @@ if view == "Cockpit":
     st.divider()
 
     # --- CHARTS ---
-    st.subheader("Market View (EURUSD)")
+                                ui.markdown(f"### {config.PRIMARY_TICKER} (Live)")
+                                ui.markdown(f"**Last:** {last_row['close']:.5f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
 
     bars_df = load_bars(300)
     trade_events = parse_trades_from_logs(strat_map)
@@ -454,7 +455,7 @@ if view == "Cockpit":
                         high=bars_df['high'],
                         low=bars_df['low'],
                         close=bars_df['close'],
-                        name="EURUSD")])
+                        name=config.PRIMARY_TICKER)])
 
         # Add Entry Line if active
         if state and state.get("position", 0) != 0:
@@ -692,7 +693,7 @@ elif view == "Trade Log":
                         high=view_bars['high'],
                         low=view_bars['low'],
                         close=view_bars['close'],
-                        name="EURUSD"
+                        name=config.PRIMARY_TICKER
                     )])
                     
                     # Markers

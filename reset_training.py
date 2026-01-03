@@ -20,10 +20,8 @@ def reset_training(hard=False):
         os.remove(verified_marker)
         print(f"✅ Deleted Verified Marker: {verified_marker}")
 
-    # 2. Delete Purge Markers and Survivors
-    features_dir = config.DIRS['FEATURES_DIR']
-    purge_marker = os.path.join(features_dir, "PURGE_COMPLETE")
-    
+    # 2. Remove Purge Marker
+    purge_marker = config.PURGE_MARKER_FILE
     if os.path.exists(purge_marker):
         os.remove(purge_marker)
         print(f"✅ Deleted Purge Marker: {purge_marker}")

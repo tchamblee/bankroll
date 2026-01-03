@@ -10,10 +10,12 @@ from backtest.engine import BacktestEngine
 from backtest.utils import refresh_strategies, find_strategy_in_files
 from backtest.reporting import print_candidate_table, get_avg_sortino
 
-CANDIDATES_FILE = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+import glob
+
+CANDIDATES_FILE = config.CANDIDATES_FILE
 
 def load_candidates():
-    if not os.path.exists(CANDIDATES_FILE):
+    if os.path.exists(CANDIDATES_FILE):
         return []
     with open(CANDIDATES_FILE, 'r') as f:
         try:

@@ -11,10 +11,10 @@ from backtest.statistics import calculate_sortino_ratio
 from backtest.reporting import get_avg_sortino, get_min_sortino
 
 def audit_correlations(threshold=0.8):
-    # 1. Load Candidates
-    candidates_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json")
+    # Load Candidates
+    candidates_path = config.CANDIDATES_FILE
     if not os.path.exists(candidates_path):
-        print("No candidates found.")
+        print("Candidates file not found.")
         return
 
     with open(candidates_path, 'r') as f:

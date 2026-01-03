@@ -22,16 +22,16 @@ def load_strategies(source_type, horizon=None, load_metrics=True):
         file_path = config.DIRS['STRATEGY_INBOX']
         
     elif source_type == 'mutex':
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+        file_path = config.MUTEX_PORTFOLIO_FILE
         
     elif source_type == 'apex':
         if horizon is None:
             raise ValueError("Horizon required for apex strategies.")
         
         # Priority: Top 5 Unique -> Top 10 -> Raw Apex
-        p1 = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top5_unique.json")
-        p2 = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}_top10.json")
-        p3 = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+        p1 = config.APEX_FILE_TEMPLATE.format(horizon).replace(".json", "_top5_unique.json")
+        p2 = config.APEX_FILE_TEMPLATE.format(horizon).replace(".json", "_top10.json")
+        p3 = config.APEX_FILE_TEMPLATE.format(horizon)
         
         if os.path.exists(p1): file_path = p1
         elif os.path.exists(p2): file_path = p2
@@ -46,7 +46,7 @@ def load_strategies(source_type, horizon=None, load_metrics=True):
         # Used for report_top_strategies where we scan specific file pattern
         if horizon is None:
              raise ValueError("Horizon required for all_apex.")
-        file_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
+        file_path = config.APEX_FILE_TEMPLATE.format(horizon)
 
     else:
         # Try generic path if source_type looks like a filename

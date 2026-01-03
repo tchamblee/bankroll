@@ -312,14 +312,14 @@ if __name__ == "__main__":
     import sys
     force_purge = "--force" in sys.argv
 
-    marker_path = os.path.join(config.DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
+    marker_path = config.PURGE_MARKER_FILE
     if os.path.exists(marker_path) and not force_purge:
         os.remove(marker_path)
 
     # Check if all survivor lists already exist
     all_exist = True
     for h in config.PREDICTION_HORIZONS:
-        p = os.path.join(config.DIRS['FEATURES_DIR'], f"survivors_{h}.json")
+        p = config.SURVIVORS_FILE_TEMPLATE.format(h)
         if not os.path.exists(p):
             all_exist = False
             break

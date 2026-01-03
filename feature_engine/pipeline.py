@@ -123,9 +123,9 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         
     engine = FeatureEngine(data_dir)
     
-    # 1. Load Primary (EUR/USD)
-    print("Loading Primary Ticker (EURUSD)...")
-    primary_df = engine.load_ticker_data("CLEAN_EURUSD.parquet")
+    # 1. Load Primary ({config.PRIMARY_TICKER})
+    print(f"Loading Primary Ticker ({config.PRIMARY_TICKER})...")
+    primary_df = engine.load_ticker_data(f"CLEAN_{config.PRIMARY_TICKER}.parquet")
     if primary_df is None:
         print("❌ Failed to load primary data.")
         return None

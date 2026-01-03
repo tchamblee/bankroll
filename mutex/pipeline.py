@@ -130,7 +130,7 @@ def run_mutex_backtest():
             s_dict['training_id'] = getattr(s, 'training_id', 'legacy')
             mutex_data.append(s_dict)
 
-        mutex_path = os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
+        mutex_path = config.MUTEX_PORTFOLIO_FILE
         with open(mutex_path, 'w') as f:
             json.dump(mutex_data, f, indent=4)
         print(f"\n💾 Saved Optimized Mutex Portfolio to {mutex_path}")

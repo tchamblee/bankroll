@@ -71,7 +71,7 @@ class LiveDataManager:
         self.ticks_buffer = []
         self.current_vol = 0
         self.primary_bars = pd.DataFrame()
-        self.external_cols = [t['name'] for t in cfg.TARGETS if t['name'] != 'EURUSD']
+        self.external_cols = [t['name'] for t in cfg.TARGETS if t['name'] != cfg.PRIMARY_TICKER]
         self.correlator_snapshot = {name: np.nan for name in self.external_cols}
         self.gdelt_df = None
         
@@ -176,7 +176,7 @@ class LiveDataManager:
 
             for t in ticks:
                 wrapper = TickWrapper(t)
-                self.add_tick(wrapper, {'name': 'EURUSD'})
+                self.add_tick(wrapper, {'name': config.PRIMARY_TICKER})
                 
             fetched_count += len(ticks)
             # Update start_time to last tick time for next batch
@@ -212,7 +212,7 @@ class LiveDataManager:
         if self.primary_bars.empty:
             data_dir = cfg.DIRS["DATA_RAW_TICKS"]
             if os.path.exists(data_dir):
-                files = sorted([f for f in os.listdir(data_dir) if "EURUSD" in f and f.endswith(".parquet")])
+                files = sorted([f for f in os.listdir(data_dir) if config.PRIMARY_TICKER in f and f.endswith(".parquet")])
                 if files:
                     recent = files[-WARMUP_DAYS:]
                     dfs = []
@@ -236,7 +236,7 @@ class LiveDataManager:
 
     def add_tick(self, tick_obj, target_conf):
         name = target_conf['name']
-        if name == 'EURUSD':
+        if name == config.PRIMARY_TICKER:
             ts = tick_obj.time.replace(tzinfo=timezone.utc)
             
             # Calculate Tick Volume
@@ -670,18 +670,23 @@ class PaperTradeApp:
             await self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=CLIENT_ID)
             self.executor = ExecutionEngine(self.strategies) # Re-init in case strategies were dropped
             self.ib.reqMarketDataType(1)
-            eur = Forex('EURUSD')
+        if not self.primary_contract:
+            # Fallback if qualification failed or config issue
+            logger.warning(f"⚠️ Primary Contract ({cfg.PRIMARY_TICKER}) not qualified. Attempting manual...")
+            eur = Forex(cfg.PRIMARY_TICKER)
             await self.ib.qualifyContractsAsync(eur)
-            self.ib.reqMktData(eur, "", False, False)
-            self.ib.reqTickByTickData(eur, "BidAsk", 0, False)
-            self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']=='EURUSD'][0]
+            self.primary_contract = eur
+            self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']==cfg.PRIMARY_TICKER][0]
             
             # --- GAP FILLING ---
             await self.data_manager.fill_gaps(self.ib, eur)
             # -------------------
             
             for t in cfg.TARGETS:
-                if t['name'] == 'EURUSD': continue
+            t = self.contract_map[c.conId]
+            if t['name'] == cfg.PRIMARY_TICKER: continue # Handled below
+            
+            if t['mode'] == 'BARS_TRADES_1MIN':
                 c = None
                 if t['secType'] == 'IND': c = Index(t['symbol'], t['exchange'], t['currency'])
                 elif t['secType'] == 'CONTFUT': c = ContFuture(t['symbol'], t['exchange'], t['currency'])
@@ -714,15 +719,13 @@ class PaperTradeApp:
                         self.executor.save_state()
                         last_state_update = datetime.now()
                 
-                # Check for Data Staleness (EURUSD specifically)
+                # Check for Data Staleness ({cfg.PRIMARY_TICKER} specifically)
                 stall_delta = (datetime.now() - self.last_eur_tick).total_seconds()
-                if stall_delta > 1800:
-                    logger.error(f"💀 EURUSD Data Stalled (>{stall_delta:.0f}s). Exiting for restart.")
-                    self.stop_event.set()
-                    exit_code = 1
-                    break
+                if stall_delta > 900: # 15 mins
+                    logger.error(f"💀 {cfg.PRIMARY_TICKER} Data Stalled (>{stall_delta:.0f}s). Exiting for restart.")
+                    sys.exit(1) # Supervisor will restart
                 elif stall_delta > 60 and int(stall_delta) % 60 == 0:
-                    logger.warning(f"⚠️ EURUSD Idle for {stall_delta:.0f}s (Market Closed/Slow?)")
+                    logger.warning(f"⚠️ {cfg.PRIMARY_TICKER} Idle for {stall_delta:.0f}s (Market Closed/Slow?)")
 
                 if not self.ib.isConnected():
                     if disconnect_time is None:
@@ -751,7 +754,7 @@ class PaperTradeApp:
         for t in tickers:
             conf = self.contract_map.get(t.contract.conId)
             if not conf: continue
-            if conf['name'] == 'EURUSD':
+            if conf['name'] == cfg.PRIMARY_TICKER:
                 self.last_eur_tick = datetime.now()
                 price = (t.bid + t.ask)/2 if t.bidSize > 0 and t.askSize > 0 else (t.last if t.last > 0 else 0)
                 if price > 0: asyncio.create_task(self.executor.check_intraday_exits(price))

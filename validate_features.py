@@ -71,10 +71,9 @@ def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT, tp_pct=config
     return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
-    marker_path = os.path.join(config.DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
+    # Check if Purge is complete
+    marker_path = config.PURGE_MARKER_FILE
     if not os.path.exists(marker_path):
-        print(f"⏩ No new feature purge detected (Marker missing). Skipping Validation.")
-        exit(0)
     
     # Consume marker
     os.remove(marker_path)
