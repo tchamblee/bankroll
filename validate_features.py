@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import sys
 from feature_engine import FeatureEngine
 import scipy.stats as stats
 import os
@@ -74,6 +75,8 @@ if __name__ == "__main__":
     # Check if Purge is complete
     marker_path = config.PURGE_MARKER_FILE
     if not os.path.exists(marker_path):
+        print(f"❌ Purge marker not found at {marker_path}. Run purge_features.py first.")
+        sys.exit(1)
     
     # Consume marker
     os.remove(marker_path)

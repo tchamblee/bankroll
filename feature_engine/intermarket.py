@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import config
 from .loader import load_ticker_data
 
 def add_intermarket_features(primary_df, correlator_dfs):

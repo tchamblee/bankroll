@@ -56,12 +56,12 @@ def main():
         
     # 4. Strategy Evolution (The Brain)
     for horizon in config.PREDICTION_HORIZONS:
-    # 4. Filter Survivors (if requested)
-    if use_survivors:
         survivors_file = config.SURVIVORS_FILE_TEMPLATE.format(horizon)
         if os.path.exists(survivors_file):
-        run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 8000 --gens 10", 
-                 f"Evolutionary Strategy Discovery (Horizon: {horizon})")
+            run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 8000 --gens 10", 
+                     f"Evolutionary Strategy Discovery (Horizon: {horizon})")
+        else:
+            print(f"⚠️ Survivors file not found for Horizon {horizon}. Skipping.")
     
     # 5. Analysis & Visualization
     run_step("report_top_strategies.py", "Strategy Selection & Reporting")

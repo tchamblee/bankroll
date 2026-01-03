@@ -125,7 +125,7 @@ GDELT_KEYWORDS = {
 
 TARGETS = [
     {
-        "name": "EURUSD",
+        "name": PRIMARY_TICKER,
         "symbol": "EUR",
         "secType": "CASH",
         "currency": "USD",

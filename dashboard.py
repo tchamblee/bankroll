@@ -443,7 +443,7 @@ if view == "Cockpit":
     st.divider()
 
     # --- CHARTS ---
-                                ui.markdown(f"### {config.PRIMARY_TICKER} (Live)")
+                                ui.markdown(f"### {cfg.PRIMARY_TICKER} (Live)")
                                 ui.markdown(f"**Last:** {last_row['close']:.5f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
 
     bars_df = load_bars(300)
@@ -455,7 +455,7 @@ if view == "Cockpit":
                         high=bars_df['high'],
                         low=bars_df['low'],
                         close=bars_df['close'],
-                        name=config.PRIMARY_TICKER)])
+                        name=cfg.PRIMARY_TICKER)])
 
         # Add Entry Line if active
         if state and state.get("position", 0) != 0:
@@ -693,7 +693,7 @@ elif view == "Trade Log":
                         high=view_bars['high'],
                         low=view_bars['low'],
                         close=view_bars['close'],
-                        name=config.PRIMARY_TICKER
+                        name=cfg.PRIMARY_TICKER
                     )])
                     
                     # Markers

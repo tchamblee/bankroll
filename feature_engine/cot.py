@@ -99,7 +99,7 @@ def precompute_cot_features(cot_df):
 
     return df
 
-def add_cot_features(bars_df, cot_path=None):
+def add_cot_features(bars_df, cot_path=None, symbol=None):
     """
     Adds Commitment of Traders (COT) features to intraday bars.
     """

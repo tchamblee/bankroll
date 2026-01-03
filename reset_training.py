@@ -27,6 +27,7 @@ def reset_training(hard=False):
         print(f"✅ Deleted Purge Marker: {purge_marker}")
         
     # Delete survivor files
+    features_dir = config.DIRS['FEATURES_DIR']
     survivor_files = glob.glob(os.path.join(features_dir, "survivors_*.json"))
     for f in survivor_files:
         os.remove(f)

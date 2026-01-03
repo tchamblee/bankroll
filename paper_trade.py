@@ -176,7 +176,7 @@ class LiveDataManager:
 
             for t in ticks:
                 wrapper = TickWrapper(t)
-                self.add_tick(wrapper, {'name': config.PRIMARY_TICKER})
+                self.add_tick(wrapper, {'name': cfg.PRIMARY_TICKER})
                 
             fetched_count += len(ticks)
             # Update start_time to last tick time for next batch
@@ -212,7 +212,7 @@ class LiveDataManager:
         if self.primary_bars.empty:
             data_dir = cfg.DIRS["DATA_RAW_TICKS"]
             if os.path.exists(data_dir):
-                files = sorted([f for f in os.listdir(data_dir) if config.PRIMARY_TICKER in f and f.endswith(".parquet")])
+                files = sorted([f for f in os.listdir(data_dir) if cfg.PRIMARY_TICKER in f and f.endswith(".parquet")])
                 if files:
                     recent = files[-WARMUP_DAYS:]
                     dfs = []
@@ -236,7 +236,7 @@ class LiveDataManager:
 
     def add_tick(self, tick_obj, target_conf):
         name = target_conf['name']
-        if name == config.PRIMARY_TICKER:
+        if name == cfg.PRIMARY_TICKER:
             ts = tick_obj.time.replace(tzinfo=timezone.utc)
             
             # Calculate Tick Volume

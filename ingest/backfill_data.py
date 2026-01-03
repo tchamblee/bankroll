@@ -19,6 +19,7 @@ if sys.platform == "win32":
 
 from backfill.pipeline import main
 import backfill.config as bf_cfg
+import config
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill Data Pipeline Wrapper")

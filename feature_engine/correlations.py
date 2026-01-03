@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import config
 from .loader import load_ticker_data
 
 def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=100):
