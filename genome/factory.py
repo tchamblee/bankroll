@@ -14,7 +14,7 @@ from .constants import (
 from .genes import (
     ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
     EfficiencyGene, DivergenceGene, EventGene, CrossGene, PersistenceGene,
-    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, gene_from_dict
+    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, gene_from_dict
 )
 from .strategy import Strategy
 
@@ -36,11 +36,11 @@ class GenomeFactory:
         # Categorize Features for Gated Logic
         self.regime_keywords = ['hurst', 'volatility', 'efficiency', 'entropy', 'skew', 'trend_strength', 
                                'yang_zhang', 'lambda', 'force', 'fdi',
-                               'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol']
+                               'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol', 'premium']
         
         # Boost keywords for Physics/Microstructure (Alpha Refinement)
         self.boost_keywords = ['hurst', 'entropy', 'fdi', 'yang_zhang', 'kyle', 
-                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock', 'seasonal']
+                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock', 'seasonal', 'premium']
         
         self.update_pools()
 
@@ -52,7 +52,7 @@ class GenomeFactory:
         # If no features loaded (first run), populate from dataframe
         if not self.features:
             ignore_cols = {'open', 'high', 'low', 'close', 'volume', 'time_start', 'time_end', 
-                          'time_hour', 'time_weekday', 'log_ret', 'target', 'symbol'}
+                          'time_hour', 'time_weekday', 'log_ret', 'target', 'symbol', 'vix_close', 'evz_close'}
             self.features = [c for c in df.columns if c not in ignore_cols and not c.startswith('metadata_')]
             self.update_pools()
 
@@ -81,8 +81,29 @@ class GenomeFactory:
         
         rand_val = random.random()
         
-        # 25% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
-        if rand_val < 0.25:
+        # 15% Mean Reversion Gene (New - Volatility Risk Premium Gated)
+        if rand_val < 0.15:
+            trigger = self._weighted_choice(self.trigger_pool) if self.trigger_pool else self._weighted_choice(pool)
+            
+            # Find a Premium feature if possible
+            prem_feats = [f for f in self.regime_pool if 'premium' in f]
+            if prem_feats:
+                regime = random.choice(prem_feats)
+                reg_thresh = 0.0 # Premium > 0 = Fear
+            else:
+                regime = self._weighted_choice(self.regime_pool) if self.regime_pool else self._weighted_choice(pool)
+                # Generic regime threshold
+                stats = self.feature_stats.get(regime, {'mean': 0, 'std': 1})
+                reg_thresh = stats['mean'] + random.choice([-0.5, 0.5]) * stats['std']
+            
+            threshold = random.choice([2.0, 2.5, 3.0]) # High Sigma for Fade
+            direction = random.choice(['long', 'short'])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            
+            return MeanReversionGene(trigger, regime, threshold, reg_thresh, direction, window)
+
+        # 20% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
+        elif rand_val < 0.35:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
@@ -91,7 +112,7 @@ class GenomeFactory:
             return ZScoreGene(feature, operator, threshold, window)
         
         # 10% Soft ZScore Gene (Continuous Confidence)
-        elif rand_val < 0.35:
+        elif rand_val < 0.45:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
@@ -99,14 +120,14 @@ class GenomeFactory:
             slope = random.uniform(0.5, 2.0)
             return SoftZScoreGene(feature, operator, threshold, window, slope)
 
-        # 10% Seasonality Gene (Time-Based Alpha)
-        elif rand_val < 0.45:
+        # 5% Seasonality Gene (Time-Based Alpha)
+        elif rand_val < 0.50:
              operator = random.choice(['>', '<'])
              threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
              return SeasonalityGene(operator, threshold)
 
         # 10% Relational Gene (Context - "Is A > B?")
-        elif rand_val < 0.55:
+        elif rand_val < 0.60:
             feature_left = self._weighted_choice(pool)
             # Find compatible features (same root)
             # e.g. 'volatility_100' compatible with 'volatility_200'
@@ -122,7 +143,7 @@ class GenomeFactory:
                 return self.create_random_gene()
 
         # 5% Squeeze Gene (Regime Detector - Volatility Compression)
-        elif rand_val < 0.50:
+        elif rand_val < 0.65:
             feature_short = self._weighted_choice(pool)
             # Squeeze needs compatible long-term feature
             root = feature_short.rsplit('_', 1)[0]
@@ -136,7 +157,7 @@ class GenomeFactory:
                 return self.create_random_gene()
 
         # 10% Correlation Gene (Synergy - "Are A and B moving together?")
-        elif rand_val < 0.60:
+        elif rand_val < 0.75:
             # Correlation can be between ANY two features (that's the point)
             feature_left = self._weighted_choice(pool)
             feature_right = self._weighted_choice(pool)
@@ -146,7 +167,7 @@ class GenomeFactory:
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
         # 5% Flux Gene (Acceleration)
-        elif rand_val < 0.65:
+        elif rand_val < 0.80:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
@@ -155,7 +176,7 @@ class GenomeFactory:
             return FluxGene(feature, operator, threshold, lag)
 
         # 5% Efficiency Gene (Path)
-        elif rand_val < 0.70:
+        elif rand_val < 0.85:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             threshold = random.uniform(0.3, 0.8)
@@ -163,7 +184,7 @@ class GenomeFactory:
             return EfficiencyGene(feature, operator, threshold, window)
 
         # 5% Divergence Gene (Structure)
-        elif rand_val < 0.75:
+        elif rand_val < 0.90:
             # Divergence needs compatible features (Price vs Oscillator usually, or Price vs Price)
             # Simplified: Random pair is risky. Let's restrict to same root.
             f1 = self._weighted_choice(pool)
@@ -177,8 +198,8 @@ class GenomeFactory:
             else:
                 return self.create_random_gene()
 
-        # 10% Event Gene (Memory - "Did X happen recently?")
-        elif rand_val < 0.85:
+        # 5% Event Gene (Memory - "Did X happen recently?")
+        elif rand_val < 0.95:
             feature = self._weighted_choice(pool)
             
             # Make Event Adaptive: Wrap in Z-Score
@@ -192,8 +213,8 @@ class GenomeFactory:
             
             return EventGene(adaptive_feature, operator, threshold, window)
 
-        # 5% Cross Gene (Event - "A crossed B")
-        elif rand_val < 0.90:
+        # 3% Cross Gene (Event - "A crossed B")
+        elif rand_val < 0.98:
             feature_left = self._weighted_choice(pool)
             # Enforce Compatibility
             root = feature_left.rsplit('_', 1)[0]
@@ -206,27 +227,24 @@ class GenomeFactory:
             else:
                 return self.create_random_gene()
 
-        # 5% Regime Gene (Bounded Metrics)
-        elif rand_val < 0.95:
-            bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
-            target_feature = self._weighted_choice(bounded_pool) if bounded_pool else self._weighted_choice(pool)
-            
-            op = random.choice(['>', '<'])
-            stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-            threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-            window = random.randint(3, 8)
-            return PersistenceGene(target_feature, op, threshold, window)
-
-        # 3% Extrema Gene (Breakout)
-        elif rand_val < 0.98:
-            feature = self._weighted_choice(pool)
-            mode = random.choice(['max', 'min'])
-            window = random.choice(VALID_ZSCORE_WINDOWS)
-            return ExtremaGene(feature, mode, window)
-        
-        # 2% Consecutive + Delta (Remaining)
+        # Remaining: Persistence, Extrema, Consecutive, Delta
         else:
-            if random.random() < 0.5:
+            dice = random.random()
+            if dice < 0.25:
+                bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
+                target_feature = self._weighted_choice(bounded_pool) if bounded_pool else self._weighted_choice(pool)
+                
+                op = random.choice(['>', '<'])
+                stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
+                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
+                window = random.randint(3, 8)
+                return PersistenceGene(target_feature, op, threshold, window)
+            elif dice < 0.50:
+                feature = self._weighted_choice(pool)
+                mode = random.choice(['max', 'min'])
+                window = random.choice(VALID_ZSCORE_WINDOWS)
+                return ExtremaGene(feature, mode, window)
+            elif dice < 0.75:
                 direction = random.choice(['up', 'down'])
                 op = random.choice(['>', '=='])
                 count = random.randint(2, 6)
@@ -271,14 +289,22 @@ class GenomeFactory:
             
         elif archetype_name == "MeanRev":
             # Setup: Low Hurst or High FDI (Choppy Regime)
-            regime_feat = find_feat('hurst')
-            long_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
-            short_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
-            
-            # Trigger: Overextended Price (Z-Score Reversion)
-            z_feat = find_feat('close')
-            long_genes.append(ZScoreGene(z_feat, '<', -2.0, 100)) # Oversold -> Buy
-            short_genes.append(ZScoreGene(z_feat, '>', 2.0, 100)) # Overbought -> Sell
+            # OR High Vol Premium
+            prem_feat = find_feat('premium')
+            if prem_feat and 'premium' in prem_feat:
+                # Use Advanced MeanReversionGene
+                z_feat = find_feat('close')
+                long_genes.append(MeanReversionGene(z_feat, prem_feat, 2.0, 0.0, 'long', 50))
+                short_genes.append(MeanReversionGene(z_feat, prem_feat, 2.0, 0.0, 'short', 50))
+            else:
+                # Fallback to Old Logic
+                regime_feat = find_feat('hurst')
+                long_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
+                short_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
+                
+                z_feat = find_feat('close')
+                long_genes.append(ZScoreGene(z_feat, '<', -2.0, 100)) # Oversold -> Buy
+                short_genes.append(ZScoreGene(z_feat, '>', 2.0, 100)) # Overbought -> Sell
 
         elif archetype_name == "Breakout":
             # Setup: Volatility Compression (Squeeze)

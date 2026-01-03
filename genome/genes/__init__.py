@@ -12,6 +12,7 @@ from .persistence import PersistenceGene
 from .extrema import ExtremaGene
 from .consecutive import ConsecutiveGene
 from .delta import DeltaGene
+from .mean_reversion import MeanReversionGene
 from .time import TimeGene
 from .seasonality import SeasonalityGene
 from .utils import gene_from_dict

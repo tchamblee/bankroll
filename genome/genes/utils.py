@@ -14,6 +14,7 @@ from .persistence import PersistenceGene
 from .squeeze import SqueezeGene
 from .event import EventGene
 from .extrema import ExtremaGene
+from .mean_reversion import MeanReversionGene
 
 def gene_from_dict(d):
     """Factory to restore gene from dictionary."""
@@ -49,4 +50,6 @@ def gene_from_dict(d):
         return EventGene(d['feature'], d['operator'], d['threshold'], d['window'])
     elif d['type'] == 'extrema':
         return ExtremaGene(d['feature'], d['mode'], d['window'])
+    elif d['type'] == 'mean_reversion':
+        return MeanReversionGene(d['feature'], d['regime_feature'], d['threshold'], d['regime_threshold'], d['direction'], d['window'])
     return None

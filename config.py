@@ -201,6 +201,22 @@ TARGETS = [
         "currency": "USD",
         "exchange": "NYSE",
         "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "VIX",
+        "symbol": "VIX",
+        "secType": "IND",
+        "currency": "USD",
+        "exchange": "CBOE",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "EVZ",
+        "symbol": "EVZ",
+        "secType": "IND",
+        "currency": "USD",
+        "exchange": "CBOE",
+        "mode": "BARS_TRADES_1MIN",
     }
 ]
 

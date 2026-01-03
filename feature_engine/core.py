@@ -13,6 +13,7 @@ from . import macro_voltage
 from . import intermarket
 from . import ticks
 from . import event_decay
+from . import implied_vol
 
 
 class FeatureEngine:
@@ -88,6 +89,9 @@ class FeatureEngine:
 
     def add_event_decay_features(self, high_windows=[100, 200, 400], shock_windows=[100]):
         self.bars = event_decay.add_event_decay_features(self.bars, high_windows, shock_windows)
+
+    def add_implied_vol_features(self, vix_df, evz_df):
+        self.bars = implied_vol.add_implied_vol_features(self.bars, vix_df, evz_df)
 
     def add_intermarket_features(self, correlator_dfs):
         self.bars = intermarket.add_intermarket_features(self.bars, correlator_dfs)
