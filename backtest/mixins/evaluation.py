@@ -187,7 +187,7 @@ class EvaluationMixin:
             
         return pd.DataFrame(results)
 
-    def evaluate_combinatorial_purged_cv(self, population: list, n_folds=6, n_test_folds=2, time_limit=None):
+    def evaluate_combinatorial_purged_cv(self, population: list, n_folds=config.CPCV_N_FOLDS, n_test_folds=config.CPCV_N_TEST_FOLDS, time_limit=None):
         if not population: return pd.DataFrame()
 
         n_bars = len(self.raw_data)
@@ -225,7 +225,7 @@ class EvaluationMixin:
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
             
             slice_ratio = len(test_idx) / n_bars
-            min_trades_slice = max(3, int(10 * slice_ratio))
+            min_trades_slice = max(config.CPCV_MIN_TRADES_SLICE, int(10 * slice_ratio))
             
             low_trades_mask = trades_count < min_trades_slice
             sortino[low_trades_mask] = -1.0

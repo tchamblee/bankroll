@@ -49,7 +49,7 @@ class SignalGenerationMixin:
             
             if horizon is not None:
                 # Homogenous Batch (Training)
-                est_duration_hours = (horizon * 3.2) / 60.0
+                est_duration_hours = (horizon * config.AVG_BAR_MINS) / 60.0
                 cutoff_hour = config.TRADING_END_HOUR - est_duration_hours
                 safe_mask = (time_hour < cutoff_hour) & market_open
                 signal_matrix = signal_matrix * safe_mask[:, np.newaxis]
@@ -60,7 +60,7 @@ class SignalGenerationMixin:
                 for i, strat in enumerate(population):
                     h = getattr(strat, 'horizon', 0)
                     if h > 0:
-                        est_duration = (h * 3.2) / 60.0
+                        est_duration = (h * config.AVG_BAR_MINS) / 60.0
                         cutoff = config.TRADING_END_HOUR - est_duration
                         strat_mask = (time_hour < cutoff) & market_open
                         signal_matrix[:, i] *= strat_mask

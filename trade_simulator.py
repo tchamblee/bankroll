@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from numba import jit
 import config
+from utils import trading as utrade
 
 @jit(nopython=True, nogil=True, cache=True)
 def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
@@ -46,51 +47,27 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             h_prev = highs[i-1]
             l_prev = lows[i-1]
             
-            # Dynamic Distances based on Entry Volatility
-            sl_dist = entry_atr * sl_mult
-            tp_dist = entry_atr * tp_mult
-            
-            # Long Position
             if position > 0:
-                # Stop Loss (Low Check)
-                if sl_mult > 0.0:
-                    sl_price = entry_price - sl_dist
-                    if l_prev <= sl_price:
-                        position = 0.0
-                        realized_signals[i] = 0.0
-                        barrier_exit_prices[i] = sl_price
-                        barrier_hit = True
-                        is_sl_hit = True
-                        
-                # Take Profit (High Check)
-                if not barrier_hit and tp_mult > 0.0:
-                    tp_price = entry_price + tp_dist
-                    if h_prev >= tp_price:
-                        position = 0.0
-                        realized_signals[i] = 0.0
-                        barrier_exit_prices[i] = tp_price
-                        barrier_hit = True
+                hit, exit_p, code = utrade.check_barrier_long(
+                    entry_price, entry_atr, l_prev, h_prev, sl_mult, tp_mult
+                )
+                if hit:
+                    position = 0.0
+                    realized_signals[i] = 0.0
+                    barrier_exit_prices[i] = exit_p
+                    barrier_hit = True
+                    if code == 1: is_sl_hit = True
 
-            # Short Position
             elif position < 0:
-                # Stop Loss (High Check)
-                if sl_mult > 0.0:
-                    sl_price = entry_price + sl_dist
-                    if h_prev >= sl_price:
-                        position = 0.0
-                        realized_signals[i] = 0.0
-                        barrier_exit_prices[i] = sl_price
-                        barrier_hit = True
-                        is_sl_hit = True
-                        
-                # Take Profit (Low Check)
-                if not barrier_hit and tp_mult > 0.0:
-                    tp_price = entry_price - tp_dist
-                    if l_prev <= tp_price:
-                        position = 0.0
-                        realized_signals[i] = 0.0
-                        barrier_exit_prices[i] = tp_price
-                        barrier_hit = True
+                hit, exit_p, code = utrade.check_barrier_short(
+                    entry_price, entry_atr, l_prev, h_prev, sl_mult, tp_mult
+                )
+                if hit:
+                    position = 0.0
+                    realized_signals[i] = 0.0
+                    barrier_exit_prices[i] = exit_p
+                    barrier_hit = True
+                    if code == 1: is_sl_hit = True
 
         # --- 2. FORCE CLOSE (EOD/Time) ---
         force_close = False
@@ -123,8 +100,6 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                 entry_idx = i
         else:
             # Position Active: Check for Reversal
-            # We ignore 0 signals (Latching/Holding)
-            # We only act if signal is non-zero and opposite sign
             sig = realized_signals[i]
             if sig != 0.0 and np.sign(sig) != np.sign(position):
                 # Reversal
@@ -133,10 +108,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                 entry_atr = atr_vec[i]
                 entry_idx = i
             
-        # Update realized signal to reflect held position
         realized_signals[i] = position
-        
-        # Update loop state...
         
     # --- COST & PNL CALCULATION ---
     net_returns = np.zeros(n, dtype=np.float64)
@@ -154,24 +126,11 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             gross_pnl = prev_pos * lot_size * price_change
             pos_change = abs(curr_pos - prev_pos)
             
-            # Dynamic Slippage (Factor of ATR)
-            slippage = slippage_factor * atr_vec[i] * lot_size * pos_change
-            
-            # Spread Cost
-            spread_cost = pos_change * lot_size * current_price * (0.5 * spread_pct)
-            
-            # Commission (Max of Variable vs Min)
-            raw_comm = pos_change * lot_size * current_price * comm_pct
-            # If pos_change > 0 (trade happened), apply min. Else 0.
-            # However, pos_change is float. If partial trade?
-            # Assuming 'min_comm' applies per order.
-            # If pos_change is significant (e.g. > 0.01 lots), we charge min.
-            
-            comm = 0.0
-            if pos_change > config.COMMISSION_THRESHOLD:
-                comm = max(min_comm, raw_comm)
-            
-            cost = spread_cost + comm + slippage
+            cost = utrade.calculate_cost(
+                pos_change, current_price, atr_vec[i], lot_size, 
+                spread_pct, comm_pct, min_comm, slippage_factor, 
+                config.COMMISSION_THRESHOLD
+            )
             
             net_pnl = gross_pnl - cost
             net_returns[i] = net_pnl / account_size
@@ -179,17 +138,11 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         else:
             pos_change = abs(curr_pos - 0.0)
             
-            # Dynamic Slippage (Factor of ATR)
-            slippage = slippage_factor * atr_vec[i] * lot_size * pos_change
-            
-            spread_cost = pos_change * lot_size * prices[i] * (0.5 * spread_pct)
-            raw_comm = pos_change * lot_size * prices[i] * comm_pct
-            
-            comm = 0.0
-            if pos_change > config.COMMISSION_THRESHOLD:
-                comm = max(min_comm, raw_comm)
-            
-            cost = spread_cost + comm + slippage
+            cost = utrade.calculate_cost(
+                pos_change, prices[i], atr_vec[i], lot_size, 
+                spread_pct, comm_pct, min_comm, slippage_factor, 
+                config.COMMISSION_THRESHOLD
+            )
             
             net_returns[i] = -cost / account_size
             if pos_change > 0: trade_count += 1
@@ -256,9 +209,6 @@ class TradeSimulator:
         """
         Simulates trading a signal vector with barriers.
         Detailed version returning Trade objects for visualization.
-        
-        If 'atr' is provided, stop_loss_pct and take_profit_pct are interpreted as ATR Multipliers.
-        Otherwise, they are interpreted as raw Percentage of Entry Price.
         """
         # Prepare Result Containers
         trades = []
@@ -279,10 +229,11 @@ class TradeSimulator:
         trade_start_idx = 0
         current_trade = None
         
+        sl_mult = stop_loss_pct if stop_loss_pct else 0.0
+        tp_mult = take_profit_pct if take_profit_pct else 0.0
+        
         for i in range(1, self.n_bars):
-            price = self.prices[i] # Open/Close depending on setup. Usually Close for MTM, but exec at Open.
-            # Assuming 'prices' passed to __init__ are the execution prices (Open) or Close.
-            # Standard backtest uses Next Open.
+            price = self.prices[i] 
             
             hour = self.hours[i]
             weekday = self.weekdays[i]
@@ -301,57 +252,35 @@ class TradeSimulator:
             if position != 0:
                 if force_close:
                     exit_signal = True
-                    exit_reason = "EOD" # End of Day/Session
+                    exit_reason = "EOD" 
                 elif time_limit_bars and (i - trade_start_idx >= time_limit_bars):
                     exit_signal = True
                     exit_reason = "TIME"
                 else:
                     # Barrier Checks (SL/TP)
-                    # Check against PREVIOUS bar High/Low (i-1) to avoid lookahead
-                    # (We are at step i, deciding to exit based on what happened since entry)
-                    # Actually, if we are at step i (Open), we check if price hit SL during i-1.
-                    
                     h_prev = h_vec[i-1]
                     l_prev = l_vec[i-1]
                     
-                    sl_dist = 0.0
-                    tp_dist = 0.0
+                    # Adapt to ATR vs Percentage
+                    eff_atr = entry_atr if use_atr else entry_price
                     
-                    if use_atr:
-                        sl_dist = entry_atr * stop_loss_pct
-                        tp_dist = entry_atr * take_profit_pct if take_profit_pct else 0.0
-                    else:
-                        sl_dist = entry_price * stop_loss_pct
-                        tp_dist = entry_price * take_profit_pct if take_profit_pct else 0.0
-
                     if position > 0:
-                        # Long SL (Low check)
-                        if stop_loss_pct and l_prev <= (entry_price - sl_dist):
+                        hit, exit_p, code = utrade.check_barrier_long(entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult)
+                        if hit:
                             exit_signal = True
-                            exit_reason = "SL"
-                            barrier_exit_price = entry_price - sl_dist
-                        # Long TP (High check)
-                        elif take_profit_pct and h_prev >= (entry_price + tp_dist):
-                            exit_signal = True
-                            exit_reason = "TP"
-                            barrier_exit_price = entry_price + tp_dist
+                            barrier_exit_price = exit_p
+                            exit_reason = "SL" if code == 1 else "TP"
                             
                     elif position < 0:
-                        # Short SL (High check)
-                        if stop_loss_pct and h_prev >= (entry_price + sl_dist):
+                        hit, exit_p, code = utrade.check_barrier_short(entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult)
+                        if hit:
                             exit_signal = True
-                            exit_reason = "SL"
-                            barrier_exit_price = entry_price + sl_dist
-                        # Short TP (Low check)
-                        elif take_profit_pct and l_prev <= (entry_price - tp_dist):
-                            exit_signal = True
-                            exit_reason = "TP"
-                            barrier_exit_price = entry_price - tp_dist
+                            barrier_exit_price = exit_p
+                            exit_reason = "SL" if code == 1 else "TP"
             
             target_pos = signals[i]
             
             # --- LATCHING LOGIC ---
-            # If barrier exit or force close, we must go to 0.
             if force_close:
                 target_pos = 0 
                 if position != 0:
@@ -360,38 +289,23 @@ class TradeSimulator:
             elif exit_signal:
                 target_pos = 0
             else:
-                # Normal state: Check for Hold or Reversal
                 if position != 0:
-                    if target_pos == 0:
-                        # Signal Flat -> HOLD
-                        target_pos = position
-                    elif np.sign(target_pos) == np.sign(position):
-                         # Signal Same -> HOLD
-                         target_pos = position
-                    else:
-                        # Signal Flip -> REVERSE (Allow target_pos to be different)
-                        pass
+                    if target_pos == 0: target_pos = position
+                    elif np.sign(target_pos) == np.sign(position): target_pos = position
             
             if target_pos != position:
                 change = target_pos - position
-                
-                # Execution Price
-                # If barrier exit, use barrier price. Else use current bar price (Open)
                 exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else price
                 
-                # Cost Calculation
-                spread_cost = abs(change) * self.lot_size * exec_price * (0.5 * self.spread_pct)
-                raw_comm = abs(change) * self.lot_size * exec_price * self.comm_pct
-                
-                # Dynamic Slippage (Factor of ATR)
+                # Cost Calculation via Shared Logic
                 current_atr = atr_vec[i] if use_atr else (exec_price * 0.001)
-                slippage = config.SLIPPAGE_ATR_FACTOR * current_atr * self.lot_size * abs(change)
                 
-                comm = 0.0
-                if abs(change) > config.COMMISSION_THRESHOLD:
-                     comm = max(self.min_comm, raw_comm)
+                cost = utrade.calculate_cost(
+                    abs(change), exec_price, current_atr, self.lot_size, 
+                    self.spread_pct, self.comm_pct, self.min_comm, 
+                    config.SLIPPAGE_ATR_FACTOR, config.COMMISSION_THRESHOLD
+                )
                 
-                cost = spread_cost + comm + slippage
                 step_pnl -= cost
                 
                 if position != 0:
@@ -435,7 +349,6 @@ class TradeSimulator:
         """
         limit_val = time_limit_bars if time_limit_bars is not None else 0
         
-        # Interpret inputs as Multipliers
         sl_mult = stop_loss_pct if stop_loss_pct is not None else 0.0
         tp_mult = take_profit_pct if take_profit_pct is not None else 0.0
         
@@ -444,7 +357,6 @@ class TradeSimulator:
         high_vec = highs.astype(np.float64) if highs is not None else self.prices
         low_vec = lows.astype(np.float64) if lows is not None else self.prices
         
-        # ATR Handling
         if atr is None:
             atr_vec = self.prices * 0.001 
         else:

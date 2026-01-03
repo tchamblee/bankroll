@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+from utils import math as umath
 
 def _save_feature(temp_dir, existing_keys, name, arr):
     path = os.path.join(temp_dir, f"{name}.npy")
@@ -18,6 +19,9 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
         _save_feature(temp_dir, existing_keys, 'time_weekday', dt.dayofweek.values.astype(np.float32))
         
     close = raw_data['close'].values
+    # Streak: consecutive ups/downs? The original code had a simple streak logic
+    # "up_mask = ... streaks = ..."
+    # We'll preserve it or use a math util if complex. It was simple.
     up_mask = (close > np.roll(close, 1)); up_mask[0] = False
     
     def get_streak(mask):
@@ -38,13 +42,12 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
     tr3 = np.abs(l - c_prev)
     tr = np.maximum(tr1, np.maximum(tr2, tr3))
     
-    # Simple Moving Average for ATR (Window 50 for stability approx 2 hours)
-    # Using convolution for speed
+    # Simple Moving Average for ATR (Window 50)
     w_atr = 50
     if len(tr) >= w_atr:
         kernel = np.ones(w_atr) / w_atr
         atr = np.convolve(tr, kernel, mode='full')[:len(tr)]
-        atr[:w_atr] = tr[:w_atr] # Fill warmup with raw TR or mean of available
+        atr[:w_atr] = tr[:w_atr] 
     else:
         atr = tr
         
@@ -54,36 +57,37 @@ def ensure_feature_context(population, temp_dir, existing_keys):
     needed = set()
     
     def parse_feature_dependencies(feature_name):
-        # Recursively parse feature name to find dependencies
         parts = feature_name.split('_')
         
-        # Check for known prefixes that imply computation
-        # delta_{feature}_{lookback}
         if feature_name.startswith('delta_') and parts[-1].isdigit():
              lookback = int(parts[-1])
              inner_feature = "_".join(parts[1:-1])
              needed.add(('delta', inner_feature, lookback))
              parse_feature_dependencies(inner_feature)
              
-        # zscore_{feature}_{window}
         elif feature_name.startswith('zscore_') and parts[-1].isdigit():
              window = int(parts[-1])
              inner_feature = "_".join(parts[1:-1])
              needed.add(('zscore', inner_feature, window))
              parse_feature_dependencies(inner_feature)
         
-        # slope_{feature}_{window}
         elif feature_name.startswith('slope_') and parts[-1].isdigit():
              window = int(parts[-1])
              inner_feature = "_".join(parts[1:-1])
              needed.add(('slope', inner_feature, window))
              parse_feature_dependencies(inner_feature)
 
-        # flux_{feature}_{lag}
         elif feature_name.startswith('flux_') and parts[-1].isdigit():
              lag = int(parts[-1])
              inner_feature = "_".join(parts[1:-1])
              needed.add(('flux', inner_feature, lag))
+             parse_feature_dependencies(inner_feature)
+             
+        elif feature_name.startswith('eff_') and parts[-1].isdigit():
+             # 'eff' usually efficiency
+             window = int(parts[-1])
+             inner_feature = "_".join(parts[1:-1])
+             needed.add(('efficiency', inner_feature, window))
              parse_feature_dependencies(inner_feature)
 
     for strat in population:
@@ -118,13 +122,10 @@ def ensure_feature_context(population, temp_dir, existing_keys):
             elif gene.type == 'event':
                  if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
     
-    # Helper to load feature from disk for calculation
     def get_data(key):
         if key not in existing_keys: return None
         return np.load(os.path.join(temp_dir, f"{key}.npy"))
 
-    # Multi-pass computation to handle dependencies
-    # (e.g. compute delta first, then zscore of delta)
     max_passes = 3
     for _ in range(max_passes):
         start_count = len(existing_keys)
@@ -139,10 +140,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 
                 arr = get_data(feature)
                 if arr is not None:
-                    w = param
-                    diff = np.zeros_like(arr)
-                    if w < len(arr): diff[w:] = arr[w:] - arr[:-w]
-                    _save_feature(temp_dir, existing_keys, key, diff)
+                    res = umath.calc_delta(arr, param)
+                    _save_feature(temp_dir, existing_keys, key, res)
 
             elif type_ == 'flux':
                 feature, lag = item[1], item[2]
@@ -151,12 +150,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 
                 arr = get_data(feature)
                 if arr is not None:
-                    d1 = np.zeros_like(arr)
-                    if len(arr) > lag: d1[lag:] = arr[lag:] - arr[:-lag]
-                    
-                    flux = np.zeros_like(arr)
-                    if len(arr) > lag: flux[lag:] = d1[lag:] - d1[:-lag]
-                    _save_feature(temp_dir, existing_keys, key, flux)
+                    res = umath.calc_flux(arr, lag)
+                    _save_feature(temp_dir, existing_keys, key, res)
 
             elif type_ == 'slope':
                 feature, w = item[1], item[2]
@@ -165,20 +160,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 
                 arr = get_data(feature)
                 if arr is not None:
-                    y = arr
-                    n = w
-                    if len(y) > w:
-                        sum_x = (n * (n - 1)) / 2
-                        sum_x2 = (n * (n - 1) * (2 * n - 1)) / 6
-                        divisor = n * sum_x2 - sum_x ** 2
-                        
-                        kernel_xy = np.arange(n)[::-1]
-                        sum_xy = np.convolve(y, kernel_xy, mode='full')[:len(y)]
-                        sum_y = np.convolve(y, np.ones(n), mode='full')[:len(y)]
-                        
-                        slope = (n * sum_xy - sum_x * sum_y) / (divisor + 1e-9)
-                        slope[:n] = 0.0
-                        _save_feature(temp_dir, existing_keys, key, slope.astype(np.float32))
+                    res = umath.calc_slope(arr, w)
+                    _save_feature(temp_dir, existing_keys, key, res)
 
             elif type_ == 'efficiency':
                 feature, w = item[1], item[2]
@@ -187,18 +170,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 
                 arr = get_data(feature)
                 if arr is not None:
-                    change = np.zeros_like(arr)
-                    if len(arr) > w: change[w:] = np.abs(arr[w:] - arr[:-w])
-                    
-                    diff1 = np.zeros_like(arr)
-                    diff1[1:] = np.abs(arr[1:] - arr[:-1])
-                    
-                    kernel = np.ones(w)
-                    path = np.convolve(diff1, kernel, mode='full')[:len(arr)]
-                    
-                    er = np.divide(change, path, out=np.zeros_like(change), where=path!=0)
-                    er[:w] = 0.0
-                    _save_feature(temp_dir, existing_keys, key, er.astype(np.float32))
+                    res = umath.calc_efficiency(arr, w)
+                    _save_feature(temp_dir, existing_keys, key, res)
 
             elif type_ == 'zscore':
                 feature, param = item[1], item[2]
@@ -207,19 +180,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
 
                 arr = get_data(feature)
                 if arr is not None:
-                    w = param
-                    n_len = len(arr)
-                    if n_len >= w:
-                        kernel = np.ones(w)
-                        sum_x = np.convolve(arr, kernel, 'full')[:n_len]
-                        sum_x2 = np.convolve(arr * arr, kernel, 'full')[:n_len]
-                        mean = sum_x / w
-                        mean_x2 = sum_x2 / w
-                        var = np.maximum(mean_x2 - mean**2, 0)
-                        std = np.sqrt(var)
-                        z = np.divide(arr - mean, std, out=np.zeros_like(arr), where=std!=0)
-                        z[:w-1] = 0.0
-                        _save_feature(temp_dir, existing_keys, key, z.astype(np.float32))
+                    res = umath.calc_zscore(arr, param)
+                    _save_feature(temp_dir, existing_keys, key, res)
             
             elif type_ == 'correlation':
                 f1, f2, w = item[1], item[2], item[3]
@@ -231,25 +193,8 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 b = get_data(f2)
                 
                 if a is not None and b is not None:
-                    n = w
-                    kernel = np.ones(n)
-                    aa = a * a
-                    bb = b * b
-                    ab = a * b
-                    sum_a = np.convolve(a, kernel, 'full')[:len(a)]
-                    sum_b = np.convolve(b, kernel, 'full')[:len(b)]
-                    sum_ab = np.convolve(ab, kernel, 'full')[:len(ab)]
-                    sum_aa = np.convolve(aa, kernel, 'full')[:len(aa)]
-                    sum_bb = np.convolve(bb, kernel, 'full')[:len(bb)]
-                    var_a_term = np.maximum(n * sum_aa - sum_a**2, 0)
-                    var_b_term = np.maximum(n * sum_bb - sum_b**2, 0)
-                    numerator = n * sum_ab - sum_a * sum_b
-                    denominator = np.sqrt(var_a_term * var_b_term)
-                    corr = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
-                    corr[:n-1] = 0.0
-                    corr = np.clip(corr, -1.0, 1.0)
-                    _save_feature(temp_dir, existing_keys, key, corr.astype(np.float32))
+                    res = umath.calc_correlation(a, b, w)
+                    _save_feature(temp_dir, existing_keys, key, res)
         
-        # If no new features added, stop early
         if len(existing_keys) == start_count:
             break

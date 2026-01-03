@@ -48,6 +48,7 @@ EPSILON = 1e-9
 # --- BAR DEFINITION ---
 # 600M units is approx 250 ticks for EURUSD (High Resolution)
 VOLUME_THRESHOLD = 600_000_000 
+AVG_BAR_MINS = 3.2 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
 # Approx 750 bars/day (for 600M threshold) * 252 days
@@ -75,6 +76,9 @@ STABILITY_PENALTY_FACTOR = 0.6
 TRAIN_SPLIT_RATIO = 0.6
 VAL_SPLIT_RATIO = 0.8
 WFV_FOLDS = 5
+CPCV_N_FOLDS = 6
+CPCV_N_TEST_FOLDS = 2
+CPCV_MIN_TRADES_SLICE = 3
 
 # --- EVOLUTIONARY ALGORITHM SETTINGS ---
 EVO_BATCH_SIZE = 2000
