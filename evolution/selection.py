@@ -70,5 +70,6 @@ def update_hall_of_fame(hall_of_fame, backtester, candidates, gen, max_gens=100,
     hall_of_fame.sort(key=lambda x: x['fit'], reverse=True)
     
     # Cap Size
-    if len(hall_of_fame) > 2000:
-        del hall_of_fame[2000:]
+    HOF_CAP = 300
+    if len(hall_of_fame) > HOF_CAP:
+        del hall_of_fame[HOF_CAP:]

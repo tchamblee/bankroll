@@ -18,7 +18,12 @@ class BacktestEngineBase:
         self.annualization_factor = annualization_factor if annualization_factor else config.ANNUALIZATION_FACTOR
         
         # Temp dir for individual npy files
-        base_temp = config.DIRS.get('TEMP_DIR', tempfile.gettempdir())
+        # Optimization: Prefer /dev/shm (RAM Disk) on Linux to avoid Disk I/O bottlenecks
+        if os.path.exists('/dev/shm') and os.access('/dev/shm', os.W_OK):
+            base_temp = '/dev/shm'
+        else:
+            base_temp = config.DIRS.get('TEMP_DIR', tempfile.gettempdir())
+            
         os.makedirs(base_temp, exist_ok=True)
         self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_", dir=base_temp)
         

@@ -64,7 +64,9 @@ def check_data_quality(df):
         
     return issues_found
 
-def check_leaks():
+import sys
+
+def check_leaks(force=False):
     print("🕵️  Starting Data Leakage Investigation...")
     
     matrix_path = config.DIRS['FEATURE_MATRIX']
@@ -74,14 +76,38 @@ def check_leaks():
         print("❌ Feature Matrix not found.")
         return
 
-    if os.path.exists(verified_marker):
+    if os.path.exists(verified_marker) and not force:
         print(f"⏩ Data Integrity already verified. Skipping.")
+        print(f"   (Use '--force' to override)")
         return
 
     # Load Data
     print(f"Loading {matrix_path}...")
     df = pd.read_parquet(matrix_path)
     
+    # --- DATE FILTERING ---
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        print(f"📅 Applying Training Start Date: {config.TRAIN_START_DATE}")
+        if 'time_start' in df.columns:
+            # Normalize Timezones
+            if not pd.api.types.is_datetime64_any_dtype(df['time_start']):
+                 df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+            
+            ts_col = df['time_start']
+            if ts_col.dt.tz is None:
+                 ts_col = ts_col.dt.tz_localize('UTC')
+            else:
+                 ts_col = ts_col.dt.tz_convert('UTC')
+                 
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+            
+            if ts_col.min() < start_ts:
+                original_len = len(df)
+                df = df[ts_col >= start_ts].reset_index(drop=True)
+                print(f"   Dropped {original_len - len(df)} rows (Pre-Start Data). Checking {len(df)} rows.")
+        else:
+             print("   ⚠️ 'time_start' column missing. Cannot filter by date.")
+
     # --- RUN HEALTH CHECK FIRST ---
     issues_found = check_data_quality(df)
     
@@ -153,4 +179,5 @@ def check_leaks():
     print(f"\n✅ Verification Complete. Marker saved to {verified_marker}")
 
 if __name__ == "__main__":
-    check_leaks()
+    force_verify = '--force' in sys.argv
+    check_leaks(force=force_verify)

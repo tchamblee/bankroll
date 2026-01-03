@@ -305,8 +305,11 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     return final_survivors, kill_list
 
 if __name__ == "__main__":
+    import sys
+    force_purge = "--force" in sys.argv
+
     marker_path = os.path.join(config.DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
-    if os.path.exists(marker_path):
+    if os.path.exists(marker_path) and not force_purge:
         os.remove(marker_path)
 
     # Check if all survivor lists already exist
@@ -317,8 +320,9 @@ if __name__ == "__main__":
             all_exist = False
             break
     
-    if all_exist:
+    if all_exist and not force_purge:
         print(f"⏩ Survivor lists for all horizons ({config.PREDICTION_HORIZONS}) already exist. Skipping.")
+        print(f"   (Use '--force' to override)")
         exit(0)
 
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
@@ -327,7 +331,24 @@ if __name__ == "__main__":
         exit(1)
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-    
+
+    # --- DATE FILTERING ---
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        if 'time_start' in base_df.columns:
+            if not pd.api.types.is_datetime64_any_dtype(base_df['time_start']):
+                 base_df['time_start'] = pd.to_datetime(base_df['time_start'], utc=True)
+            
+            ts_col = base_df['time_start']
+            if ts_col.dt.tz is None: ts_col = ts_col.dt.tz_localize('UTC')
+            else: ts_col = ts_col.dt.tz_convert('UTC')
+                 
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+            
+            if ts_col.min() < start_ts:
+                original_len = len(base_df)
+                base_df = base_df[ts_col >= start_ts].reset_index(drop=True)
+                print(f"📅 Training Start Date Applied: {config.TRAIN_START_DATE} (Dropped {original_len - len(base_df)} rows)")
+
     # --- FIX: DATA LEAKAGE PREVENTION ---
     # Only use the Training Set for Feature Selection.
     # The remaining (Val/Test) must remain unseen by the "Hunger Games".

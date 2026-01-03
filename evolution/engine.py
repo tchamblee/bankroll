@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 import random
 import time
 import config
 import uuid
 import warnings
+import json
 from genome import GenomeFactory, Strategy
 from backtest import BacktestEngine
 
@@ -20,15 +22,53 @@ class EvolutionaryAlphaFactory:
         self.training_id = uuid.uuid4().hex[:8]
         print(f"🆔 Training Run ID: {self.training_id}")
         
-        self.data = data
+        # --- DATA FILTERING ---
+        if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+            if 'time_start' in data.columns:
+                 # Ensure datetime compatibility
+                 if not pd.api.types.is_datetime64_any_dtype(data['time_start']):
+                     data['time_start'] = pd.to_datetime(data['time_start'], utc=True)
+                 
+                 # Handle Timezone
+                 ts_col = data['time_start']
+                 if ts_col.dt.tz is None:
+                     ts_col = ts_col.dt.tz_localize('UTC')
+                 else:
+                     ts_col = ts_col.dt.tz_convert('UTC')
+                     
+                 start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+                 
+                 if ts_col.min() < start_ts:
+                     original_len = len(data)
+                     data = data[ts_col >= start_ts].reset_index(drop=True)
+                     print(f"  📅 Time Filter: Applied {config.TRAIN_START_DATE}. Dropped {original_len - len(data)} rows.")
+
+        self.data = data # Store original just in case, but usually not needed
         self.pop_size = population_size if population_size else config.EVO_BATCH_SIZE
         self.generations = generations
         self.decay_rate = decay_rate
         self.survivors_file = survivors_file
         self.prediction_mode = prediction_mode
         
+        # --- OPTIMIZATION: Filter Data to Survivors + Essentials ---
+        # This prevents the BacktestEngine from precomputing context for hundreds of useless features.
+        try:
+            with open(survivors_file, 'r') as f:
+                survivor_features = set(json.load(f))
+            
+            essentials = {'time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'log_ret'}
+            if target_col: essentials.add(target_col)
+            
+            # Keep columns that are in survivors OR essentials
+            keep_cols = [c for c in data.columns if c in survivor_features or c in essentials]
+            data_subset = data[keep_cols]
+            # print(f"  📉 Optimization: Reduced Feature Matrix from {len(data.columns)} to {len(keep_cols)} columns (Survivors + Essentials).")
+        except Exception as e:
+            print(f"  ⚠️ Warning: Could not filter feature matrix: {e}. Using full matrix.")
+            data_subset = data
+
         self.backtester = BacktestEngine(
-            data, 
+            data_subset, 
             cost_bps=config.COST_BPS, 
             target_col=target_col,
             annualization_factor=config.ANNUALIZATION_FACTOR,
@@ -36,7 +76,7 @@ class EvolutionaryAlphaFactory:
         )
         
         self.factory = GenomeFactory(survivors_file)
-        train_data = data.iloc[:self.backtester.train_idx]
+        train_data = data_subset.iloc[:self.backtester.train_idx]
         self.factory.set_stats(train_data)
         
         self.population = []
