@@ -260,6 +260,79 @@ def parse_trades_from_logs(strat_map=None):
         
     return pd.DataFrame(events)
 
+def parse_closed_trades(strat_map=None):
+    """Parses paper_trade.log to extract completed Trade Cycles."""
+    if not os.path.exists(LOG_FILE):
+        return pd.DataFrame()
+    
+    trades = []
+    current_trade = None
+    
+    # Regex patterns
+    entry_pattern = re.compile(r"VIRTUAL ENTRY: (BUY|SELL) (\d+) lots \(Strat (\d+)\) @ ([\d\.]+)")
+    exit_pattern = re.compile(r"VIRTUAL EXIT: (.*?) @ ([\d\.]+)")
+    pnl_pattern = re.compile(r"Trade PnL: \$([-+]?[\d\.,]+)")
+    
+    try:
+        with open(LOG_FILE, "r") as f:
+            for line in f:
+                ts_str = line.split(",")[0]
+                try:
+                    ts = pd.to_datetime(ts_str)
+                except:
+                    continue
+                
+                # Check Entry
+                m_entry = entry_pattern.search(line)
+                if m_entry:
+                    s_idx = int(m_entry.group(3))
+                    s_name = strat_map.get(s_idx, str(s_idx)) if strat_map else str(s_idx)
+                    
+                    current_trade = {
+                        "Entry Time": ts,
+                        "Type": m_entry.group(1),
+                        "Lots": int(m_entry.group(2)),
+                        "Strat": s_name,
+                        "Entry Price": float(m_entry.group(4)),
+                        "Exit Time": pd.NaT,
+                        "Exit Price": 0.0,
+                        "Reason": "",
+                        "PnL": 0.0
+                    }
+                    continue
+                
+                # Check Exit
+                m_exit = exit_pattern.search(line)
+                if m_exit and current_trade:
+                    current_trade["Exit Time"] = ts
+                    current_trade["Reason"] = m_exit.group(1).strip()
+                    current_trade["Exit Price"] = float(m_exit.group(2))
+                    trades.append(current_trade) # Add to list, but keep ref for PnL
+                    # Don't clear current_trade yet, PnL line comes next
+                    continue
+                    
+                # Check PnL
+                m_pnl = pnl_pattern.search(line)
+                if m_pnl and current_trade and current_trade.get("Exit Time") is not pd.NaT:
+                    try:
+                        pnl_str = m_pnl.group(1).replace(",", "")
+                        current_trade["PnL"] = float(pnl_str)
+                    except: pass
+                    current_trade = None # Reset
+                    
+    except Exception as e:
+        st.error(f"Error parsing trades: {e}")
+        
+    df = pd.DataFrame(trades)
+    if not df.empty:
+        # Sort by Entry Time Desc
+        df = df.sort_values("Entry Time", ascending=False)
+        # Ensure UTC for linking
+        if df['Entry Time'].dt.tz is None: df['Entry Time'] = df['Entry Time'].dt.tz_localize('UTC')
+        if df['Exit Time'].dt.tz is None: df['Exit Time'] = df['Exit Time'].dt.tz_localize('UTC')
+        
+    return df
+
 def get_file_age(filepath):
     if not os.path.exists(filepath):
         return None, "Missing"
@@ -289,7 +362,7 @@ st.title("Paper Trade Dashboard")
 
 # Sidebar
 st.sidebar.header("Controls")
-view = st.sidebar.radio("View", ["Cockpit", "Strategy Inspector", "System Health"])
+view = st.sidebar.radio("View", ["Cockpit", "Strategy Inspector", "Trade Log", "System Health"])
 auto_refresh = st.sidebar.checkbox("Auto-Refresh (5s)", value=False)
 if st.sidebar.button("Manual Refresh"):
     st.rerun()
@@ -554,6 +627,129 @@ elif view == "Strategy Inspector":
                             icon = "✅" if met else "⬜"
                             val_str = f"{val:.4f}" if isinstance(val, (int, float)) else str(val)
                             st.markdown(f"{icon} **{desc}** (Cur: `{val_str}`)")
+
+elif view == "Trade Log":
+    st.header("📜 Trade Log")
+    
+    strat_map = load_strategy_names()
+    trades_df = parse_closed_trades(strat_map)
+    
+    if trades_df.empty:
+        st.info("No closed trades found in logs.")
+    else:
+        # Display Table
+        st.dataframe(
+            trades_df[["Entry Time", "Type", "Strat", "Entry Price", "Exit Time", "Exit Price", "Reason", "PnL"]],
+            use_container_width=True,
+            height=300
+        )
+        
+        st.divider()
+        st.subheader("Trade Replay")
+        
+        # Selector
+        # Create a label for the selectbox
+        trades_df["label"] = trades_df.apply(
+            lambda x: f"{x['Entry Time'].strftime('%m-%d %H:%M')} | {x['Type']} {x['Strat']} | PnL: ${x['PnL']:.2f}", axis=1
+        )
+        
+        selected_label = st.selectbox("Select Trade to Visualize", trades_df["label"].tolist())
+        
+        if selected_label:
+            trade = trades_df[trades_df["label"] == selected_label].iloc[0]
+            
+            col_del, col_vis = st.columns([1, 4])
+            with col_del:
+                if st.button("🗑️ Delete Trade", type="primary", key=f"del_{trade['Entry Time']}"):
+                    try:
+                        entry_str = trade["Entry Time"].strftime("%Y-%m-%d %H:%M:%S")
+                        exit_str = trade["Exit Time"].strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        with open(LOG_FILE, "r") as f:
+                            lines = f.readlines()
+                            
+                        new_lines = []
+                        deleted_count = 0
+                        for line in lines:
+                            keep = True
+                            # Match Entry Line
+                            if entry_str in line and "VIRTUAL ENTRY" in line:
+                                keep = False
+                            
+                            # Match Exit/PnL/Cool Lines (usually share same second)
+                            if exit_str in line and ("VIRTUAL EXIT" in line or "Trade PnL" in line or "cooling down" in line):
+                                keep = False
+                                
+                            if keep:
+                                new_lines.append(line)
+                            else:
+                                deleted_count += 1
+                        
+                        if deleted_count > 0:
+                            with open(LOG_FILE, "w") as f:
+                                f.writelines(new_lines)
+                            st.toast(f"Deleted {deleted_count} log lines.", icon="🗑️")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("Could not find matching log lines to delete.")
+                            
+                    except Exception as e:
+                        st.error(f"Deletion failed: {e}")
+
+            # Load Bars
+            bars = load_bars(full_history=True)
+            if bars is not None and not bars.empty:
+                # Time Window: Entry - 2h to Exit + 2h
+                t_start = trade["Entry Time"] - timedelta(hours=2)
+                t_end = trade["Exit Time"] + timedelta(hours=2)
+                
+                # Filter
+                mask = (bars['time_start'] >= t_start) & (bars['time_start'] <= t_end)
+                view_bars = bars[mask]
+                
+                if not view_bars.empty:
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=view_bars['time_start'],
+                        open=view_bars['open'],
+                        high=view_bars['high'],
+                        low=view_bars['low'],
+                        close=view_bars['close'],
+                        name="EURUSD"
+                    )])
+                    
+                    # Markers
+                    # Entry
+                    color = "green" if trade["Type"] == "BUY" else "red"
+                    symbol = "triangle-up" if trade["Type"] == "BUY" else "triangle-down"
+                    fig.add_trace(go.Scatter(
+                        x=[trade["Entry Time"]], y=[trade["Entry Price"]],
+                        mode='markers', marker=dict(symbol=symbol, size=15, color=color),
+                        name='Entry'
+                    ))
+                    
+                    # Exit
+                    fig.add_trace(go.Scatter(
+                        x=[trade["Exit Time"]], y=[trade["Exit Price"]],
+                        mode='markers', marker=dict(symbol='x', size=12, color='orange'),
+                        name=f'Exit ({trade["Reason"]})'
+                    ))
+                    
+                    # Lines
+                    fig.add_hline(y=trade["Entry Price"], line_dash="solid", line_color=color, annotation_text="Entry")
+                    fig.add_hline(y=trade["Exit Price"], line_dash="dash", line_color="orange", annotation_text=f"Exit {trade['Reason']}")
+                    
+                    # Title
+                    fig.update_layout(
+                        title=f"{trade['Type']} {trade['Strat']} (PnL: ${trade['PnL']:.2f})",
+                        height=600,
+                        template="plotly_dark",
+                        xaxis_rangeslider_visible=False
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No bar data found for this trade period (Data might be rotated out).")
 
 elif view == "System Health":
     st.header("🏥 System Health & Status")
