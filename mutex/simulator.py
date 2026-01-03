@@ -8,7 +8,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                                horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
                                lot_size: float, spread_pct: float, comm_pct: float, 
                                account_size: float, end_hour: int, cooldown_bars: int,
-                               min_comm: float, slippage_factor: float):
+                               min_comm: float, slippage_factor: float, commission_threshold: float):
     """
     Simulates a portfolio of strategies running concurrently on one account.
     Each strategy manages its own position logic (Horizon, SL, TP).
@@ -26,6 +26,8 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
     # Stats tracking
     strat_returns = np.zeros((n_bars, n_strats), dtype=np.float64)
     strat_trades = np.zeros(n_strats, dtype=np.int64)
+    strat_long_trades = np.zeros(n_strats, dtype=np.int64)
+    strat_short_trades = np.zeros(n_strats, dtype=np.int64)
     strat_wins = np.zeros(n_strats, dtype=np.int64)
     
     # Cooldown tracking
@@ -137,12 +139,17 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             if change > 0:
                 cost_spread = change * lot_size * exec_price * (0.5 * spread_pct)
                 raw_comm = change * lot_size * exec_price * comm_pct
-                comm = max(min_comm, raw_comm) if change > config.COMMISSION_THRESHOLD else 0.0 
+                comm = max(min_comm, raw_comm) if change > commission_threshold else 0.0 
                 slip = slippage_factor * atr_vec[i] * lot_size * change
                 total_cost = cost_spread + comm + slip
                 
                 if target_pos != 0 and curr_pos == 0:
                      strat_trades[s] += 1
+                     if target_pos > 0:
+                         strat_long_trades[s] += 1
+                     else:
+                         strat_short_trades[s] += 1
+                         
                      entry_prices[s] = exec_price
                      entry_indices[s] = i
                      entry_atrs[s] = atr_vec[i]
@@ -216,4 +223,4 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                      strat_wins[s] += 1
 
         
-    return strat_returns, strat_trades, strat_wins, positions.astype(np.int64)
+    return strat_returns, strat_trades, strat_wins, positions.astype(np.int64), strat_long_trades, strat_short_trades

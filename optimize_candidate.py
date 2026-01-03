@@ -354,15 +354,16 @@ class StrategyOptimizer:
             
             if train_ok and val_ok and test_ok and train_pos and val_pos and test_pos:
                 res['note'] = "💎 Universal"
+                res['avg_sort'] = (res['train']['sortino'] + res['val']['sortino'] + res['test']['sortino']) / 3.0
                 better_variants.append(res)
         
-        better_variants.sort(key=lambda x: x['test']['sortino'], reverse=True)
+        better_variants.sort(key=lambda x: x['avg_sort'], reverse=True)
         
-        print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Test Sortino):")
-        print(f"{'Name':<30} | {'Diff':<6} | {'Train Sort':<10} | {'Val Sort':<9} | {'Test Sort':<9} | {'Test Ret':<9} | {'Note'}")
-        print("-" * 105)
+        print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Avg Sortino):")
+        print(f"{'Name':<30} | {'Diff':<6} | {'Avg Sort':<10} | {'Train Sort':<10} | {'Val Sort':<9} | {'Test Sort':<9} | {'Test Ret':<9} | {'Note'}")
+        print("-" * 115)
         for v in better_variants[:10]:
-            print(f"{v['name']:<30} | {v['diff']:<6} | {v['train']['sortino']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
+            print(f"{v['name']:<30} | {v['diff']:<6} | {v['avg_sort']:10.2f} | {v['train']['sortino']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
 
         # Save
         if better_variants:

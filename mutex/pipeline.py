@@ -59,7 +59,7 @@ def run_mutex_backtest():
         sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
         tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
         
-        strat_rets, strat_trades, strat_wins, _ = _jit_simulate_mutex_custom(
+        strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
             oos_sig.astype(np.float64), 
             prices, highs, lows, atr, hours, weekdays, 
             horizons, sl_mults, tp_mults, 
@@ -68,7 +68,10 @@ def run_mutex_backtest():
             config.COST_BPS / 10000.0, 
             config.ACCOUNT_SIZE, 
             config.TRADING_END_HOUR, 
-            config.STOP_LOSS_COOLDOWN_BARS
+            config.STOP_LOSS_COOLDOWN_BARS,
+            config.MIN_COMMISSION,
+            config.SLIPPAGE_ATR_FACTOR,
+            config.COMMISSION_THRESHOLD
         )
         
         # --- PRUNING STEP ---
@@ -105,7 +108,7 @@ def run_mutex_backtest():
             tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
             
             print(f"🔄 Re-simulating pruned portfolio ({len(best_portfolio)} strategies)...")
-            strat_rets, strat_trades, strat_wins, _ = _jit_simulate_mutex_custom(
+            strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
                 oos_sig.astype(np.float64), 
                 prices, highs, lows, atr, hours, weekdays, 
                 horizons, sl_mults, tp_mults, 
@@ -114,7 +117,10 @@ def run_mutex_backtest():
                 config.COST_BPS / 10000.0, 
                 config.ACCOUNT_SIZE, 
                 config.TRADING_END_HOUR, 
-                config.STOP_LOSS_COOLDOWN_BARS
+                config.STOP_LOSS_COOLDOWN_BARS,
+                config.MIN_COMMISSION,
+                config.SLIPPAGE_ATR_FACTOR,
+                config.COMMISSION_THRESHOLD
             )
 
         # Save Mutex Result (AFTER PRUNING)
@@ -146,11 +152,13 @@ def run_mutex_backtest():
         print(f"  Return:     {(total_oos_profit/config.ACCOUNT_SIZE)*100:.1f}%")
         print("="*80)
         
-        print(f"\n  {'Strategy Name':<30} | {'Trades':<6} | {'Win Rate':<8} | {'% Trds':<6} | {'Profit ($)':<12} | {'% PnL':<6}")
-        print(f"  {'-'*30} | {'-'*6} | {'-'*8} | {'-'*6} | {'-'*12} | {'-'*6}")
+        print(f"\n  {'Strategy Name':<30} | {'Trades':<6} | {'Longs':<5} | {'Shorts':<6} | {'%L':<4} | {'%S':<4} | {'Win Rate':<8} | {'% Trds':<6} | {'Profit ($)':<12} | {'% PnL':<6}")
+        print(f"  {'-'*30} | {'-'*6} | {'-'*5} | {'-'*6} | {'-'*4} | {'-'*4} | {'-'*8} | {'-'*6} | {'-'*12} | {'-'*6}")
         
         for i, s in enumerate(best_portfolio):
             s_trades = strat_trades[i]
+            s_longs = strat_long_trades[i]
+            s_shorts = strat_short_trades[i]
             s_wins = strat_wins[i]
             s_profit = np.sum(strat_rets[:, i]) * config.ACCOUNT_SIZE
             
@@ -158,10 +166,13 @@ def run_mutex_backtest():
             pct_trades = (s_trades / total_trades * 100) if total_trades > 0 else 0.0
             pct_profit = (s_profit / total_oos_profit * 100) if abs(total_oos_profit) > 1e-9 else 0.0
             
+            pct_long = (s_longs / s_trades * 100) if s_trades > 0 else 0.0
+            pct_short = (s_shorts / s_trades * 100) if s_trades > 0 else 0.0
+            
             # Highlight dominance
             dom_marker = "⚠️" if pct_profit > 80 or pct_trades > 80 else ""
             
-            print(f"  {s.name:<30} | {s_trades:<6} | {win_rate:6.1f}%  | {pct_trades:6.1f}% | {s_profit:12.2f} | {pct_profit:6.1f}% {dom_marker}")
+            print(f"  {s.name:<30} | {s_trades:<6} | {s_longs:<5} | {s_shorts:<6} | {pct_long:3.0f}% | {pct_short:3.0f}% | {win_rate:6.1f}%  | {pct_trades:6.1f}% | {s_profit:12.2f} | {pct_profit:6.1f}% {dom_marker}")
         print("="*80 + "\n")
 
         plt.figure(figsize=(15, 8))

@@ -173,13 +173,13 @@ class StopLossOptimizer:
         better_variants.sort(key=lambda x: x['avg_sort'], reverse=True)
         
         print(f"\n🏆 Top {min(20, len(better_variants))} Variants (Sorted by Avg Sortino):")
-        print(f"{ 'SL':<5} | { 'TP':<5} | { 'Avg Sort':<10} | { 'Val Sort':<9} | { 'Test Sort':<9} | { 'Test Ret':<9} | {'Trds':<4} | {'Name'}")
-        print("-" * 120)
+        print(f"{ 'SL':<5} | { 'TP':<5} | { 'Avg Sort':<10} | { 'Trn Sort':<9} | { 'Val Sort':<9} | { 'Test Sort':<9} | { 'Test Ret':<9} | {'Trds':<4} | {'Name'}")
+        print("-" * 130)
         
         for v in better_variants[:20]:
             is_best = (v['avg_sort'] > parent_avg_sort)
             marker = "⭐" if is_best else ""
-            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['avg_sort']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['test']['trades']:<4} {marker} | {v['name']}")
+            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['avg_sort']:10.2f} | {v['train']['sortino']:9.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['test']['trades']:<4} {marker} | {v['name']}")
 
         # Save Best
         if better_variants:

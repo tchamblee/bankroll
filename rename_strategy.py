@@ -7,11 +7,29 @@ from backtest.utils import find_strategy_in_files
 from genome import Strategy
 
 # --- CONFIGURATION ---
-FILES_TO_UPDATE = [
-    os.path.join(config.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json"),
-    os.path.join(config.DIRS['STRATEGIES_DIR'], "candidates.json"),
-    config.DIRS['STRATEGY_INBOX']
-]
+import glob
+
+# --- CONFIGURATION ---
+def get_strategy_files():
+    """
+    Dynamically finds all strategy files to scan/update.
+    """
+    patterns = [
+        "mutex_portfolio.json",
+        "candidates.json",
+        "found_strategies.json",
+        "apex_strategies_*.json",
+        "optimized_*.json"
+    ]
+    
+    files = set()
+    for pattern in patterns:
+        matched = glob.glob(os.path.join(config.DIRS['STRATEGIES_DIR'], pattern))
+        files.update(matched)
+        
+    return list(files)
+
+FILES_TO_UPDATE = get_strategy_files()
 
 # Semantic Mapping for Technical Features
 FEATURE_TAGS = {
