@@ -75,8 +75,8 @@ class EvaluationMixin:
                 
                 if trades_count[j] < target_min_trades:
                      final_sortino = -10.0
-                elif stability_ratio[j] > 0.6 and total_ret[j] > 0: 
-                    final_sortino *= 0.6
+                elif stability_ratio[j] > config.STABILITY_PENALTY_THRESHOLD and total_ret[j] > 0: 
+                    final_sortino *= config.STABILITY_PENALTY_FACTOR
                 
                 strat.fitness = final_sortino
                 chunk_results.append({
@@ -161,8 +161,8 @@ class EvaluationMixin:
             low_trades_mask = trades_count < target_min_trades
             sortino[low_trades_mask] = -10.0
             
-            unstable_mask = (stability_ratio > 0.6) & (total_ret > 0)
-            sortino[unstable_mask] *= 0.6
+            unstable_mask = (stability_ratio > config.STABILITY_PENALTY_THRESHOLD) & (total_ret > 0)
+            sortino[unstable_mask] *= config.STABILITY_PENALTY_FACTOR
             
             fold_scores[:, f] = sortino
             

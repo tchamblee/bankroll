@@ -137,7 +137,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             if change > 0:
                 cost_spread = change * lot_size * exec_price * (0.5 * spread_pct)
                 raw_comm = change * lot_size * exec_price * comm_pct
-                comm = max(min_comm, raw_comm) if change > 0.5 else 0.0 
+                comm = max(min_comm, raw_comm) if change > config.COMMISSION_THRESHOLD else 0.0 
                 slip = slippage_factor * atr_vec[i] * lot_size * change
                 total_cost = cost_spread + comm + slip
                 

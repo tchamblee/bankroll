@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import config
 from genome import Strategy
-from .engine import BacktestEngine
 
 def find_strategy_in_files(strategy_name):
     """Searches all strategy output files for a strategy with the given name."""
@@ -53,6 +52,7 @@ def refresh_strategies(strategies_data):
     Re-simulates strategies to ensure fresh performance metrics.
     Updates the dictionaries in-place and returns the list.
     """
+    from .engine import BacktestEngine
     if not strategies_data:
         return []
     
@@ -170,3 +170,26 @@ def refresh_strategies(strategies_data):
     engine.shutdown()
     print("✅ Metrics refreshed.")
     return strategies_data
+
+def prepare_simulation_data(prices, highs=None, lows=None, atr=None):
+    """
+    Prepares data vectors for simulation, handling ATR fallback and Look-Ahead prevention.
+    Returns: atr_vec
+    """
+    # ATR Fallback
+    if atr is None:
+        if highs is not None and lows is not None:
+            # Simple Range if ATR missing
+            atr_vec = np.maximum(highs - lows, prices * 0.0005) # Min 5 bps
+        else:
+            atr_vec = prices * 0.001 # 10 bps fallback
+    else:
+        atr_vec = atr.astype(np.float64)
+
+    # CRITICAL: Shift ATR by 1 to prevent Look-Ahead Bias
+    # Simulator executes at Open[t], so it must use Volatility[t-1]
+    if len(atr_vec) > 1:
+        atr_vec = np.roll(atr_vec, 1)
+        atr_vec[0] = atr_vec[1] # Backfill first element
+        
+    return atr_vec

@@ -4,6 +4,7 @@ import multiprocessing
 from joblib import Parallel, delayed
 import config
 from ..workers import _worker_simulate
+from ..utils import prepare_simulation_data
 
 class SimulationMixin:
     def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None, highs=None, lows=None, atr=None):
@@ -24,18 +25,8 @@ class SimulationMixin:
             hours = dt_idx.hour.values.astype(np.int8)
             weekdays = dt_idx.dayofweek.values.astype(np.int8)
 
-        # ATR Fallback
-        if atr is None:
-            if highs is not None and lows is not None:
-                atr = np.maximum(highs - lows, prices * 0.0005) # Min 5 bps
-            else:
-                atr = prices * 0.001 # 10 bps fallback
-
-        # CRITICAL FIX: Shift ATR by 1 to prevent Look-Ahead Bias
-        # Simulator executes at Open[t], so it must use Volatility[t-1]
-        if atr is not None and len(atr) > 1:
-            atr = np.roll(atr, 1)
-            atr[0] = atr[1] # Backfill first element
+        # Prepare ATR Data (Fallback & Shift)
+        atr = prepare_simulation_data(prices, highs, lows, atr)
 
         # Parallelize Simulation
         n_jobs = min(6, multiprocessing.cpu_count())

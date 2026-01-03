@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import config
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
+from backtest.utils import prepare_simulation_data
 from .simulator import _jit_simulate_mutex_custom
 from .optimization import optimize_mutex_portfolio
 from .utils import load_all_candidates
@@ -35,10 +36,9 @@ def run_mutex_backtest():
         highs = backtester.high_vec[oos_start:].astype(np.float64)
         lows = backtester.low_vec[oos_start:].astype(np.float64)
         atr = backtester.atr_vec[oos_start:].astype(np.float64)
-        # CRITICAL: Shift ATR by 1 to prevent Look-Ahead Bias
-        if len(atr) > 1:
-            atr = np.roll(atr, 1)
-            atr[0] = atr[1]
+        
+        # Prepare Simulation Data
+        atr = prepare_simulation_data(prices, highs, lows, atr)
 
         times = backtester.times_vec.iloc[oos_start:] if hasattr(backtester.times_vec, 'iloc') else backtester.times_vec[oos_start:]
         

@@ -168,7 +168,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             # If pos_change is significant (e.g. > 0.01 lots), we charge min.
             
             comm = 0.0
-            if pos_change > 1e-6:
+            if pos_change > config.COMMISSION_THRESHOLD:
                 comm = max(min_comm, raw_comm)
             
             cost = spread_cost + comm + slippage
@@ -186,7 +186,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             raw_comm = pos_change * lot_size * prices[i] * comm_pct
             
             comm = 0.0
-            if pos_change > 1e-6:
+            if pos_change > config.COMMISSION_THRESHOLD:
                 comm = max(min_comm, raw_comm)
             
             cost = spread_cost + comm + slippage
@@ -388,7 +388,7 @@ class TradeSimulator:
                 slippage = config.SLIPPAGE_ATR_FACTOR * current_atr * self.lot_size * abs(change)
                 
                 comm = 0.0
-                if abs(change) > 1e-6:
+                if abs(change) > config.COMMISSION_THRESHOLD:
                      comm = max(self.min_comm, raw_comm)
                 
                 cost = spread_cost + comm + slippage

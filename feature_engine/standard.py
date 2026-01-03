@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+import config
 
 def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     """Worker function for parallel window feature calculation."""
@@ -22,7 +23,7 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     # Trend Strength needs rolling mean of volatility
     # Note: original used rolling(1000).mean() globally, but it was per window 'vol'
     # Re-evaluating: vol_norm = vol / vol.rolling(1000).mean()
-    vol_norm = vol / vol.rolling(1000, min_periods=100).mean()
+    vol_norm = vol / vol.rolling(config.VOLATILITY_NORMALIZATION_WINDOW, min_periods=100).mean()
     trend_strength = efficiency * vol_norm
     res[f'trend_strength_{w}'] = trend_strength
     
@@ -64,7 +65,7 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     h, l, c = df['high'].values, df['low'].values, df['close'].values
     c_prev = np.roll(c, 1); c_prev[0] = c[0]
     tr = np.maximum(h - l, np.maximum(np.abs(h - c_prev), np.abs(l - c_prev)))
-    df['atr'] = pd.Series(tr).rolling(50, min_periods=1).mean().values
+    df['atr'] = pd.Series(tr).rolling(config.ATR_WINDOW, min_periods=1).mean().values
 
     df_new = pd.DataFrame(new_cols, index=df.index)
     return pd.concat([df, df_new], axis=1)
