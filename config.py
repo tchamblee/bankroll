@@ -59,11 +59,11 @@ EPSILON = 1e-9
 # --- BAR DEFINITION ---
 # 600M units is approx 250 ticks for PRIMARY_TICKER (High Resolution)
 VOLUME_THRESHOLD = 600_000_000 
-AVG_BAR_MINS = 3.2 # Average duration of a volume bar in minutes
+AVG_BAR_MINS = 1.5 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
-# Approx 454 bars/day (from 2025 Data Analysis: 250-tick/3.2min bars) * 252 days
-ANNUALIZATION_FACTOR = 114408
+# Approx 1342 bars/day (from Data Analysis 2026-01-03) * 252 days
+ANNUALIZATION_FACTOR = 338363
 
 ATR_FALLBACK_BPS = 10.0 # 0.1% of price
 MIN_ATR_BPS = 5.0 # 0.05% of price
