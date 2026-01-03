@@ -124,6 +124,10 @@ def ensure_feature_context(population, temp_dir, existing_keys):
             elif gene.type == 'efficiency': 
                 needed.add(('efficiency', gene.feature, gene.window))
                 parse_feature_dependencies(gene.feature)
+            elif gene.type == 'mean_reversion':
+                needed.add(('zscore', gene.feature, gene.window))
+                parse_feature_dependencies(gene.feature)
+                parse_feature_dependencies(gene.regime_feature)
             elif gene.type == 'event':
                  if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
     # print("") # Newline
