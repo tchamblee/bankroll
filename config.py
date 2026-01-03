@@ -62,8 +62,8 @@ VOLUME_THRESHOLD = 600_000_000
 AVG_BAR_MINS = 3.2 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
-# Approx 1397 bars/day (from 2025 Data Analysis) * 252 days
-ANNUALIZATION_FACTOR = 352000
+# Approx 454 bars/day (from 2025 Data Analysis: 250-tick/3.2min bars) * 252 days
+ANNUALIZATION_FACTOR = 114408
 
 ATR_FALLBACK_BPS = 10.0 # 0.1% of price
 MIN_ATR_BPS = 5.0 # 0.05% of price

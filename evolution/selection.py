@@ -30,7 +30,19 @@ def update_hall_of_fame(hall_of_fame, backtester, candidates, gen, max_gens=100,
     phase_1 = max(5, int(max_gens * 0.30)) 
     phase_2 = max(10, int(max_gens * 0.60))
 
+    # Structural Deduplication Set
+    # Assume 'hall_of_fame' contains dicts with 'strat' key
+    existing_hashes = set()
+    for item in hall_of_fame:
+        if hasattr(item['strat'], 'get_hash'):
+            existing_hashes.add(item['strat'].get_hash())
+
     for i, cand in enumerate(candidates):
+        # 1. Structural Check
+        cand_hash = cand.get_hash()
+        if cand_hash in existing_hashes:
+            continue
+            
         if cand.fitness < 0.1: continue # Ignore junk
         
         n_trades = trades_batch[i]
@@ -65,6 +77,7 @@ def update_hall_of_fame(hall_of_fame, backtester, candidates, gen, max_gens=100,
             'sig': cand_sig,
             'gen': gen
         })
+        existing_hashes.add(cand_hash) # Mark as seen
 
     # Sort HOF by Fitness
     hall_of_fame.sort(key=lambda x: x['fit'], reverse=True)

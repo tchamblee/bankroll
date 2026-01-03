@@ -46,6 +46,20 @@ class Strategy:
         else:
             self.min_concordance = math.ceil(n * 0.51)
 
+    def get_hash(self):
+        """Returns a unique hash representing the strategy logic (ignoring name)."""
+        # Sort genes to ensure Order Agnostic hashing (Gene A + Gene B == Gene B + Gene A)
+        l_genes = sorted([str(g) for g in self.long_genes])
+        s_genes = sorted([str(g) for g in self.short_genes])
+        
+        # Combine structural elements
+        # Format: "L:[...]|S:[...]|SL:x|TP:y|H:z"
+        structure = f"L:{l_genes}|S:{s_genes}|SL:{self.stop_loss_pct}|TP:{self.take_profit_pct}|H:{self.horizon}"
+        
+        # Return MD5 hash for compactness (or just the string itself if fine)
+        # Using string is safer for debugging collisions.
+        return structure
+
     def generate_signal(self, context: dict, cache: dict = None) -> np.array:
         n_rows = context.get('__len__', 0)
         if n_rows == 0 and len(context) > 0:
