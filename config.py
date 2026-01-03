@@ -29,7 +29,7 @@ RAW_DATA_PREFIX_BARS = "RAW_BARS"
 # Added 120 (4h) and 240 (8h) for cost efficiency
 PREDICTION_HORIZONS = [60, 90, 120, 180]
 
-IBKR_HOST = "172.18.32.1"
+IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = 4001
 
 # --- TRADING CONSTRAINTS ---
@@ -51,8 +51,11 @@ VOLUME_THRESHOLD = 600_000_000
 AVG_BAR_MINS = 3.2 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
-# Approx 750 bars/day (for 600M threshold) * 252 days
-ANNUALIZATION_FACTOR = 189000 
+# Approx 1397 bars/day (from 2025 Data Analysis) * 252 days
+ANNUALIZATION_FACTOR = 352000
+
+ATR_FALLBACK_BPS = 10.0 # 0.1% of price
+MIN_ATR_BPS = 5.0 # 0.05% of price
 
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier

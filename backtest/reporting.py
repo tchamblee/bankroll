@@ -298,3 +298,68 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
         if 'warning' in c:
             print(f"   ⚠️  {c['warning']}")
     print("-" * len(header))
+
+def cluster_strategies(results_list, backtester, threshold=0.7, top_n=200):
+    """
+    Performs Hierarchical Correlation Clustering on strategy results.
+    Returns a list of selected Strategy objects (best per cluster).
+    
+    results_list: list of dicts with 'Strategy' (obj) and 'Robust_Ret' (float)
+    backtester: instance of BacktestEngine
+    """
+    import numpy as np
+    from scipy.cluster.hierarchy import linkage, fcluster
+    from scipy.spatial.distance import squareform
+    
+    # Sort by Robust Return to prioritize better strategies
+    sorted_results = sorted(results_list, key=lambda x: x['Robust_Ret'], reverse=True)
+    
+    # Filter valid strategies
+    valid_results = [r for r in sorted_results if r['Strategy'] is not None]
+    
+    if not valid_results:
+        return []
+        
+    candidates = [r['Strategy'] for r in valid_results][:top_n]
+    results_map = {s.name: r for s, r in zip(candidates, valid_results[:top_n])}
+    
+    if len(candidates) <= 1:
+        return candidates
+
+    # Generate Signals
+    sig_matrix = backtester.generate_signal_matrix(candidates)
+    
+    # 1. Correlation Matrix
+    with np.errstate(divide='ignore', invalid='ignore'):
+        corr_matrix = np.corrcoef(sig_matrix, rowvar=False)
+    
+    # Fix NaNs (0 variance signals)
+    corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
+    
+    # 2. Distance Matrix
+    dist_matrix = 1.0 - np.abs(corr_matrix)
+    np.fill_diagonal(dist_matrix, 0)
+    dist_matrix = np.clip(dist_matrix, 0, 1)
+    
+    # 3. Clustering
+    condensed_dist = squareform(dist_matrix, checks=False)
+    # Threshold: distance < (1 - 0.7) = 0.3
+    t_val = 1.0 - threshold
+    
+    Z = linkage(condensed_dist, method='complete')
+    cluster_labels = fcluster(Z, t=t_val, criterion='distance')
+    
+    # 4. Select Best per Cluster
+    cluster_map = {}
+    for i, label in enumerate(cluster_labels):
+        if label not in cluster_map:
+            cluster_map[label] = []
+        cluster_map[label].append(candidates[i])
+    
+    selected_strats = []
+    for label, members in cluster_map.items():
+        # Pick member with highest Robust Return
+        best_in_cluster = max(members, key=lambda s: results_map[s.name]['Robust_Ret'])
+        selected_strats.append(best_in_cluster)
+        
+    return selected_strats

@@ -178,11 +178,13 @@ def prepare_simulation_data(prices, highs=None, lows=None, atr=None):
     """
     # ATR Fallback
     if atr is None:
+        print(f"⚠️  WARNING: ATR data missing. Using fallback {config.ATR_FALLBACK_BPS} bps.")
         if highs is not None and lows is not None:
             # Simple Range if ATR missing
-            atr_vec = np.maximum(highs - lows, prices * 0.0005) # Min 5 bps
+            min_atr = prices * (config.MIN_ATR_BPS / 10000.0)
+            atr_vec = np.maximum(highs - lows, min_atr)
         else:
-            atr_vec = prices * 0.001 # 10 bps fallback
+            atr_vec = prices * (config.ATR_FALLBACK_BPS / 10000.0) 
     else:
         atr_vec = atr.astype(np.float64)
 

@@ -205,7 +205,8 @@ class TradeSimulator:
                  time_limit_bars: Optional[int] = None,
                  highs: Optional[np.ndarray] = None,
                  lows: Optional[np.ndarray] = None,
-                 atr: Optional[np.ndarray] = None) -> Tuple[List[Trade], np.ndarray]:
+                 atr: Optional[np.ndarray] = None,
+                 cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS) -> Tuple[List[Trade], np.ndarray]:
         """
         Simulates trading a signal vector with barriers.
         Detailed version returning Trade objects for visualization.
@@ -228,11 +229,15 @@ class TradeSimulator:
         entry_atr = 0.0
         trade_start_idx = 0
         current_trade = None
+        cooldown = 0
         
         sl_mult = stop_loss_pct if stop_loss_pct else 0.0
         tp_mult = take_profit_pct if take_profit_pct else 0.0
         
-        for i in range(1, self.n_bars):
+        for i in range(0, self.n_bars):
+            if cooldown > 0:
+                cooldown -= 1
+            
             price = self.prices[i] 
             
             hour = self.hours[i]
@@ -242,12 +247,13 @@ class TradeSimulator:
             force_close = (hour >= config.TRADING_END_HOUR) or (weekday >= 5)
             
             step_pnl = 0.0
-            if position != 0:
+            if i > 0 and position != 0:
                 step_pnl = position * self.lot_size * (price - self.prices[i-1])
             
             exit_signal = False
             exit_reason = ""
             barrier_exit_price = 0.0
+            is_sl = False
             
             if position != 0:
                 if force_close:
@@ -256,7 +262,7 @@ class TradeSimulator:
                 elif time_limit_bars and (i - trade_start_idx >= time_limit_bars):
                     exit_signal = True
                     exit_reason = "TIME"
-                else:
+                elif i > 0:
                     # Barrier Checks (SL/TP)
                     h_prev = h_vec[i-1]
                     l_prev = l_vec[i-1]
@@ -270,6 +276,7 @@ class TradeSimulator:
                             exit_signal = True
                             barrier_exit_price = exit_p
                             exit_reason = "SL" if code == 1 else "TP"
+                            if code == 1: is_sl = True
                             
                     elif position < 0:
                         hit, exit_p, code = utrade.check_barrier_short(entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult)
@@ -277,6 +284,7 @@ class TradeSimulator:
                             exit_signal = True
                             barrier_exit_price = exit_p
                             exit_reason = "SL" if code == 1 else "TP"
+                            if code == 1: is_sl = True
             
             target_pos = signals[i]
             
@@ -288,14 +296,26 @@ class TradeSimulator:
                     exit_reason = "EOD"
             elif exit_signal:
                 target_pos = 0
+                if is_sl:
+                    cooldown = cooldown_bars
             else:
                 if position != 0:
                     if target_pos == 0: target_pos = position
                     elif np.sign(target_pos) == np.sign(position): target_pos = position
+                
+                # Cooldown Block
+                if position == 0 and cooldown > 0:
+                    target_pos = 0
             
             if target_pos != position:
                 change = target_pos - position
                 exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else price
+                
+                # Adjustment for difference between Open Price (booked in step_pnl) and Exec Price
+                # Only applies to the position we are holding (and potentially closing)
+                if position != 0:
+                    pnl_adj = position * self.lot_size * (exec_price - price)
+                    step_pnl += pnl_adj
                 
                 # Cost Calculation via Shared Logic
                 current_atr = atr_vec[i] if use_atr else (exec_price * 0.001)
