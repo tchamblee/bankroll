@@ -194,7 +194,7 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
     what_to_show = 'TRADES'
     use_rth_override = USE_RTH
     
-    if contract.secType == 'CASH':
+    if contract.secType == 'CASH' or name in ["EVZ", "VIX"]:
         what_to_show = 'MIDPOINT'
         
     if "TICK" in name or "TRIN" in name:
@@ -226,6 +226,14 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
                     elif len(data) == existing_len:
                          logger.info(f"      [VERIFY OK] {name} {date_str}: Count matches ({existing_len}). Skipping write.")
                          return
+                    elif existing_len > 5000 and len(data) > 600:
+                         # Anomaly Fix: If existing file has huge row count (e.g. 80k ticks) but we requested 1-min bars (1440),
+                         # it implies the existing file contains Ticks/Seconds data incorrectly stored as RAW_BARS.
+                         # We MUST overwrite it to respect the current configuration (1-min bars).
+                         logger.warning(f"      [OVERWRITE] {name} {date_str}: Existing file has {existing_len} rows (likely Ticks) but requested 1-min bars ({len(data)}). Overwriting to match config.")
+                         df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
+                         df = df.sort_values(by="ts_event").reset_index(drop=True)
+                         save_chunk(df, filename)
                     else:
                          logger.warning(f"      [IGNORE] {name} {date_str}: Fetched fewer rows ({len(data)}) than existing ({existing_len}). Keeping existing.")
                          return
