@@ -735,12 +735,18 @@ elif view == "System Health":
     
     # 1. Core System
     age, timestamp = get_file_age(STATE_FILE)
-    status = "🟢" if age and age < 120 else "🔴"
-    health_data.append(["State File", status, format_age(age), timestamp, "Core Bot State"])
+    state_status = "🟢" if age and age < 120 else "🔴"
+    health_data.append(["State File", state_status, format_age(age), timestamp, "Core Bot State"])
     
     age, timestamp = get_file_age(BARS_FILE)
-    status = "🟢" if age and age < 120 else "🔴"
-    health_data.append(["Live Bars", status, format_age(age), timestamp, "Market Data Persistence"])
+    if age and age < 120:
+        bar_status = "🟢"
+    elif state_status == "🟢" and age and age < 260000: # ~72 hours (Weekend Tolerance)
+        bar_status = "🟡" # Process is alive, but no bars (Market Closed/Low Vol)
+    else:
+        bar_status = "🔴"
+        
+    health_data.append(["Live Bars", bar_status, format_age(age), timestamp, "Market Data Persistence"])
 
     # 2. Ingestion
     age, timestamp = get_dir_latest_age(RAW_TICKS_DIR, "*.parquet")
