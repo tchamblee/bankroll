@@ -139,7 +139,9 @@ def check_leaks(force=False):
     potential_leaks = corrs[corrs > 0.2] # 0.2 is essentially impossible for daily data
     
     # Whitelist known valid signals (Arbitrage/Lead-Lag)
-    KNOWN_LEAKS = ['rel_strength_z_6e']
+    # rel_strength_z_6e: Futures (6E) vs Spot (EURUSD) Lead-Lag
+    # divergence_50_gbpusd: Spot (GBPUSD) vs Spot (EURUSD) Divergence/Momentum
+    KNOWN_LEAKS = ['rel_strength_z_6e', 'divergence_50_gbpusd']
     real_leaks = potential_leaks.drop(KNOWN_LEAKS, errors='ignore')
     
     if not real_leaks.empty:

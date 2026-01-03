@@ -46,8 +46,9 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
 
     # 6. Volatility Asymmetry
     # Upside Vol / Downside Vol
-    std_pos = log_ret.where(log_ret > 0).rolling(w).std().fillna(0)
-    std_neg = log_ret.where(log_ret < 0).rolling(w).std().fillna(0)
+    min_p = max(2, w // 10)
+    std_pos = log_ret.where(log_ret > 0).rolling(w, min_periods=min_p).std().fillna(0)
+    std_neg = log_ret.where(log_ret < 0).rolling(w, min_periods=min_p).std().fillna(0)
     res[f'vol_asymmetry_{w}'] = std_pos / std_neg.replace(0, 1)
 
     # 7. Relative Volatility - PURGED (Low Signal)
