@@ -42,7 +42,11 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
                'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
                'divergence_50_6e',
                'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
-    candidates = [c for c in df.columns if c not in exclude]
+    
+    # Filter out SPECIFIC raw microstructure noise and kyle_lambda
+    # We KEEP aggregations like flow_trend, pres_trend, order_book_alignment
+    noise_patterns = ['kyle_lambda', 'tick_spread', 'tick_volatility', 'tick_ofi', 'pres_imbalance', 'avg_spread']
+    candidates = [c for c in df.columns if c not in exclude and not any(p in c for p in noise_patterns)]
     
     kill_list = []
     
@@ -370,7 +374,10 @@ if __name__ == "__main__":
                'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
                'divergence_50_6e',
                'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
-    all_candidates = set([c for c in train_df.columns if c not in exclude])
+               
+    # Filter out SPECIFIC raw microstructure noise and kyle_lambda
+    noise_patterns = ['kyle_lambda', 'tick_spread', 'tick_volatility', 'tick_ofi', 'pres_imbalance', 'avg_spread']
+    all_candidates = set([c for c in train_df.columns if c not in exclude and not any(p in c for p in noise_patterns)])
     
     useful_features = set()
     global_kill_reasons = {} # feature -> list of reasons

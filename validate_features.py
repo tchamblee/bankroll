@@ -86,6 +86,23 @@ if __name__ == "__main__":
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
     
+    # --- DATE FILTERING ---
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        if 'time_start' in base_df.columns:
+            if not pd.api.types.is_datetime64_any_dtype(base_df['time_start']):
+                 base_df['time_start'] = pd.to_datetime(base_df['time_start'], utc=True)
+            
+            ts_col = base_df['time_start']
+            if ts_col.dt.tz is None: ts_col = ts_col.dt.tz_localize('UTC')
+            else: ts_col = ts_col.dt.tz_convert('UTC')
+                 
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+            
+            if ts_col.min() < start_ts:
+                original_len = len(base_df)
+                base_df = base_df[ts_col >= start_ts].reset_index(drop=True)
+                print(f"📅 Training Start Date Applied: {config.TRAIN_START_DATE} (Dropped {original_len - len(base_df)} rows)")
+
     for horizon in config.PREDICTION_HORIZONS:
         # print(f"\n\n==============================================")
         # print(f"⚔️  FEATURE VALIDATION: Horizon {horizon} ⚔️")
