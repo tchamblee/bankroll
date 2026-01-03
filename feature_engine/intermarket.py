@@ -112,4 +112,35 @@ def add_intermarket_features(primary_df, correlator_dfs):
         cols = [f'corr_100{suffix}', f'rel_strength_z{suffix}', f'divergence_50{suffix}']
         df[cols] = df[cols].fillna(0)
 
+    # --- EXPLICIT SPREAD FEATURES (Rates) ---
+    # We look for specific suffixes to construct physically meaningful spreads
+    # Spread = Yield A - Yield B
+    
+    # TNX (US 10Y) - BUND (EU 10Y)
+    if 'price_tnx' in df.columns and 'price_bund' in df.columns:
+        df['spread_tnx_bund'] = df['price_tnx'] - df['price_bund']
+        # Z-Score of Spread (Regime)
+        spread_mean = df['spread_tnx_bund'].rolling(400).mean()
+        spread_std = df['spread_tnx_bund'].rolling(400).std()
+        df['spread_tnx_bund_z_400'] = (df['spread_tnx_bund'] - spread_mean) / spread_std.replace(0, 1)
+
+    # US2Y (US 2Y) - SCHATZ (EU 2Y)
+    if 'price_us2y' in df.columns and 'price_schatz' in df.columns:
+        df['spread_us2y_schatz'] = df['price_us2y'] - df['price_schatz']
+        # Z-Score
+        spread_mean = df['spread_us2y_schatz'].rolling(400).mean()
+        spread_std = df['spread_us2y_schatz'].rolling(400).std()
+        df['spread_us2y_schatz_z_400'] = (df['spread_us2y_schatz'] - spread_mean) / spread_std.replace(0, 1)
+
+    # --- DOMESTIC YIELD CURVES ---
+    # US Curve: TNX (10Y) - US2Y (2Y)
+    if 'price_tnx' in df.columns and 'price_us2y' in df.columns:
+        df['curve_us_10y_2y'] = df['price_tnx'] - df['price_us2y']
+        df['curve_us_10y_2y_z_400'] = (df['curve_us_10y_2y'] - df['curve_us_10y_2y'].rolling(400).mean()) / df['curve_us_10y_2y'].rolling(400).std().replace(0, 1)
+
+    # EU Curve: BUND (10Y) - SCHATZ (2Y)
+    if 'price_bund' in df.columns and 'price_schatz' in df.columns:
+        df['curve_eu_10y_2y'] = df['price_bund'] - df['price_schatz']
+        df['curve_eu_10y_2y_z_400'] = (df['curve_eu_10y_2y'] - df['curve_eu_10y_2y'].rolling(400).mean()) / df['curve_eu_10y_2y'].rolling(400).std().replace(0, 1)
+
     return df

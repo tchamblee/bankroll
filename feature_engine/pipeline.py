@@ -3,6 +3,7 @@ from .core import FeatureEngine
 from .seasonality import add_seasonality_features
 from .fred import add_fred_features_v2 as add_fred_features
 from .cot import add_cot_features
+from .experimental import add_experimental_features
 
 def run_pipeline(engine, data_cache=None):
     """
@@ -30,8 +31,13 @@ def run_pipeline(engine, data_cache=None):
         '_es': get_df('es'),
         '_zn': get_df('zn'),
         '_6e': get_df('6e'),
-        '_tick_nyse': get_df('tick_nyse')
-        # '_trin_nyse': get_df('trin_nyse') # Purged: TRIN is consistently noisy/useless
+        '_tick_nyse': get_df('tick_nyse'),
+        # Spread Components (for explicit spread calc in intermarket.py)
+        '_tnx': get_df('tnx'),
+        '_bund': get_df('bund'),
+        '_us2y': get_df('us2y'),
+        '_schatz': get_df('schatz'),
+        '_vix': get_df('vix')
     }
     intermarket_dfs = {k: v for k, v in raw_intermarket.items() if v is not None}
     if intermarket_dfs:
@@ -45,6 +51,10 @@ def run_pipeline(engine, data_cache=None):
     # 5. Standard Features
     windows_list = [25, 50, 100, 200, 400, 800, 1600, 3200]
     engine.add_features_to_bars(windows=windows_list)
+    
+    # 5c. Experimental Features (Choppiness, Vortex, EOM)
+    if engine.bars is not None:
+        engine.bars = add_experimental_features(engine.bars, windows=[14, 100, 400])
 
     # 5b. Event Decay
     engine.add_event_decay_features(high_windows=[100, 200, 400], shock_windows=[50, 100])
@@ -123,7 +133,8 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         '6e': "CLEAN_6E.parquet",
         'ibit': "CLEAN_IBIT.parquet",
         'tick_nyse': "CLEAN_TICK_NYSE.parquet",
-        'trin_nyse': "CLEAN_TRIN_NYSE.parquet"
+        'trin_nyse': "CLEAN_TRIN_NYSE.parquet",
+        'vix': "CLEAN_VIX.parquet"
     }
     
     data_cache = {}
