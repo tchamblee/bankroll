@@ -51,8 +51,7 @@ async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: dateti
             existing_df = pd.read_parquet(filename, columns=["ts_event"])
             if not existing_df.empty:
                 existing_df = existing_df.sort_values("ts_event")
-                import numpy as np
-                timestamps = np.array(existing_df["ts_event"].dt.to_pydatetime())
+                timestamps = existing_df["ts_event"].tolist()
                 # Ensure UTC
                 if len(timestamps) > 0 and timestamps[0].tzinfo is None:
                     timestamps = [t.replace(tzinfo=timezone.utc) for t in timestamps]

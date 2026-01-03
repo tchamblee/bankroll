@@ -54,8 +54,9 @@ async def main():
         days = 2 if TEST_PROBE else DAYS_TO_BACKFILL
         logger.info(f"Starting backfill for {days} days (skipping today)...")
 
+        today = datetime.now().date()
         for i in range(1, days + 1):
-            target_date = datetime.now(timezone.utc).date() - timedelta(days=i)
+            target_date = today - timedelta(days=i)
             
             # Skip Weekends
             if target_date.weekday() >= 5:
