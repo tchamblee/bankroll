@@ -54,6 +54,9 @@ def analyze_horizon(df, horizon, top_n=20, use_survivors=False):
     else:
         feature_cols = [c for c in df.columns if c not in exclude_cols and df[c].dtype.kind in 'bifc' and not any(p in c for p in noise_patterns)]
 
+    # Explicitly remove raw price columns to avoid leakage/spurious regression
+    feature_cols = [c for c in feature_cols if not c.startswith('price_')]
+
     # Remove constant features
     valid_features = []
     for c in feature_cols:

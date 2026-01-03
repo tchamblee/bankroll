@@ -59,6 +59,10 @@ def add_intermarket_features(primary_df, correlator_dfs):
             direction='backward'
         )
 
+        # Persist aligned price for later calculations (Spreads/Curves)
+        if f'price{suffix}' in merged.columns:
+            df[f'price{suffix}'] = merged[f'price{suffix}']
+
         # Special Handling for Market Internals (TICK/TRIN) which are Stationary Levels
         if 'tick' in suffix.lower() or 'trin' in suffix.lower():
             # Just add the Level and a Z-Score
@@ -69,10 +73,9 @@ def add_intermarket_features(primary_df, correlator_dfs):
             df[f'smoothed_level_400{suffix}'] = df[f'level{suffix}'].rolling(400).mean()
             
             # Simple Z-Score (Regime) - Short term (50) and Long term (200)
-            # Removed: Failed Triage
-            # roll_mean = df[f'level{suffix}'].rolling(50).mean()
-            # roll_std = df[f'level{suffix}'].rolling(50).std().replace(0, 1)
-            # df[f'zscore_50{suffix}'] = (df[f'level{suffix}'] - roll_mean) / roll_std
+            roll_mean = df[f'level{suffix}'].rolling(50).mean()
+            roll_std = df[f'level{suffix}'].rolling(50).std().replace(0, 1)
+            df[f'zscore_50{suffix}'] = (df[f'level{suffix}'] - roll_mean) / roll_std
             
             continue # Skip the Returns/Correlation logic for these
 
@@ -123,6 +126,8 @@ def add_intermarket_features(primary_df, correlator_dfs):
         spread_mean = df['spread_tnx_bund'].rolling(400).mean()
         spread_std = df['spread_tnx_bund'].rolling(400).std()
         df['spread_tnx_bund_z_400'] = (df['spread_tnx_bund'] - spread_mean) / spread_std.replace(0, 1)
+        # New Feature: Spread Momentum
+        df['spread_tnx_bund_slope_100'] = df['spread_tnx_bund'].diff(100)
 
     # US2Y (US 2Y) - SCHATZ (EU 2Y)
     if 'price_us2y' in df.columns and 'price_schatz' in df.columns:
@@ -137,10 +142,17 @@ def add_intermarket_features(primary_df, correlator_dfs):
     if 'price_tnx' in df.columns and 'price_us2y' in df.columns:
         df['curve_us_10y_2y'] = df['price_tnx'] - df['price_us2y']
         df['curve_us_10y_2y_z_400'] = (df['curve_us_10y_2y'] - df['curve_us_10y_2y'].rolling(400).mean()) / df['curve_us_10y_2y'].rolling(400).std().replace(0, 1)
+        # New Feature: Curve Slope (Steepening/Flattening Momentum)
+        df['curve_us_10y_2y_slope_100'] = df['curve_us_10y_2y'].diff(100)
 
     # EU Curve: BUND (10Y) - SCHATZ (2Y)
     if 'price_bund' in df.columns and 'price_schatz' in df.columns:
         df['curve_eu_10y_2y'] = df['price_bund'] - df['price_schatz']
         df['curve_eu_10y_2y_z_400'] = (df['curve_eu_10y_2y'] - df['curve_eu_10y_2y'].rolling(400).mean()) / df['curve_eu_10y_2y'].rolling(400).std().replace(0, 1)
+
+    # 3. Vol-of-Vol (Second Derivative of Fear)
+    if 'price_vix' in df.columns:
+        vix_ret = np.log(df['price_vix'] / df['price_vix'].shift(1))
+        df['vol_of_vol_vix_100'] = vix_ret.rolling(100).std()
 
     return df

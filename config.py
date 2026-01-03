@@ -27,7 +27,7 @@ RAW_DATA_PREFIX_BARS = "RAW_BARS"
 # Prediction Horizons (in bars)
 PREDICTION_HORIZONS = [60, 90, 120, 180, 240]
 
-IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
+IBKR_HOST = os.getenv("IBKR_HOST", "172.18.32.1")
 IBKR_PORT = 4001
 
 # --- TRADING CONSTRAINTS ---
@@ -219,14 +219,6 @@ TARGETS = [
     {
         "name": "VIX",
         "symbol": "VIX",
-        "secType": "IND",
-        "currency": "USD",
-        "exchange": "CBOE",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "EVZ",
-        "symbol": "EVZ",
         "secType": "IND",
         "currency": "USD",
         "exchange": "CBOE",

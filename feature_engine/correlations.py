@@ -130,11 +130,22 @@ def add_crypto_features(df, ibit_df):
     # B. Dynamic Correlation Regime (60m)
     joined['Corr_Regime_60m'] = joined['eur_ret'].rolling(60).corr(joined['ibit_ret'])
     
+    # NEW: Crypto Beta (60m)
+    cov_60 = joined['eur_ret'].rolling(60).cov(joined['ibit_ret'])
+    var_60 = joined['ibit_ret'].rolling(60).var()
+    joined['IBIT_Beta_60m'] = cov_60 / var_60.replace(0, np.nan)
+    
     # C. Volatility Ratio (30m)
     # Ratio of StdDevs
     vol_eur = joined['eur_ret'].rolling(30).std()
     vol_ibit = joined['ibit_ret'].rolling(30).std()
     joined['Vol_Ratio_30m'] = vol_eur / vol_ibit.replace(0, np.nan)
+    
+    # NEW: Momentum Divergence (30m)
+    # Normalized Trend Difference
+    eur_trend = joined['eur_close'].pct_change(30)
+    # IBIT_Trend_30m is already pct_change(30)
+    joined['IBIT_Divergence_30m'] = (eur_trend / vol_eur.replace(0, np.nan)) - (joined['IBIT_Trend_30m'] / vol_ibit.replace(0, np.nan))
     
     # 3. Merge back to Volume Bars
     # We use merge_asof on the Bar's time_end matching the 1-min timestamp
@@ -147,7 +158,7 @@ def add_crypto_features(df, ibit_df):
     df = df.sort_values('time_end')
     
     # We only want the new columns
-    cols_to_add = ['timestamp', 'IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']
+    cols_to_add = ['timestamp', 'IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m', 'IBIT_Beta_60m', 'IBIT_Divergence_30m']
     
     merged = pd.merge_asof(
         df,
@@ -161,7 +172,7 @@ def add_crypto_features(df, ibit_df):
     merged.drop(columns=['timestamp'], inplace=True)
     
     # Fill NaNs (early windows)
-    merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']] = \
-        merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']].fillna(0)
+    merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m', 'IBIT_Beta_60m', 'IBIT_Divergence_30m']] = \
+        merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m', 'IBIT_Beta_60m', 'IBIT_Divergence_30m']].fillna(0)
         
     return merged

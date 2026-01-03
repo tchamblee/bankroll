@@ -14,21 +14,21 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
     # 2. Price-Flow Correlation
     res[f'price_flow_corr_{w}'] = log_ret.rolling(w).corr(ticket_imbalance)
     
-    # 3. Flow Shock (Removed: Failed Triage)
-    # flow_std = ticket_imbalance.rolling(w).std()
-    # res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
+    # 3. Flow Shock
+    flow_std = ticket_imbalance.rolling(w).std()
+    res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
     
     # 3b. OFI Trend & Shock (Higher Fidelity)
     if normalized_ofi is not None:
         ofi_trend = normalized_ofi.rolling(w).mean()
         res[f'ofi_trend_{w}'] = ofi_trend
         
-        # ofi_std = normalized_ofi.rolling(w).std()
-        # res[f'ofi_shock_{w}'] = (normalized_ofi - ofi_trend) / ofi_std.replace(0, 1)
+        ofi_std = normalized_ofi.rolling(w).std()
+        res[f'ofi_shock_{w}'] = (normalized_ofi - ofi_trend) / ofi_std.replace(0, 1)
 
-    # 4. Duration Trend (Removed: Failed Triage)
-    # if bar_duration is not None:
-    #    res[f'duration_trend_{w}'] = bar_duration.rolling(w).mean()
+    # 4. Duration Trend
+    if bar_duration is not None:
+       res[f'duration_trend_{w}'] = bar_duration.rolling(w).mean()
         
     # 5. Pressure Trend
     if pres_imbalance is not None:
@@ -70,9 +70,9 @@ def add_microstructure_features(df, windows=[50, 100]):
     df['log_ret'] = log_ret
     
     bar_duration = None
-    # if 'time_end' in df.columns and 'time_start' in df.columns:
-    #    bar_duration = (df['time_end'] - df['time_start']).dt.total_seconds()
-    #    df['bar_duration'] = bar_duration
+    if 'time_end' in df.columns and 'time_start' in df.columns:
+       bar_duration = (df['time_end'] - df['time_start']).dt.total_seconds()
+       df['bar_duration'] = bar_duration
         
     pres_imbalance = None
     if 'avg_bid_size' in df.columns and 'avg_ask_size' in df.columns:
@@ -98,6 +98,16 @@ def add_microstructure_features(df, windows=[50, 100]):
         new_cols.update(r)
         
     df_new = pd.DataFrame(new_cols, index=df.index)
+    
+    # --- NEW: Liquidity Friction ---
+    # Combine Spread (Cost) and VPIN (Toxicity)
+    if 'avg_spread' in df.columns:
+        for w in windows:
+            if f'vpin_{w}' in df_new.columns:
+                # Rolling Mean of Spread to match window of VPIN
+                spread_trend = df['avg_spread'].rolling(w).mean()
+                # Multiply Cost * Toxicity
+                df_new[f'liquidity_friction_{w}'] = spread_trend * df_new[f'vpin_{w}']
     
     # --- NEW: Event-Driven Microstructure (Removed: Failed Triage) ---
     # Liquidation & Imbalance Spike were too sparse/noisy.

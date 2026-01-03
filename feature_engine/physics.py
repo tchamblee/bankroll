@@ -239,6 +239,31 @@ def calc_market_force(df, window=10):
     # We might want a rolling smoothed version or magnitude
     return force.rolling(window).mean()
 
+def calc_market_energy(df, window=10):
+    """
+    Physics-inspired 'Kinetic Energy'.
+    KE = 0.5 * Mass * Velocity^2
+    """
+    velocity = np.log(df['close'] / df['close'].shift(1))
+    mass = df['volume']
+    
+    ke = 0.5 * mass * (velocity ** 2)
+    return ke.rolling(window).mean()
+
+def calc_market_power(df, window=10):
+    """
+    Physics-inspired 'Power'.
+    Power = Force * Velocity = (Mass * Accel) * Velocity
+    """
+    velocity = np.log(df['close'] / df['close'].shift(1))
+    acceleration = velocity.diff()
+    mass = df['volume']
+    
+    force = mass * acceleration
+    power = force * velocity
+    
+    return power.rolling(window).mean()
+
 from numba import jit
 
 @jit(nopython=True)
@@ -316,13 +341,13 @@ def add_physics_features(df):
     df['frac_diff_02'] = frac_diff_ffd(df['close'], d=0.2)
     
     df['hurst_100'] = get_hurst_exponent(df['close'], window=100)
-    # Purged low signal hurst_200
+    df['hurst_200'] = get_hurst_exponent(df['close'], window=200)
     df['hurst_400'] = get_hurst_exponent(df['close'], window=400)
     
     # Rate of Change (ROC) for Physics Features
     # Hurst & Entropy are levels, so we check their absolute change (diff)
     df['hurst_roc_100'] = df['hurst_100'].diff()
-    # Purged low signal hurst_roc_200
+    df['hurst_roc_200'] = df['hurst_200'].diff()
     
     return df
 
@@ -334,16 +359,18 @@ def _calc_physics_window_features(w, df_minimal):
     lam = calc_kyle_lambda(df_minimal, window=w)
     res[f'kyle_lambda_{w}'] = lam
     
+    # Market Energy (Kinetic)
+    res[f'market_energy_{w}'] = calc_market_energy(df_minimal, window=w)
+    
+    # Market Power
+    res[f'market_power_{w}'] = calc_market_power(df_minimal, window=w)
+    
     # Fractal Dimension Index
-    # Purged low signal fdi_800, fdi_3200
-    if w not in [800, 3200]:
-        fdi = calc_fractal_dimension(df_minimal['close'], window=w)
-        res[f'fdi_{w}'] = fdi
-        
-        # ROC Features
-        # Purged low signal fdi_roc [25, 50, 400] and long windows
-        if w not in [25, 50, 400, 800, 3200]:
-            res[f'fdi_roc_{w}'] = fdi.diff()
+    fdi = calc_fractal_dimension(df_minimal['close'], window=w)
+    res[f'fdi_{w}'] = fdi
+    
+    # ROC Features
+    res[f'fdi_roc_{w}'] = fdi.diff()
             
     res[f'kyle_lambda_roc_{w}'] = lam.pct_change(fill_method=None)
     

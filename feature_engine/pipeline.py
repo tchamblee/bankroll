@@ -21,8 +21,7 @@ def run_pipeline(engine, data_cache=None):
 
     # 3. Add Correlator Residuals (TNX, USDCHF, BUND)
     # Refactor: Increased window to 200 for stable Beta
-    # TNX Beta failed triage even at 200. Removed.
-    # if get_df('tnx') is not None: engine.add_correlator_residual(get_df('tnx'), suffix="_tnx", window=200)
+    if get_df('tnx') is not None: engine.add_correlator_residual(get_df('tnx'), suffix="_tnx", window=200)
     if get_df('usdchf') is not None: engine.add_correlator_residual(get_df('usdchf'), suffix="_usdchf", window=200)
     if get_df('bund') is not None: engine.add_correlator_residual(get_df('bund'), suffix="_bund", window=200)
 
@@ -43,11 +42,6 @@ def run_pipeline(engine, data_cache=None):
     if intermarket_dfs:
         engine.add_intermarket_features(intermarket_dfs)
 
-    # DROP REDUNDANT RESIDUALS 
-    if engine.bars is not None:
-        drop_residuals = ['residual_tnx', 'residual_usdchf', 'residual_bund']
-        engine.bars.drop(columns=[c for c in drop_residuals if c in engine.bars.columns], inplace=True)
-            
     # 5. Standard Features
     windows_list = [25, 50, 100, 200, 400, 800, 1600, 3200]
     engine.add_features_to_bars(windows=windows_list)
@@ -96,8 +90,8 @@ def run_pipeline(engine, data_cache=None):
 
     # 13. COT
     # Refactor: Removed COT features (Weekly data is step-function noise for intraday)
-    # if engine.bars is not None:
-    #    engine.bars = add_cot_features(engine.bars)
+    if engine.bars is not None:
+       engine.bars = add_cot_features(engine.bars)
         
     return engine
 
@@ -132,8 +126,8 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         'zn': "CLEAN_ZN.parquet",
         '6e': "CLEAN_6E.parquet",
         'ibit': "CLEAN_IBIT.parquet",
-        'tick_nyse': "CLEAN_TICK_NYSE.parquet",
-        'trin_nyse': "CLEAN_TRIN_NYSE.parquet",
+        'tick_nyse': "CLEAN_TICK.parquet",
+        'trin_nyse': "CLEAN_TRIN.parquet",
         'vix': "CLEAN_VIX.parquet"
     }
     

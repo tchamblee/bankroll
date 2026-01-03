@@ -126,7 +126,7 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 parse_feature_dependencies(gene.feature)
             elif gene.type == 'event':
                  if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
-    print("") # Newline
+    # print("") # Newline
     
     # LRU-style Cache for Input Data (OrderedDict for O(1) access)
     _cache = OrderedDict()

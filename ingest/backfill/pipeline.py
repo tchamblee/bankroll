@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import argparse
+import sys
 import nest_asyncio
 from datetime import datetime, timedelta, timezone
 from ib_insync import IB, Forex, Index, ContFuture, Stock
@@ -12,25 +14,34 @@ from .ibkr import process_symbol_for_day
 
 nest_asyncio.apply()
 
-async def main():
+async def main(symbols=None, days=None):
     ib = IB()
     try:
         await ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=103)
         logger.info(f"CONNECTED. Test Probe: {TEST_PROBE}")
         
-        # 0. Fetch FRED & COT Macro Data
-        logger.info("Fetching FRED & COT Macro Data...")
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, ingest_fred_data, 365*5)
-            await loop.run_in_executor(None, process_cot_data)
-        except Exception as e:
-            logger.error(f"Macro Ingest Failed: {e}")
+        # 0. Fetch FRED & COT Macro Data (Skip if targeting specific symbols to save time)
+        if not symbols:
+            logger.info("Fetching FRED & COT Macro Data...")
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, ingest_fred_data, 365*5)
+                await loop.run_in_executor(None, process_cot_data)
+            except Exception as e:
+                logger.error(f"Macro Ingest Failed: {e}")
         
         # 1. Pre-qualify contracts
         logger.info("Qualifying contracts...")
         qualified_contracts = []
-        for t_conf in cfg.TARGETS:
+        
+        targets_to_process = cfg.TARGETS
+        if symbols:
+            targets_to_process = [t for t in cfg.TARGETS if t['name'] in symbols]
+            if not targets_to_process:
+                logger.error(f"No targets found matching symbols: {symbols}")
+                return
+
+        for t_conf in targets_to_process:
             contract = None
             if t_conf["secType"] == "CASH": 
                 contract = Forex(t_conf["symbol"] + t_conf["currency"], exchange=t_conf["exchange"])
@@ -51,11 +62,13 @@ async def main():
             logger.info(f"   Verified: {t_conf['name']}")
 
         # 2. Iterate Days (Recent -> Oldest)
-        days = 2 if TEST_PROBE else DAYS_TO_BACKFILL
-        logger.info(f"Starting backfill for {days} days (skipping today)...")
+        # Use provided days, or TEST_PROBE, or Default
+        duration = days if days is not None else (2 if TEST_PROBE else DAYS_TO_BACKFILL)
+        
+        logger.info(f"Starting backfill for {duration} days (skipping today)...")
 
         today = datetime.now().date()
-        for i in range(1, days + 1):
+        for i in range(1, duration + 1):
             target_date = today - timedelta(days=i)
             
             # Skip Weekends
@@ -65,10 +78,11 @@ async def main():
 
             logger.info(f"Processing Date: {target_date}")
             
-            # --- 2a. Fetch GDELT Data ---
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, download_gdelt_gkg, target_date)
-            await loop.run_in_executor(None, download_gdelt_v2_day, target_date)
+            # --- 2a. Fetch GDELT Data (Skip if targeting specific symbols) ---
+            if not symbols:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, download_gdelt_gkg, target_date)
+                await loop.run_in_executor(None, download_gdelt_v2_day, target_date)
 
             # --- 2b. Fetch IBKR Data ---
             tasks = []
@@ -86,4 +100,9 @@ async def main():
         logger.info("DONE.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Backfill Data Pipeline")
+    parser.add_argument("--symbols", nargs="+", help="Specific symbols to backfill (e.g. VIX EURUSD)")
+    parser.add_argument("--days", type=int, help="Number of days to backfill (overrides config)")
+    args = parser.parse_args()
+    
+    asyncio.run(main(symbols=args.symbols, days=args.days))

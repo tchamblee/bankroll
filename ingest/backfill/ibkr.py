@@ -194,7 +194,7 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
     what_to_show = 'TRADES'
     use_rth_override = USE_RTH
     
-    if contract.secType == 'CASH' or name in ["EVZ", "VIX"]:
+    if contract.secType == 'CASH':
         what_to_show = 'MIDPOINT'
         
     if "TICK" in name or "TRIN" in name:
