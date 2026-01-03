@@ -25,9 +25,7 @@ RAW_DATA_PREFIX_TICKS = "RAW_TICKS"
 RAW_DATA_PREFIX_BARS = "RAW_BARS"
 
 # Prediction Horizons (in bars)
-# Target: 1h, 2h, 3h (assuming ~2 min per 250-tick bar)
-# Added 120 (4h) and 240 (8h) for cost efficiency
-PREDICTION_HORIZONS = [60, 90, 120, 180]
+PREDICTION_HORIZONS = [60, 90, 120, 180, 240]
 
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = 4001

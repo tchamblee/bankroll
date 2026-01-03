@@ -72,8 +72,7 @@ def add_macro_voltage_features(df, us2y_df, schatz_df, tnx_df, bund_df, windows=
     df[cols_to_fill] = df[cols_to_fill].ffill().bfill().fillna(0)
     
     # 4. Calculate Voltage Features
-    df['voltage_diff'] = df['us2y'] - df['schatz']
-    df['us_curve'] = df['tnx'] - df['us2y']
+    # Purged low signal voltage_diff, us_curve
     df['de_curve'] = df['bund'] - df['schatz']
     
     # 5. 10Y Yield Spread (TNX - BUND) - Refactor for Beta TNX

@@ -8,7 +8,8 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     res = {}
     
     # 1. Velocity
-    res[f'velocity_{w}'] = log_ret.rolling(w).sum()
+    if w != 400: # Purged low signal velocity_400
+        res[f'velocity_{w}'] = log_ret.rolling(w).sum()
     
     # 2. Volatility (Garman-Klass)
     vol = np.sqrt(gk_var.rolling(w).mean())
@@ -25,16 +26,16 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     # Re-evaluating: vol_norm = vol / vol.rolling(1000).mean()
     vol_norm = vol / vol.rolling(config.VOLATILITY_NORMALIZATION_WINDOW, min_periods=100).mean()
     trend_strength = efficiency * vol_norm
-    res[f'trend_strength_{w}'] = trend_strength
+    if w != 3200: # Purged low signal trend_strength_3200
+        res[f'trend_strength_{w}'] = trend_strength
     
     # 4. Skewness
     if w >= 400:
         res[f'skew_{w}'] = log_ret.rolling(w).skew()
     
-    # 5. Relative Volatility (Regime) - Replaces Volatility ROC
-    # Measures current vol relative to recent history (baseline = 4x window)
-    vol_baseline = vol.rolling(w * 4, min_periods=w).mean()
-    res[f'rel_vol_{w}'] = vol / vol_baseline.replace(0, np.nan)
+    # 5. Relative Volatility - PURGED (Low Signal)
+    # vol_baseline = vol.rolling(w * 4, min_periods=w).mean()
+    # res[f'rel_vol_{w}'] = vol / vol_baseline.replace(0, np.nan)
     
     return res
 
@@ -62,11 +63,11 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     for r in results:
         new_cols.update(r)
         
-    # Add ATR (Window 50 for consistency with backtest engine)
-    h, l, c = df['high'].values, df['low'].values, df['close'].values
-    c_prev = np.roll(c, 1); c_prev[0] = c[0]
-    tr = np.maximum(h - l, np.maximum(np.abs(h - c_prev), np.abs(l - c_prev)))
-    df['atr'] = pd.Series(tr).rolling(config.ATR_WINDOW, min_periods=1).mean().values
+    # Add ATR - PURGED (Redundant with Volatility)
+    # h, l, c = df['high'].values, df['low'].values, df['close'].values
+    # c_prev = np.roll(c, 1); c_prev[0] = c[0]
+    # tr = np.maximum(h - l, np.maximum(np.abs(h - c_prev), np.abs(l - c_prev)))
+    # df['atr'] = pd.Series(tr).rolling(config.ATR_WINDOW, min_periods=1).mean().values
 
     df_new = pd.DataFrame(new_cols, index=df.index)
     return pd.concat([df, df_new], axis=1)

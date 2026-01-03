@@ -312,16 +312,17 @@ def add_physics_features(df):
     if 'log_ret' not in df.columns:
         df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
         
-    df['frac_diff_04'] = frac_diff_ffd(df['close'], d=0.4)
+    # Purged redundant frac_diff_04
     df['frac_diff_02'] = frac_diff_ffd(df['close'], d=0.2)
+    
     df['hurst_100'] = get_hurst_exponent(df['close'], window=100)
-    df['hurst_200'] = get_hurst_exponent(df['close'], window=200)
+    # Purged low signal hurst_200
     df['hurst_400'] = get_hurst_exponent(df['close'], window=400)
     
     # Rate of Change (ROC) for Physics Features
     # Hurst & Entropy are levels, so we check their absolute change (diff)
     df['hurst_roc_100'] = df['hurst_100'].diff()
-    df['hurst_roc_200'] = df['hurst_200'].diff()
+    # Purged low signal hurst_roc_200
     
     return df
 
@@ -334,12 +335,17 @@ def _calc_physics_window_features(w, df_minimal):
     res[f'kyle_lambda_{w}'] = lam
     
     # Fractal Dimension Index
-    fdi = calc_fractal_dimension(df_minimal['close'], window=w)
-    res[f'fdi_{w}'] = fdi
-    
-    # ROC Features
+    # Purged low signal fdi_800, fdi_3200
+    if w not in [800, 3200]:
+        fdi = calc_fractal_dimension(df_minimal['close'], window=w)
+        res[f'fdi_{w}'] = fdi
+        
+        # ROC Features
+        # Purged low signal fdi_roc [25, 50, 400] and long windows
+        if w not in [25, 50, 400, 800, 3200]:
+            res[f'fdi_roc_{w}'] = fdi.diff()
+            
     res[f'kyle_lambda_roc_{w}'] = lam.pct_change(fill_method=None)
-    res[f'fdi_roc_{w}'] = fdi.diff()
     
     return res
 

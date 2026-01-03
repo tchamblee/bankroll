@@ -77,7 +77,7 @@ def precompute_fred_derived(fred_df):
     # 1. Net Liquidity Z-Score (Regime)
     if 'net_liquidity_bil' in df.columns:
         df['net_liq_zscore_60d'] = (df['net_liquidity_bil'] - df['net_liquidity_bil'].rolling(60).mean()) / df['net_liquidity_bil'].rolling(60).std()
-        df['net_liq_trend_20d'] = df['net_liquidity_bil'].diff(20)
+        # Purged low signal net_liq_trend_20d
 
     # 2. Credit Stress Z-Score
     if 'credit_spread' in df.columns:
@@ -92,11 +92,7 @@ def precompute_fred_derived(fred_df):
         df['vix_zscore_60d'] = (df['vix'] - df['vix'].rolling(60).mean()) / df['vix'].rolling(60).std()
         df['vix_trend_10d'] = df['vix'].diff(10)
         
-        if 'vix3m' in df.columns:
-            # VIX Term Structure: Spot VIX / 3-Month VIX
-            # Ratio > 1.0 = Backwardation (Extreme Fear)
-            # Ratio < 0.9 = Contango (Normal Bull Market)
-            df['vix_term_structure'] = df['vix'] / df['vix3m'].replace(0, 1)
+        # Purged low signal vix_term_structure
 
     # 5. Financial Conditions (NFCI)
     if 'financial_conditions' in df.columns:
@@ -135,9 +131,10 @@ def add_fred_features_v2(bars_df):
     
     # Merge
     # Select only feature columns + merge key
-    cols_to_use = ['merge_date', 'net_liquidity_bil', 'net_liq_zscore_60d', 'net_liq_trend_20d', 
-                   'credit_spread', 'credit_stress_zscore_60d', 'inflation_breakeven', 'inflation_expectations_trend',
-                   'vix_zscore_60d', 'vix_trend_10d', 'nfci_level', 'nfci_delta_4w', 'vix_term_structure']
+    # Purged redundant/low signal: net_liquidity_bil, net_liq_trend_20d, inflation_breakeven, vix_term_structure
+    cols_to_use = ['merge_date', 'net_liq_zscore_60d', 
+                   'credit_spread', 'credit_stress_zscore_60d', 'inflation_expectations_trend',
+                   'vix_zscore_60d', 'vix_trend_10d', 'nfci_level', 'nfci_delta_4w']
     cols_present = [c for c in cols_to_use if c in fred_df.columns]
     
     merged = pd.merge(bars_df, fred_df[cols_present], left_on='_date_only', right_on='merge_date', how='left')
