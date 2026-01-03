@@ -33,6 +33,9 @@ def run_pipeline(engine, data_cache=None):
         '_zn': get_df('zn'),
         '_6e': get_df('6e'),
         '_tick_nyse': get_df('tick_nyse'),
+        # Majors (The Matrix)
+        '_gbpusd': get_df('gbpusd'),
+        '_usdjpy': get_df('usdjpy'),
         # Spread Components (for explicit spread calc in intermarket.py)
         '_tnx': get_df('tnx'),
         '_bund': get_df('bund'),
@@ -135,6 +138,8 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         'es': "CLEAN_ES.parquet",
         'zn': "CLEAN_ZN.parquet",
         '6e': "CLEAN_6E.parquet",
+        'gbpusd': "CLEAN_GBPUSD.parquet",
+        'usdjpy': "CLEAN_USDJPY.parquet",
         'ibit': "CLEAN_IBIT.parquet",
         'tick_nyse': "CLEAN_TICK.parquet",
         'trin_nyse': "CLEAN_TRIN.parquet",

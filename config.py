@@ -144,6 +144,22 @@ TARGETS = [
         "mode": "BARS_TRADES_1MIN",
     },
     {
+        "name": "GBPUSD",
+        "symbol": "GBP",
+        "secType": "CASH",
+        "currency": "USD",
+        "exchange": "IDEALPRO",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "USDJPY",
+        "symbol": "USD",
+        "secType": "CASH",
+        "currency": "JPY",
+        "exchange": "IDEALPRO",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
         "name": "SPY",
         "symbol": "SPY",
         "secType": "STK",
