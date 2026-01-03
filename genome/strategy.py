@@ -7,13 +7,14 @@ class Strategy:
     """
     Represents a Bidirectional Trading Strategy with Regime Filtering.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None, stop_loss_pct=None, take_profit_pct=None):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None, stop_loss_pct=None, take_profit_pct=None, horizon=None):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
         self.min_concordance = min_concordance
         self.stop_loss_pct = stop_loss_pct if stop_loss_pct is not None else config.DEFAULT_STOP_LOSS
         self.take_profit_pct = take_profit_pct if take_profit_pct is not None else config.DEFAULT_TAKE_PROFIT
+        self.horizon = horizon if horizon is not None else 120 # Default
         self.fitness = 0.0
         
         self.cleanup()
@@ -85,7 +86,8 @@ class Strategy:
             'short_genes': [g.to_dict() for g in self.short_genes],
             'min_concordance': self.min_concordance,
             'stop_loss_pct': self.stop_loss_pct,
-            'take_profit_pct': self.take_profit_pct
+            'take_profit_pct': self.take_profit_pct,
+            'horizon': self.horizon
         }
 
     @staticmethod
@@ -96,10 +98,11 @@ class Strategy:
             short_genes=[gene_from_dict(g) for g in d.get('short_genes', [])],
             min_concordance=d.get('min_concordance', 1),
             stop_loss_pct=d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS),
-            take_profit_pct=d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+            take_profit_pct=d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT),
+            horizon=d.get('horizon', 120)
         )
 
     def __repr__(self):
         l_str = f" & ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
         s_str = f" & ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}] SL:{self.stop_loss_pct} TP:{self.take_profit_pct} | LONG:({l_str}) | SHORT:({s_str})"
+        return f"[{self.name}] H:{self.horizon} SL:{self.stop_loss_pct} TP:{self.take_profit_pct} | LONG:({l_str}) | SHORT:({s_str})"

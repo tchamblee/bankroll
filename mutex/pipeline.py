@@ -121,7 +121,6 @@ def run_mutex_backtest():
         mutex_data = []
         for s in best_portfolio:
             s_dict = s.to_dict()
-            s_dict['horizon'] = s.horizon
             s_dict['training_id'] = getattr(s, 'training_id', 'legacy')
             mutex_data.append(s_dict)
 

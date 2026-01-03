@@ -19,8 +19,10 @@ import nest_asyncio
 import config as cfg
 from utils import setup_logging
 from genome import Strategy
+from backtest.strategy_loader import load_strategies as load_strategies_from_disk
 from feature_engine.core import FeatureEngine
 from feature_engine import loader
+from feature_engine.pipeline import run_pipeline
 from backtest.feature_computation import precompute_base_features, ensure_feature_context
 
 nest_asyncio.apply()
@@ -117,8 +119,73 @@ class LiveDataManager:
         except Exception as e:
             logger.error(f"❌ Failed to save persistence: {e}")
 
+    async def fill_gaps(self, ib, contract):
+        """Fetches missing ticks from IBKR to bridge the gap since last shutdown."""
+        if self.primary_bars.empty: return
+
+        last_dt = self.primary_bars['time_end'].max()
+        if last_dt.tzinfo is None: last_dt = last_dt.replace(tzinfo=timezone.utc)
+        
+        now_dt = datetime.now(timezone.utc)
+        delta = now_dt - last_dt
+        
+        if delta.total_seconds() < 300: return # No significant gap
+        
+        logger.info(f"⏳ Gap detected: {delta}. Fetching missing ticks from {last_dt}...")
+        
+        # Limit to last 2 hours to prevent massive delays
+        start_time = last_dt
+        if delta.total_seconds() > 7200:
+            logger.warning("⚠️ Gap > 2 hours. Only backfilling last 2 hours.")
+            start_time = now_dt - datetime.timedelta(hours=2)
+            
+        fetched_count = 0
+        
+        # Loop until caught up (within 30s of now)
+        while start_time < (now_dt - datetime.timedelta(seconds=30)):
+            # Format: YYYYMMDD HH:MM:SS
+            formatted_time = start_time.strftime("%Y%m%d %H:%M:%S")
+            try:
+                # Use 'BidAsk' for ticks
+                ticks = await ib.reqHistoricalTicksAsync(
+                    contract, startDateTime=formatted_time, 
+                    endDateTime="", numberOfTicks=1000, 
+                    whatToShow='BID_ASK', useRth=False, ignoreSize=False
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch ticks: {e}")
+                break
+                
+            if not ticks: 
+                break
+            
+            # Simple Wrapper to match TickByTickBidAsk interface
+            class TickWrapper:
+                def __init__(self, t):
+                    self.time = t.time
+                    self.bidPrice = t.priceBid
+                    self.askPrice = t.priceAsk
+                    self.bidSize = t.sizeBid
+                    self.askSize = t.sizeAsk
+
+            for t in ticks:
+                wrapper = TickWrapper(t)
+                self.add_tick(wrapper, {'name': 'EURUSD'})
+                
+            fetched_count += len(ticks)
+            # Update start_time to last tick time for next batch
+            last_tick_time = ticks[-1].time
+            if last_tick_time.tzinfo is None:
+                last_tick_time = last_tick_time.replace(tzinfo=timezone.utc)
+            start_time = last_tick_time
+            
+            # Brief pause to respect rate limits
+            await asyncio.sleep(0.05)
+            
+        logger.info(f"✅ Gap Filled. Fetched {fetched_count} ticks. New Head: {self.primary_bars['time_end'].max()}")
+
     def warmup(self, ib=None):
-        """Loads history from disk + fetches missing gap from IBKR."""
+        """Loads history from disk."""
         logger.info("🔥 Warming up...")
         
         # 1. Load GDELT (Always full reload as it's small daily file)
@@ -131,25 +198,7 @@ class LiveDataManager:
         # 2. Load Local Persistence
         self.load_persistence()
         
-        # 3. Gap Filling (from IBKR)
-        if ib and not self.primary_bars.empty:
-            last_dt = self.primary_bars['time_end'].max()
-            if last_dt.tzinfo is None: last_dt = last_dt.replace(tzinfo=timezone.utc)
-            
-            now_dt = datetime.now(timezone.utc)
-            delta = now_dt - last_dt
-            
-            if delta.total_seconds() > 300: # If gap > 5 mins
-                logger.info(f"⏳ Gap detected: {delta}. Fetching missing data from {last_dt}...")
-                # We need to fetch Ticks to build Volume Bars to ensure consistency
-                # Fetching Historical Ticks is slow.
-                # Only do this if gap is small (< 4 hours). If gap is HUGE, maybe fetch Bars?
-                # No, we need Volume Bars.
-                pass 
-                # Ideally we implement logic here to fetch historical ticks from IBKR
-                # and run them through add_tick.
-                # For now, we rely on the fact that if we restart quickly, the gap is small.
-                # If gap is large, we might miss bars.
+        # 3. Gap Filling (moved to fill_gaps called after connection)
         
         # If still empty (first run), try loading from Raw Data Lake (Backfill)
         if self.primary_bars.empty:
@@ -248,54 +297,30 @@ class LiveDataManager:
         engine = FeatureEngine(cfg.DIRS["DATA_DIR"])
         engine.bars = self.primary_bars.copy()
         
-        # Define Windows (Must match Training!)
-        windows = [25, 50, 100, 200, 400, 800, 1600, 3200]
-        
-        # 1. Standard Features
-        engine.add_features_to_bars(windows=windows)
-        engine.add_physics_features()
-        engine.add_advanced_physics_features(windows=windows)
-        engine.add_microstructure_features()
-        engine.add_delta_features(lookback=25)
-        
-        # 2. External Data Integration
-        # Create separate DataFrames for engine methods that expect them
-        # Note: Engine methods typically merge on time_start or index. 
-        # Here we just want to ensure the COLUMNS exist or are generated.
-        
-        # Extract series from the monolithic dataframe for the engine helpers
-        def extract_series(name):
+        # Build Data Cache from current bars (Live Mode)
+        def extract(name):
             if name in engine.bars.columns:
-                return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'}) # Hack to mimic ticker DF
+                return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'})
             return None
-
-        # Macro Voltage
-        # Requires: US2Y, SCHATZ, TNX, BUND
-        engine.add_macro_voltage_features(
-            us2y_df=extract_series('US2Y'), 
-            schatz_df=extract_series('SCHATZ'), 
-            tnx_df=extract_series('TNX'), 
-            bund_df=extract_series('BUND'), 
-            windows=[50, 100]
-        )
-        
-        # Crypto
-        engine.add_crypto_features(extract_series('IBIT'))
-        
-        # Intermarket (ES, ZN, 6E)
-        intermarket_dfs = {
-            '_es': extract_series('ES'),
-            '_zn': extract_series('ZN'),
-            '_6e': extract_series('6E')
-        }
-        # Filter Nones
-        intermarket_dfs = {k: v for k, v in intermarket_dfs.items() if v is not None}
-        if intermarket_dfs:
-            engine.add_intermarket_features(intermarket_dfs)
             
-        # 3. GDELT
-        if self.gdelt_df is not None:
-            engine.add_gdelt_features(self.gdelt_df)
+        data_cache = {
+            'tnx': extract('TNX'),
+            'usdchf': extract('USDCHF'),
+            'bund': extract('BUND'),
+            'us2y': extract('US2Y'),
+            'schatz': extract('SCHATZ'),
+            'es': extract('ES'),
+            'zn': extract('ZN'),
+            '6e': extract('6E'),
+            'ibit': extract('IBIT'),
+            # Note: TICK/TRIN usually don't have snapshot prices in paper_trade yet, but if they did:
+            'tick_nyse': extract('TICK_NYSE'),
+            'trin_nyse': extract('TRIN_NYSE'),
+            'gdelt': self.gdelt_df
+        }
+        
+        # Run Shared Pipeline
+        run_pipeline(engine, data_cache)
 
         if 'time_start' in engine.bars.columns:
             engine.bars['time_hour'] = engine.bars['time_start'].dt.hour
@@ -540,17 +565,85 @@ class PaperTradeApp:
             shutil.rmtree(self.temp_dir)
 
     def load_strategies(self):
-        path = os.path.join(cfg.DIRS['STRATEGIES_DIR'], "mutex_portfolio.json")
-        if not os.path.exists(path): return False
-        with open(path, 'r') as f:
-            data = json.load(f)
-        for d in data:
+        try:
+            # Shared loader handles path, json parsing, and hydration
+            self.strategies, _ = load_strategies_from_disk(source_type='mutex', load_metrics=False)
+            return bool(self.strategies)
+        except Exception as e:
+            logger.error(f"Failed to load strategies via shared loader: {e}")
+            return False
+
+    def _build_signal_context(self):
+        """
+        Helper: Computes features and builds the execution context (JIT).
+        Returns: (full_df, context, atr) or (None, None, None)
+        """
+        full_df = self.data_manager.compute_features_full()
+        if full_df is None: return None, None, None
+        
+        # --- JIT FEATURE COMPUTATION ---
+        # 1. Dump Base Features to Disk
+        self.existing_keys.clear()
+        precompute_base_features(full_df, self.temp_dir, self.existing_keys)
+        
+        # 2. Compute Derived Features (Z-Score, Slope, etc.) needed by strategies
+        ensure_feature_context(self.strategies, self.temp_dir, self.existing_keys)
+        
+        # 3. Load Context
+        context = {}
+        for key in self.existing_keys:
             try:
-                s = Strategy.from_dict(d)
-                s.horizon, s.stop_loss_pct, s.take_profit_pct = d.get('horizon', 120), d.get('stop_loss_pct', 2.0), d.get('take_profit_pct', 4.0)
-                self.strategies.append(s)
+                arr = np.load(os.path.join(self.temp_dir, f"{key}.npy"))
+                context[key] = arr
             except: pass
-        return True
+            
+        context['__len__'] = len(full_df)
+        
+        # ATR
+        atr_vec = context.get('atr_base')
+        if atr_vec is not None and len(atr_vec) > 0:
+            atr = float(atr_vec[-1])
+        else:
+            atr = full_df['close'].iloc[-1] * 0.001 
+
+        return full_df, context, atr
+
+    def validate_strategies(self):
+        """
+        SMOKE TEST: Runs a dry pass of all strategies against the current feature set.
+        Detects missing features (Parity Gap) before trading starts.
+        """
+        logger.info("🕵️ Running Strategy Feature Validation (Smoke Test)...")
+        if len(self.data_manager.primary_bars) < 200:
+            logger.warning("⚠️ Not enough data for validation (Need > 200 bars). Skipping.")
+            return
+
+        full_df, context, _ = self._build_signal_context()
+        if context is None:
+            logger.error("❌ Validation Failed: Could not build feature context.")
+            return
+
+        failing_strategies = []
+        for i, strat in enumerate(self.strategies):
+            try:
+                # Dry Run
+                strat.generate_signal(context)
+            except KeyError as e:
+                logger.critical(f"🚨 STRATEGY FAILURE: '{strat.name}' is missing feature {e}!")
+                failing_strategies.append(i)
+            except Exception as e:
+                logger.error(f"❌ Strategy '{strat.name}' failed validation: {e}")
+                failing_strategies.append(i)
+        
+        if failing_strategies:
+            logger.critical(f"🛑 {len(failing_strategies)} STRATEGIES FAILED VALIDATION. REMOVING THEM.")
+            # Remove backwards to keep indices valid
+            for i in sorted(failing_strategies, reverse=True):
+                self.strategies.pop(i)
+                self.executor.strategies = self.strategies # Sync executor
+                self.executor.cooldowns = np.delete(self.executor.cooldowns, i)
+        else:
+            logger.info("✅ All strategies passed feature validation.")
 
     async def run(self):
         try:
@@ -560,14 +653,24 @@ class PaperTradeApp:
                 logger.info(f"✅ Loaded {len(self.strategies)} strategies.")
                 
             self.data_manager.warmup()
+            
+            # --- VALIDATION ---
+            self.validate_strategies()
+            # ------------------
+            
             await self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=CLIENT_ID)
-            self.executor = ExecutionEngine(self.strategies)
+            self.executor = ExecutionEngine(self.strategies) # Re-init in case strategies were dropped
             self.ib.reqMarketDataType(1)
             eur = Forex('EURUSD')
             await self.ib.qualifyContractsAsync(eur)
             self.ib.reqMktData(eur, "", False, False)
             self.ib.reqTickByTickData(eur, "BidAsk", 0, False)
             self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']=='EURUSD'][0]
+            
+            # --- GAP FILLING ---
+            await self.data_manager.fill_gaps(self.ib, eur)
+            # -------------------
+            
             for t in cfg.TARGETS:
                 if t['name'] == 'EURUSD': continue
                 c = None
@@ -650,44 +753,8 @@ class PaperTradeApp:
         self.executor.decrement_cooldowns()
         self.executor.save_state()
 
-        full_df = self.data_manager.compute_features_full()
-        if full_df is None: return
-        
-        # --- JIT FEATURE COMPUTATION (PARITY FIX) ---
-        # 1. Dump Base Features to Disk
-        # We need to ensure existing_keys tracks what we have
-        self.existing_keys.clear() # Reset for each bar to ensure fresh calculation on new data? 
-        # Actually, if we use a temp dir, we overwrite files.
-        # Efficient approach: Just clear tracking set and let precompute overwrite.
-        
-        precompute_base_features(full_df, self.temp_dir, self.existing_keys)
-        
-        # 2. Compute Derived Features (Z-Score, Slope, etc.) needed by strategies
-        ensure_feature_context(self.strategies, self.temp_dir, self.existing_keys)
-        
-        # 3. Load Context for Signals
-        # Strategies expect a dict: name -> np.array
-        # We only load what's needed? Or everything?
-        # Optimization: Only load what strategies use. But simpler to load keys from existing_keys
-        context = {}
-        for key in self.existing_keys:
-            try:
-                arr = np.load(os.path.join(self.temp_dir, f"{key}.npy"))
-                if len(arr) == 0:
-                    logger.error(f"⚠️ FOUND EMPTY FEATURE: {key} shape={arr.shape}")
-                context[key] = arr
-            except: pass
-            
-        context['__len__'] = len(full_df)
-        if context['__len__'] > 0 and any(len(v) == 0 for v in context.values() if isinstance(v, np.ndarray)):
-             logger.error(f"CRITICAL: Context has {context['__len__']} rows but contains empty features!")
-            
-        # Use precomputed ATR if available
-        atr_vec = context.get('atr_base')
-        if atr_vec is not None and len(atr_vec) > 0:
-            atr = float(atr_vec[-1])
-        else:
-            atr = full_df['close'].iloc[-1] * 0.001 # Fallback 10 bps
+        full_df, context, atr = self._build_signal_context()
+        if full_df is None or context is None: return
 
         self.executor.current_atr = atr
 
@@ -719,6 +786,8 @@ class PaperTradeApp:
                 if sig_vec[-1] != 0:
                     active_sig, active_idx = sig_vec[-1], i
                     break
+            except KeyError as e:
+                logger.critical(f"🚨 RUNTIME MISSING FEATURE: {e} in Strategy {strat.name}")
             except Exception as e: 
                 logger.error(f"Strategy {i} Error: {e}")
         

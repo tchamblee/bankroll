@@ -14,7 +14,9 @@ from datetime import datetime, timezone, timedelta
 
 # Project Imports
 from feature_engine.core import FeatureEngine
+from feature_engine.pipeline import run_pipeline
 from genome.strategy import Strategy
+from backtest.strategy_loader import load_strategies as load_strategies_from_disk
 from backtest.feature_computation import precompute_base_features, ensure_feature_context
 import config as cfg
 
@@ -54,24 +56,12 @@ def load_strategy_names():
 
 def load_strategies_full():
     """Loads actual Strategy objects from mutex portfolio."""
-    if not os.path.exists(MUTEX_FILE):
-        return []
-    strategies = []
     try:
-        with open(MUTEX_FILE, "r") as f:
-            data = json.load(f)
-            for d in data:
-                try:
-                    s = Strategy.from_dict(d)
-                    # Hydrate extras
-                    s.horizon = d.get('horizon', 120)
-                    s.stop_loss_pct = d.get('stop_loss_pct', 2.0)
-                    s.take_profit_pct = d.get('take_profit_pct', 4.0)
-                    strategies.append(s)
-                except: pass
+        strategies, _ = load_strategies_from_disk(source_type='mutex', load_metrics=False)
+        return strategies
     except Exception as e:
         st.error(f"Error loading strategies: {e}")
-    return strategies
+        return []
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -117,37 +107,24 @@ def compute_live_features(strategies, bars_df):
             return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'})
         return None
 
-    # 2. Run Pipeline (Matching paper_trade.py)
-    windows = [25, 50, 100, 200, 400, 800, 1600, 3200]
-    
-    # Standard
-    engine.add_features_to_bars(windows=windows)
-    engine.add_physics_features()
-    engine.add_advanced_physics_features(windows=windows)
-    engine.add_microstructure_features()
-    engine.add_delta_features(lookback=25)
-    
-    # Macro
-    engine.add_macro_voltage_features(
-        us2y_df=extract_series('US2Y'), 
-        schatz_df=extract_series('SCHATZ'), 
-        tnx_df=extract_series('TNX'), 
-        bund_df=extract_series('BUND'), 
-        windows=[50, 100]
-    )
-    
-    # Crypto
-    engine.add_crypto_features(extract_series('IBIT'))
-    
-    # Intermarket
-    intermarket_dfs = {
-        '_es': extract_series('ES'),
-        '_zn': extract_series('ZN'),
-        '_6e': extract_series('6E')
+    # 2. Run Pipeline (Using Shared Logic)
+    data_cache = {
+        'tnx': extract_series('TNX'),
+        'usdchf': extract_series('USDCHF'),
+        'bund': extract_series('BUND'),
+        'us2y': extract_series('US2Y'),
+        'schatz': extract_series('SCHATZ'),
+        'es': extract_series('ES'),
+        'zn': extract_series('ZN'),
+        '6e': extract_series('6E'),
+        'ibit': extract_series('IBIT'),
+        'tick_nyse': extract_series('TICK_NYSE'),
+        'trin_nyse': extract_series('TRIN_NYSE'),
+        # GDELT is not loaded here in dashboard usually, but we could try loading from GDELT_DIR
+        # For simplicity, dashboard might skip GDELT if not critical for display or load it if we want.
     }
-    intermarket_dfs = {k: v for k, v in intermarket_dfs.items() if v is not None}
-    if intermarket_dfs:
-        engine.add_intermarket_features(intermarket_dfs)
+    
+    run_pipeline(engine, data_cache)
 
     if 'time_start' in engine.bars.columns:
         engine.bars['time_hour'] = engine.bars['time_start'].dt.hour
@@ -793,6 +770,93 @@ elif view == "System Health":
     col1.metric("Free Space", f"{free // (2**30)} GB")
     col2.metric("Total Space", f"{total // (2**30)} GB")
     st.progress(used/total, text=f"Used: {int(used/total*100)}%")
+
+    st.divider()
+    st.subheader("🕵️ Advanced Diagnostics")
+
+    d_col1, d_col2 = st.columns(2)
+
+    # 1. Feature Parity Check
+    with d_col1:
+        st.markdown("**Feature Parity (Live Data)**")
+        bars = load_bars(limit=5)
+        if bars is not None and not bars.empty:
+            latest = bars.iloc[-1]
+            cols = bars.columns
+            
+            checks = {
+                "Seasonality": "seasonal_deviation" in cols,
+                "FRED (Macro)": "net_liq_zscore_60d" in cols,
+                "COT (Positioning)": any("cot_" in c for c in cols if "btc" not in c), # Ignore BTC as it might be sparse
+                "Event Decay": "bars_since_high_100" in cols,
+                "Deltas": "delta_close_50" in cols
+            }
+            
+            all_passed = True
+            for name, passed in checks.items():
+                icon = "✅" if passed else "❌"
+                st.write(f"{icon} {name}")
+                if not passed:
+                    all_passed = False
+                    st.caption(f"Missing columns for {name}. Strategies using this will fail.")
+            
+            if all_passed:
+                st.success("All Critical Feature Sets Detected.")
+            else:
+                st.error("Feature Parity Gap Detected!")
+        else:
+            st.warning("No data to check parity.")
+
+    # 2. Log Analysis
+    with d_col2:
+        st.markdown("**Log Health (Last 200 Lines)**")
+        logs = load_logs(200)
+        error_count = sum(1 for line in logs if "ERROR" in line)
+        critical_count = sum(1 for line in logs if "CRITICAL" in line)
+        warn_count = sum(1 for line in logs if "WARNING" in line)
+        
+        if critical_count > 0:
+            st.error(f"🚨 {critical_count} CRITICAL Errors")
+        else:
+            st.write("✅ No Critical Errors")
+            
+        if error_count > 0:
+            st.error(f"❌ {error_count} Errors")
+        else:
+            st.write("✅ No Standard Errors")
+            
+        if warn_count > 0:
+            st.warning(f"⚠️ {warn_count} Warnings")
+        else:
+            st.write("✅ No Warnings")
+            
+        # Check for Specific Alerts
+        if any("Gap detected" in line for line in logs):
+             st.info("ℹ️ Gap Filling Active/Triggered recently")
+        if any("Market Closed" in line for line in logs):
+             st.info("ℹ️ Market Closed Logic Active")
+
+    # 3. Strategy Health
+    st.divider()
+    st.markdown("**Strategy Health**")
+    strategies = load_strategies_full()
+    if strategies:
+        st.write(f"Loaded {len(strategies)} Strategies.")
+        # Check for parameter anomalies
+        valid_strat_count = 0
+        for s in strategies:
+            # Simple check: Horizon should be set (not None) and reasonable
+            if s.horizon is not None and s.horizon > 0:
+                valid_strat_count += 1
+            else:
+                st.error(f"Strategy {s.name} has invalid Horizon: {s.horizon}")
+        
+        if valid_strat_count == len(strategies):
+            st.success("All Strategies have valid parameters.")
+        else:
+            st.warning(f"Only {valid_strat_count}/{len(strategies)} strategies appear valid.")
+    else:
+        st.error("No Strategies Loaded! Portfolio is empty.")
 
 # --- AUTO REFRESH LOGIC ---
 if auto_refresh:
