@@ -55,14 +55,14 @@ def add_implied_vol_features(bars, vix_df, evz_df):
         df['vix_zscore_2000'] = (df['vix_close'] - roll_mean) / (roll_std + 1e-6)
 
     # B. Volatility Risk Premium (EVZ vs Realized)
-    # EVZ is Annualized %. Yang-Zhang is Per-Bar Log Ret Std.
-    if 'evz_close' in df.columns and 'yang_zhang_vol_100' in df.columns:
+    # EVZ is Annualized %. Standard Volatility is Per-Bar Log Ret Std.
+    if 'evz_close' in df.columns and 'volatility_100' in df.columns:
         # Annualize Realized Vol
         # Annualization Factor in config is usually for Sharpe (daily/hourly).
         # We need Bars Per Year.
         # config.ANNUALIZATION_FACTOR is ~114408 (5-min bars).
         
-        rv_annual = df['yang_zhang_vol_100'] * np.sqrt(config.ANNUALIZATION_FACTOR) * 100
+        rv_annual = df['volatility_100'] * np.sqrt(config.ANNUALIZATION_FACTOR) * 100
         
         # Premium: Implied - Realized
         df['vol_risk_premium_100'] = df['evz_close'] - rv_annual

@@ -76,6 +76,15 @@ def add_macro_voltage_features(df, us2y_df, schatz_df, tnx_df, bund_df, windows=
     df['us_curve'] = df['tnx'] - df['us2y']
     df['de_curve'] = df['bund'] - df['schatz']
     
+    # 5. 10Y Yield Spread (TNX - BUND) - Refactor for Beta TNX
+    # This captures the transatlantic carry drive better than Beta
+    spread = df['tnx'] - df['bund']
+    
+    # Z-Score (Regime) - 400 bars (12h)
+    s_mean = spread.rolling(400).mean()
+    s_std = spread.rolling(400).std().replace(0, 1)
+    df['spread_tnx_bund_z_400'] = (spread - s_mean) / s_std
+    
     # REMOVED: Derivative/Velocity features (diff) as they result in zero variance 
     # on high-frequency bars due to slow-updating macro data.
     # We keep the levels (voltage_diff, curves) which represent the macro regime.

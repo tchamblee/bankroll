@@ -123,13 +123,9 @@ def add_crypto_features(df, ibit_df):
     joined['eur_ret'] = np.log(joined['eur_close'] / joined['eur_close'].shift(1))
     joined['ibit_ret'] = np.log(joined['ibit_close'] / joined['ibit_close'].shift(1))
     
-    # A. The "Crypto Lead" (2-Minute Lag)
-    # Logic: ln(Price_{t-2} / Price_{t-3})
-    # This is the return of the bar 2 minutes ago?
-    # If t is current time, t-1 is 1 min ago, t-2 is 2 min ago.
-    # Return at t-2 is ln(P_{t-2}/P_{t-3}). 
-    # So we shift the return series by 2.
-    joined['IBIT_Lag2_Return'] = joined['ibit_ret'].shift(2)
+    # A. Bitcoin Trend (30m) - Replaces Failed Lag2
+    # Simple Return over last 30 minutes
+    joined['IBIT_Trend_30m'] = joined['ibit_close'].pct_change(30)
     
     # B. Dynamic Correlation Regime (60m)
     joined['Corr_Regime_60m'] = joined['eur_ret'].rolling(60).corr(joined['ibit_ret'])
@@ -151,7 +147,7 @@ def add_crypto_features(df, ibit_df):
     df = df.sort_values('time_end')
     
     # We only want the new columns
-    cols_to_add = ['timestamp', 'IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']
+    cols_to_add = ['timestamp', 'IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']
     
     merged = pd.merge_asof(
         df,
@@ -165,7 +161,7 @@ def add_crypto_features(df, ibit_df):
     merged.drop(columns=['timestamp'], inplace=True)
     
     # Fill NaNs (early windows)
-    merged[['IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']] = \
-        merged[['IBIT_Lag2_Return', 'Corr_Regime_60m', 'Vol_Ratio_30m']].fillna(0)
+    merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']] = \
+        merged[['IBIT_Trend_30m', 'Corr_Regime_60m', 'Vol_Ratio_30m']].fillna(0)
         
     return merged

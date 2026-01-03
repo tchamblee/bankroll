@@ -12,7 +12,7 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     
     # 2. Volatility (Garman-Klass)
     vol = np.sqrt(gk_var.rolling(w).mean())
-    if w != 800: # Match logic in original script
+    if w not in [400, 800, 1600, 3200]: # Purged failing long-window volatility
         res[f'volatility_{w}'] = vol
     
     # 3. Efficiency & Trend Strength
@@ -28,12 +28,13 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     res[f'trend_strength_{w}'] = trend_strength
     
     # 4. Skewness
-    res[f'skew_{w}'] = log_ret.rolling(w).skew()
+    if w >= 400:
+        res[f'skew_{w}'] = log_ret.rolling(w).skew()
     
-    # 5. ROC Features
-    res[f'volatility_roc_{w}'] = vol.pct_change(fill_method=None)
-    res[f'skew_roc_{w}'] = res[f'skew_{w}'].diff()
-    res[f'trend_strength_roc_{w}'] = trend_strength.diff()
+    # 5. Relative Volatility (Regime) - Replaces Volatility ROC
+    # Measures current vol relative to recent history (baseline = 4x window)
+    vol_baseline = vol.rolling(w * 4, min_periods=w).mean()
+    res[f'rel_vol_{w}'] = vol / vol_baseline.replace(0, np.nan)
     
     return res
 

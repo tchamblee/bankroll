@@ -70,6 +70,12 @@ def add_seasonality_features(df, lookback_days=20):
     # simply the expected return itself (is this time of day usually bullish?)
     df['seasonal_trend'] = df['expected_seasonal_ret']
     
+    # Feature 3: Cyclical Time Encoding (Better than raw hours)
+    # 24 hour cycle
+    hour_float = df['time_start'].dt.hour + df['time_start'].dt.minute / 60.0
+    df['hour_sin'] = np.sin(2 * np.pi * hour_float / 24.0)
+    df['hour_cos'] = np.cos(2 * np.pi * hour_float / 24.0)
+    
     # Cleanup
     drop_cols = ['_tod', '_date', 'expected_seasonal_ret', 'expected_seasonal_std']
     df.drop(columns=drop_cols, inplace=True)

@@ -64,10 +64,15 @@ def add_intermarket_features(primary_df, correlator_dfs):
             # Just add the Level and a Z-Score
             df[f'level{suffix}'] = merged[f'price{suffix}'].ffill()
             
+            # Refactor: Use Smoothed Levels (Trend) instead of volatile Z-scores
+            df[f'smoothed_level_100{suffix}'] = df[f'level{suffix}'].rolling(100).mean()
+            df[f'smoothed_level_400{suffix}'] = df[f'level{suffix}'].rolling(400).mean()
+            
             # Simple Z-Score (Regime) - Short term (50) and Long term (200)
-            roll_mean = df[f'level{suffix}'].rolling(50).mean()
-            roll_std = df[f'level{suffix}'].rolling(50).std().replace(0, 1)
-            df[f'zscore_50{suffix}'] = (df[f'level{suffix}'] - roll_mean) / roll_std
+            # Removed: Failed Triage
+            # roll_mean = df[f'level{suffix}'].rolling(50).mean()
+            # roll_std = df[f'level{suffix}'].rolling(50).std().replace(0, 1)
+            # df[f'zscore_50{suffix}'] = (df[f'level{suffix}'] - roll_mean) / roll_std
             
             continue # Skip the Returns/Correlation logic for these
 

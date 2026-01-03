@@ -14,21 +14,21 @@ def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres
     # 2. Price-Flow Correlation
     res[f'price_flow_corr_{w}'] = log_ret.rolling(w).corr(ticket_imbalance)
     
-    # 3. Flow Shock
-    flow_std = ticket_imbalance.rolling(w).std()
-    res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
+    # 3. Flow Shock (Removed: Failed Triage)
+    # flow_std = ticket_imbalance.rolling(w).std()
+    # res[f'flow_shock_{w}'] = (ticket_imbalance - flow_trend) / flow_std.replace(0, 1)
     
     # 3b. OFI Trend & Shock (Higher Fidelity)
     if normalized_ofi is not None:
         ofi_trend = normalized_ofi.rolling(w).mean()
         res[f'ofi_trend_{w}'] = ofi_trend
         
-        ofi_std = normalized_ofi.rolling(w).std()
-        res[f'ofi_shock_{w}'] = (normalized_ofi - ofi_trend) / ofi_std.replace(0, 1)
+        # ofi_std = normalized_ofi.rolling(w).std()
+        # res[f'ofi_shock_{w}'] = (normalized_ofi - ofi_trend) / ofi_std.replace(0, 1)
 
-    # 4. Duration Trend
-    if bar_duration is not None:
-        res[f'duration_trend_{w}'] = bar_duration.rolling(w).mean()
+    # 4. Duration Trend (Removed: Failed Triage)
+    # if bar_duration is not None:
+    #    res[f'duration_trend_{w}'] = bar_duration.rolling(w).mean()
         
     # 5. Pressure Trend
     if pres_imbalance is not None:
@@ -70,9 +70,9 @@ def add_microstructure_features(df, windows=[50, 100]):
     df['log_ret'] = log_ret
     
     bar_duration = None
-    if 'time_end' in df.columns and 'time_start' in df.columns:
-        bar_duration = (df['time_end'] - df['time_start']).dt.total_seconds()
-        df['bar_duration'] = bar_duration
+    # if 'time_end' in df.columns and 'time_start' in df.columns:
+    #    bar_duration = (df['time_end'] - df['time_start']).dt.total_seconds()
+    #    df['bar_duration'] = bar_duration
         
     pres_imbalance = None
     if 'avg_bid_size' in df.columns and 'avg_ask_size' in df.columns:
@@ -99,34 +99,7 @@ def add_microstructure_features(df, windows=[50, 100]):
         
     df_new = pd.DataFrame(new_cols, index=df.index)
     
-    # --- NEW: Event-Driven Microstructure ---
-    # 1. Liquidation Event (Large Volume + Large Move)
-    # Using Rolling 100-bar stats for Z-Score
-    w_event = 100
+    # --- NEW: Event-Driven Microstructure (Removed: Failed Triage) ---
+    # Liquidation & Imbalance Spike were too sparse/noisy.
     
-    # Volume Z-Score
-    vol_mean = vol.rolling(w_event).mean()
-    vol_std = vol.rolling(w_event).std().replace(0, 1)
-    vol_z = (vol - vol_mean) / vol_std
-    
-    # Return Z-Score
-    ret_std = log_ret.rolling(w_event).std().replace(0, 1)
-    ret_z = log_ret.abs() / ret_std
-    
-    # Liquidation = High Vol (>2.5) AND High Move (>2.5)
-    is_liquidation = (vol_z > 2.5) & (ret_z > 2.5)
-    df_new['bars_since_liquidation'] = _jit_bars_since_true(is_liquidation.values)
-    df_new['decay_liquidation'] = np.exp(-5.0 * df_new['bars_since_liquidation'] / 100.0).fillna(0)
-
-    # 2. Imbalance Spike
-    # Ticket Imbalance Z-Score
-    imb_mean = ticket_imbalance.rolling(w_event).mean()
-    imb_std = ticket_imbalance.rolling(w_event).std().replace(0, 1)
-    imb_z = (ticket_imbalance - imb_mean) / imb_std
-    
-    # Spike = |Imbalance| > 2.5 sigma
-    is_imb_spike = (imb_z.abs() > 2.5)
-    df_new['bars_since_imbalance_spike'] = _jit_bars_since_true(is_imb_spike.values)
-    df_new['decay_imbalance_spike'] = np.exp(-5.0 * df_new['bars_since_imbalance_spike'] / 100.0).fillna(0)
-
     return pd.concat([df, df_new], axis=1)

@@ -318,28 +318,16 @@ def add_physics_features(df):
     df['hurst_200'] = get_hurst_exponent(df['close'], window=200)
     df['hurst_400'] = get_hurst_exponent(df['close'], window=400)
     
-    # Shannon Entropy (Disorder)
-    # Using log_ret (stationarized) is better for distribution analysis than raw price
-    df['entropy_100'] = get_shannon_entropy(df['log_ret'], window=100)
-    df['entropy_200'] = get_shannon_entropy(df['log_ret'], window=200)
-    df['entropy_400'] = get_shannon_entropy(df['log_ret'], window=400)
-    
     # Rate of Change (ROC) for Physics Features
     # Hurst & Entropy are levels, so we check their absolute change (diff)
     df['hurst_roc_100'] = df['hurst_100'].diff()
     df['hurst_roc_200'] = df['hurst_200'].diff()
-    df['entropy_roc_100'] = df['entropy_100'].diff()
-    df['entropy_roc_200'] = df['entropy_200'].diff()
     
     return df
 
 def _calc_physics_window_features(w, df_minimal):
     """Worker function for parallel window physics feature calculation."""
     res = {}
-    
-    # Yang-Zhang Volatility
-    vol = calc_yang_zhang_volatility(df_minimal, window=w)
-    res[f'yang_zhang_vol_{w}'] = vol
     
     # Kyle's Lambda
     lam = calc_kyle_lambda(df_minimal, window=w)

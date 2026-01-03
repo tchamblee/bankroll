@@ -408,6 +408,12 @@ if __name__ == "__main__":
     # Calculate Global Rejects (Features that failed in ALL horizons)
     useless_features = all_candidates - useful_features
     
+    # Save Useless Features for Analysis
+    useless_path = os.path.join(config.DIRS['FEATURES_DIR'], "useless_features.json")
+    with open(useless_path, "w") as f:
+        json.dump(sorted(list(useless_features)), f, indent=4)
+    print(f"Start of Useless Features Dump to {useless_path}")
+
     print(f"\n🌍 GLOBAL PURGE REPORT")
     print(f"======================")
     print(f"Total Candidates: {len(all_candidates)}")

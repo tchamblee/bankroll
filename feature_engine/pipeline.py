@@ -19,17 +19,19 @@ def run_pipeline(engine, data_cache=None):
     def get_df(key): return data_cache.get(key)
 
     # 3. Add Correlator Residuals (TNX, USDCHF, BUND)
-    if get_df('tnx') is not None: engine.add_correlator_residual(get_df('tnx'), suffix="_tnx")
-    if get_df('usdchf') is not None: engine.add_correlator_residual(get_df('usdchf'), suffix="_usdchf")
-    if get_df('bund') is not None: engine.add_correlator_residual(get_df('bund'), suffix="_bund")
+    # Refactor: Increased window to 200 for stable Beta
+    # TNX Beta failed triage even at 200. Removed.
+    # if get_df('tnx') is not None: engine.add_correlator_residual(get_df('tnx'), suffix="_tnx", window=200)
+    if get_df('usdchf') is not None: engine.add_correlator_residual(get_df('usdchf'), suffix="_usdchf", window=200)
+    if get_df('bund') is not None: engine.add_correlator_residual(get_df('bund'), suffix="_bund", window=200)
 
     # 4. Intermarket Robust Features (ES, ZN, 6E)
     raw_intermarket = {
         '_es': get_df('es'),
         '_zn': get_df('zn'),
         '_6e': get_df('6e'),
-        '_tick_nyse': get_df('tick_nyse'),
-        '_trin_nyse': get_df('trin_nyse')
+        '_tick_nyse': get_df('tick_nyse')
+        # '_trin_nyse': get_df('trin_nyse') # Purged: TRIN is consistently noisy/useless
     }
     intermarket_dfs = {k: v for k, v in raw_intermarket.items() if v is not None}
     if intermarket_dfs:
@@ -55,12 +57,13 @@ def run_pipeline(engine, data_cache=None):
         engine.add_gdelt_features(get_df('gdelt'))
         
     # 8. Macro Voltage
+    # Refactor: Increased windows to [100, 200, 400] for stability
     engine.add_macro_voltage_features(
         us2y_df=get_df('us2y'),
         schatz_df=get_df('schatz'),
         tnx_df=get_df('tnx'),
         bund_df=get_df('bund'),
-        windows=[50, 100]
+        windows=[100, 200, 400]
     )
     
     # 9. Physics & Microstructure
@@ -82,8 +85,9 @@ def run_pipeline(engine, data_cache=None):
         engine.bars = add_fred_features(engine.bars)
 
     # 13. COT
-    if engine.bars is not None:
-        engine.bars = add_cot_features(engine.bars)
+    # Refactor: Removed COT features (Weekly data is step-function noise for intraday)
+    # if engine.bars is not None:
+    #    engine.bars = add_cot_features(engine.bars)
         
     return engine
 

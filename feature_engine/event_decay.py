@@ -42,52 +42,34 @@ def add_event_decay_features(df, high_windows=[100, 200, 400], shock_windows=[10
         
     print("Calculating Event Decay Features (Burst Features)...")
     
-    # 1. Bars Since High
+    # 1. Market Structure (Pullback Depth)
+    # Replaces sparse 'bars_since_high'
+    
+    # Get ATR if available
+    atr = df['atr'] if 'atr' in df.columns else df['close'].rolling(50).std()
+    
     for w in high_windows:
         # Rolling Max High
         roll_max = df['high'].rolling(w).max()
         
-        # Identify new highs (where High >= RollingMax)
-        # Note: Since roll_max includes current bar, High[t] can equal RollMax[t]
+        # Pullback Ratio: How many ATRs are we below the recent high?
+        # Continuous metric of "Dip" depth
+        pullback = (roll_max - df['close']) / atr.replace(0, 1.0)
+        
+        df[f'pullback_ratio_{w}'] = pullback.fillna(0)
+        
+        # Bars Since High (Kept as legacy since it survived some windows, but Pullback is better)
+        # Identify new highs
         is_high = (df['high'] >= roll_max - 1e-9) 
-        
-        # Calculate decay
         decay = _jit_bars_since_true(is_high.values)
+        if w != 400: # 400 failed
+            df[f'bars_since_high_{w}'] = decay
         
-        # Normalize?
-        # Raw bars count is good, but maybe log(bars) or bars/window is better for ML.
-        # The prompt asks for "bars_since_high". We'll provide the raw count.
-        # But for stability, we might want to fill NaNs (start of series) with window size or -1.
-        # Let's keep NaNs for now, or fill with w.
-        
-        df[f'bars_since_high_{w}'] = decay
-        
-        # Exponential Decay (Normalized [0, 1])
-        # Value = 1.0 immediately, ~0.006 after 'w' bars
-        df[f'decay_high_{w}'] = np.exp(-5.0 * decay / w)
-        df[f'decay_high_{w}'] = df[f'decay_high_{w}'].fillna(0.0)
-        
-    # 2. Bars Since Shock
+    # 2. Bars Since Shock (Removed: Failed Triage)
     # "Shock" = |Return| > 3 * Sigma
-    abs_ret = df['log_ret'].abs()
+    # abs_ret = df['log_ret'].abs()
     
-    for w in shock_windows:
-        vol_col = f'volatility_{w}'
-        
-        # If volatility feature not pre-calculated, calculate it on the fly
-        if vol_col in df.columns:
-            sigma = df[vol_col]
-        else:
-            # Fallback: Simple Rolling Std of returns
-            sigma = df['log_ret'].rolling(w).std()
-            
-        is_shock = (abs_ret > sigma_threshold * sigma)
-        
-        decay = _jit_bars_since_true(is_shock.values)
-        df[f'bars_since_shock_{w}'] = decay
-        
-        # Exponential Decay
-        df[f'decay_shock_{w}'] = np.exp(-5.0 * decay / w)
-        df[f'decay_shock_{w}'] = df[f'decay_shock_{w}'].fillna(0.0)
+    # for w in shock_windows:
+    #    pass 
 
     return df
