@@ -515,7 +515,7 @@ if view == "Cockpit":
             xaxis=dict(uirevision='constant'),
             yaxis=dict(uirevision='constant'),
         )
-        st.plotly_chart(fig, use_container_width=True, key="main_chart")
+        st.plotly_chart(fig, width='stretch', key="main_chart")
     else:
         st.info("Waiting for bar data to generate chart...")
 
@@ -617,7 +617,7 @@ elif view == "Trade Log":
         # Display Table
         st.dataframe(
             trades_df[["Entry Time", "Type", "Strat", "Entry Price", "Exit Time", "Exit Price", "Reason", "PnL"]],
-            use_container_width=True,
+            width='stretch',
             height=300
         )
         
@@ -724,7 +724,7 @@ elif view == "Trade Log":
                         xaxis_rangeslider_visible=False
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.warning("No bar data found for this trade period (Data might be rotated out).")
 
