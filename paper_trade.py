@@ -10,7 +10,7 @@ import time
 import subprocess
 from pathlib import Path
 import datetime as dt
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import numpy as np
 from ib_insync import *
@@ -137,14 +137,16 @@ class LiveDataManager:
         start_time = last_dt
         if delta.total_seconds() > 7200:
             logger.warning("⚠️ Gap > 2 hours. Only backfilling last 2 hours.")
-            start_time = now_dt - datetime.timedelta(hours=2)
+            start_time = now_dt - timedelta(hours=2)
             
         fetched_count = 0
         
         # Loop until caught up (within 30s of now)
-        while start_time < (now_dt - datetime.timedelta(seconds=30)):
-            # Format: YYYYMMDD HH:MM:SS
-            formatted_time = start_time.strftime("%Y%m%d %H:%M:%S")
+        logger.info(f"Starting gap fill loop from {start_time} to {now_dt}...")
+        while start_time < (now_dt - timedelta(seconds=30)):
+            # Format: YYYYMMDD HH:MM:SS UTC (Explicit Timezone to prevent Future Data error)
+            formatted_time = start_time.strftime("%Y%m%d %H:%M:%S") + " UTC"
+            logger.info(f"  -> Requesting 1000 ticks from {formatted_time}...")
             try:
                 # Use 'BidAsk' for ticks
                 ticks = await ib.reqHistoricalTicksAsync(
@@ -153,10 +155,14 @@ class LiveDataManager:
                     whatToShow='BID_ASK', useRth=False, ignoreSize=False
                 )
             except Exception as e:
-                logger.error(f"❌ Failed to fetch ticks: {e}")
+                logger.error(f"❌ Failed to fetch ticks batch: {e}")
+                break
+            except asyncio.CancelledError:
+                logger.warning("⚠️ Tick fetch cancelled (Disconnect?). Stopping fill.")
                 break
                 
             if not ticks: 
+                logger.info("  -> No more ticks returned.")
                 break
             
             # Simple Wrapper to match TickByTickBidAsk interface
@@ -178,6 +184,8 @@ class LiveDataManager:
             if last_tick_time.tzinfo is None:
                 last_tick_time = last_tick_time.replace(tzinfo=timezone.utc)
             start_time = last_tick_time
+            
+            logger.info(f"  -> Fetched {len(ticks)} ticks. Next start: {start_time}")
             
             # Brief pause to respect rate limits
             await asyncio.sleep(0.05)
@@ -646,6 +654,7 @@ class PaperTradeApp:
             logger.info("✅ All strategies passed feature validation.")
 
     async def run(self):
+        exit_code = 0
         try:
             if not self.load_strategies():
                 logger.warning("⚠️ No strategies found. Running in DATA ONLY mode (Accumulating Bars).")
@@ -679,9 +688,13 @@ class PaperTradeApp:
                 elif t['secType'] == 'STK': c = Stock(t['symbol'], t['exchange'], t['currency'])
                 elif t['secType'] == 'CASH': c = Forex(t['symbol'] + t['currency'])
                 if c:
-                    await self.ib.qualifyContractsAsync(c)
-                    self.ib.reqMktData(c, "", False, False)
-                    self.contract_map[c.conId] = t
+                    try:
+                        await self.ib.qualifyContractsAsync(c)
+                        self.ib.reqMktData(c, "", False, False)
+                        self.contract_map[c.conId] = t
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to qualify/request {t['name']}: {e}")
+                        
             self.ib.pendingTickersEvent += self.on_pending_tickers
             logger.info("🟢 VIRTUAL PAPER TRADING ACTIVE (NO BROKER ORDERS)")
             
@@ -689,7 +702,6 @@ class PaperTradeApp:
             last_state_update = datetime.now()
             self.last_eur_tick = datetime.now() # Reset on start
             
-            exit_code = 0
             while not self.stop_event.is_set():
                 # Heartbeat
                 Path("logs/paper_trade_heartbeat").touch()
@@ -725,13 +737,15 @@ class PaperTradeApp:
                     disconnect_time = None
                     
                 await asyncio.sleep(1)
-            
-            return exit_code
+        except BaseException as e:
+            logger.error(f"🔥 CRITICAL FAILURE in paper_trade loop: {e}", exc_info=True)
+            exit_code = 1
         finally:
             self.ib.disconnect()
-            if os.path.exists(self.temp_dir):
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
                 shutil.rmtree(self.temp_dir)
                 logger.info("🧹 Cleaned up temp dir")
+            return exit_code
 
     def on_pending_tickers(self, tickers):
         for t in tickers:

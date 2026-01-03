@@ -779,33 +779,64 @@ elif view == "System Health":
     # 1. Feature Parity Check
     with d_col1:
         st.markdown("**Feature Parity (Live Data)**")
-        bars = load_bars(limit=5)
-        if bars is not None and not bars.empty:
-            latest = bars.iloc[-1]
-            cols = bars.columns
-            
-            checks = {
-                "Seasonality": "seasonal_deviation" in cols,
-                "FRED (Macro)": "net_liq_zscore_60d" in cols,
-                "COT (Positioning)": any("cot_" in c for c in cols if "btc" not in c), # Ignore BTC as it might be sparse
-                "Event Decay": "bars_since_high_100" in cols,
-                "Deltas": "delta_close_50" in cols
-            }
-            
-            all_passed = True
-            for name, passed in checks.items():
-                icon = "✅" if passed else "❌"
-                st.write(f"{icon} {name}")
-                if not passed:
-                    all_passed = False
-                    st.caption(f"Missing columns for {name}. Strategies using this will fail.")
-            
-            if all_passed:
-                st.success("All Critical Feature Sets Detected.")
-            else:
-                st.error("Feature Parity Gap Detected!")
+        # Load enough bars for feature computation (need > 200 for most, > 100 for Event Decay)
+        bars = load_bars(limit=500)
+        
+        if bars is not None and len(bars) >= 200:
+            # --- COMPUTE FEATURES ON THE FLY ---
+            # We must run the pipeline to see if features *can* be generated.
+            # The raw parquet file does NOT contain them.
+            try:
+                engine = FeatureEngine(os.path.join(BASE_DIR, "data"))
+                engine.bars = bars.copy()
+                
+                # Setup Cache (Extract correlators from the raw bars themselves)
+                def extract_series(name):
+                    if name in engine.bars.columns:
+                         return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'})
+                    return None
+                    
+                data_cache = {
+                    'tnx': extract_series('TNX'),
+                    'usdchf': extract_series('USDCHF'),
+                    'bund': extract_series('BUND'),
+                    'us2y': extract_series('US2Y'),
+                    'schatz': extract_series('SCHATZ'),
+                    'es': extract_series('ES'),
+                    'zn': extract_series('ZN'),
+                    '6e': extract_series('6E'),
+                    'ibit': extract_series('IBIT'),
+                    'tick_nyse': extract_series('TICK_NYSE'),
+                    'trin_nyse': extract_series('TRIN_NYSE')
+                }
+                
+                # Run Pipeline
+                run_pipeline(engine, data_cache)
+                enriched_cols = engine.bars.columns
+                
+                checks = {
+                    "Seasonality": "seasonal_deviation" in enriched_cols,
+                    "FRED (Macro)": "net_liq_zscore_60d" in enriched_cols,
+                    "COT (Positioning)": any("cot_" in c for c in enriched_cols if "btc" not in c), 
+                    "Event Decay": "bars_since_high_100" in enriched_cols,
+                    "Deltas": "delta_velocity_50_25" in enriched_cols
+                }
+                
+                all_passed = True
+                for name, passed in checks.items():
+                    icon = "✅" if passed else "❌"
+                    st.write(f"{icon} {name}")
+                    if not passed:
+                        all_passed = False
+                        st.caption(f"Missing columns for {name}. Strategies using this will fail.")
+            except Exception as e:
+                st.error(f"Pipeline Error: {e}")
+
         else:
-            st.warning("No data to check parity.")
+            if bars is None:
+                st.warning("No live data found.")
+            else:
+                st.warning(f"Insufficient data for parity check ({len(bars)}/200 bars).")
 
     # 2. Log Analysis
     with d_col2:
