@@ -61,7 +61,9 @@ class EvaluationMixin:
             sharpe = (avg_ret / stdev) * np.sqrt(self.annualization_factor)
             
             downside = np.minimum(net_returns, 0)
-            downside_std = np.std(downside, axis=0) + config.EPSILON
+            # Correct Sortino (RMS of Downside)
+            downside_rms = np.sqrt(np.mean(downside**2, axis=0))
+            downside_std = np.maximum(downside_rms, config.EPSILON)
             sortino = (avg_ret / downside_std) * np.sqrt(self.annualization_factor)
             
             max_win = np.max(net_returns, axis=0)

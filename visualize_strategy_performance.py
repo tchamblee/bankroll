@@ -158,7 +158,9 @@ def print_mutex_breakdown(strategies, backtester):
         config.COST_BPS / 10000.0, 
         config.ACCOUNT_SIZE, 
         config.TRADING_END_HOUR, 
-        config.STOP_LOSS_COOLDOWN_BARS
+        config.STOP_LOSS_COOLDOWN_BARS,
+        config.MIN_COMMISSION,
+        config.SLIPPAGE_ATR_FACTOR
     )
     
     # Compute Stats

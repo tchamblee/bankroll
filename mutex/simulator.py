@@ -7,7 +7,8 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                                hours: np.ndarray, weekdays: np.ndarray,
                                horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
                                lot_size: float, spread_pct: float, comm_pct: float, 
-                               account_size: float, end_hour: int, cooldown_bars: int):
+                               account_size: float, end_hour: int, cooldown_bars: int,
+                               min_comm: float, slippage_factor: float):
     """
     Simulates a portfolio of strategies running concurrently on one account.
     Each strategy manages its own position logic (Horizon, SL, TP).
@@ -136,8 +137,8 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             if change > 0:
                 cost_spread = change * lot_size * exec_price * (0.5 * spread_pct)
                 raw_comm = change * lot_size * exec_price * comm_pct
-                comm = max(2.0, raw_comm) if change > 0.5 else 0.0 
-                slip = 0.1 * atr_vec[i] * lot_size * change
+                comm = max(min_comm, raw_comm) if change > 0.5 else 0.0 
+                slip = slippage_factor * atr_vec[i] * lot_size * change
                 total_cost = cost_spread + comm + slip
                 
                 if target_pos != 0 and curr_pos == 0:

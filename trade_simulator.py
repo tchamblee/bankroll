@@ -11,7 +11,8 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,
                        lot_size: float, spread_pct: float, comm_pct: float, min_comm: float,
                        account_size: float, sl_mult: float, 
-                       tp_mult: float, time_limit_bars: int, cooldown_bars: int) -> Tuple[np.ndarray, int]:
+                       tp_mult: float, time_limit_bars: int, cooldown_bars: int,
+                       slippage_factor: float) -> Tuple[np.ndarray, int]:
     """
     JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers and Cooldown.
     """
@@ -153,8 +154,8 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             gross_pnl = prev_pos * lot_size * price_change
             pos_change = abs(curr_pos - prev_pos)
             
-            # Dynamic Slippage (10% of ATR)
-            slippage = 0.1 * atr_vec[i] * lot_size * pos_change
+            # Dynamic Slippage (Factor of ATR)
+            slippage = slippage_factor * atr_vec[i] * lot_size * pos_change
             
             # Spread Cost
             spread_cost = pos_change * lot_size * current_price * (0.5 * spread_pct)
@@ -178,8 +179,8 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         else:
             pos_change = abs(curr_pos - 0.0)
             
-            # Dynamic Slippage (10% of ATR)
-            slippage = 0.1 * atr_vec[i] * lot_size * pos_change
+            # Dynamic Slippage (Factor of ATR)
+            slippage = slippage_factor * atr_vec[i] * lot_size * pos_change
             
             spread_cost = pos_change * lot_size * prices[i] * (0.5 * spread_pct)
             raw_comm = pos_change * lot_size * prices[i] * comm_pct
@@ -382,11 +383,15 @@ class TradeSimulator:
                 spread_cost = abs(change) * self.lot_size * exec_price * (0.5 * self.spread_pct)
                 raw_comm = abs(change) * self.lot_size * exec_price * self.comm_pct
                 
+                # Dynamic Slippage (Factor of ATR)
+                current_atr = atr_vec[i] if use_atr else (exec_price * 0.001)
+                slippage = config.SLIPPAGE_ATR_FACTOR * current_atr * self.lot_size * abs(change)
+                
                 comm = 0.0
                 if abs(change) > 1e-6:
                      comm = max(self.min_comm, raw_comm)
                 
-                cost = spread_cost + comm
+                cost = spread_cost + comm + slippage
                 step_pnl -= cost
                 
                 if position != 0:
@@ -461,5 +466,6 @@ class TradeSimulator:
             sl_mult,
             tp_mult,
             limit_val,
-            cooldown_bars
+            cooldown_bars,
+            config.SLIPPAGE_ATR_FACTOR
         )

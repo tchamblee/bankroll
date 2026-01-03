@@ -67,18 +67,19 @@ def optimize_mutex_portfolio(candidates, backtester):
             sub_tp = tp_mults[idxs]
             
             strat_rets, _, _, _ = _jit_simulate_mutex_custom(
-                sub_sig.astype(np.float64), 
-                prices, highs, lows, atr, 
-                hours, weekdays, 
+                sub_sig.astype(np.float64),
+                prices, highs, lows, atr,
+                hours, weekdays,
                 sub_horizons, sub_sl, sub_tp,
-                config.STANDARD_LOT_SIZE, 
-                config.SPREAD_BPS / 10000.0, 
-                config.COST_BPS / 10000.0, 
-                config.ACCOUNT_SIZE, 
-                config.TRADING_END_HOUR, 
-                config.STOP_LOSS_COOLDOWN_BARS
-            )
-            
+                config.STANDARD_LOT_SIZE,
+                config.SPREAD_BPS / 10000.0,
+                config.COST_BPS / 10000.0,
+                config.ACCOUNT_SIZE,
+                config.TRADING_END_HOUR,
+                config.STOP_LOSS_COOLDOWN_BARS,
+                config.MIN_COMMISSION,
+                config.SLIPPAGE_ATR_FACTOR
+            )            
             rets = np.sum(strat_rets, axis=1)
             total_ret = np.sum(rets)
             profit = total_ret * config.ACCOUNT_SIZE
