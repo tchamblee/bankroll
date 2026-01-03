@@ -4,6 +4,7 @@ from .seasonality import add_seasonality_features
 from .fred import add_fred_features_v2 as add_fred_features
 from .cot import add_cot_features
 from .experimental import add_experimental_features
+from .physics import add_interaction_features
 
 def run_pipeline(engine, data_cache=None):
     """
@@ -74,6 +75,10 @@ def run_pipeline(engine, data_cache=None):
     engine.add_physics_features()
     engine.add_microstructure_features()
     engine.add_advanced_physics_features(windows=windows_list)
+    
+    # 9b. Interaction Features
+    if engine.bars is not None:
+        engine.bars = add_interaction_features(engine.bars, windows=[100, 200, 400])
     
     # 10. Deltas
     engine.add_delta_features(lookback=25)

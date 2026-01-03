@@ -250,6 +250,26 @@ def calc_market_energy(df, window=10):
     ke = 0.5 * mass * (velocity ** 2)
     return ke.rolling(window).mean()
 
+def calc_potential_energy(series, volume, window=10):
+    """
+    Physics-inspired 'Potential Energy' (Hooke's Law).
+    U = 0.5 * k * x^2
+    We assume 'k' (Spring Constant) is proportional to Volume (Mass).
+    'x' is the displacement from the moving average (Equilibrium).
+    """
+    # Equilibrium position (Moving Average)
+    ma = series.rolling(window).mean()
+    
+    # Displacement (Normalized)
+    # x = (Price - MA) / MA  (Percentage deviation)
+    x = (series - ma) / ma
+    
+    # Potential Energy
+    # U = 0.5 * Mass * x^2
+    pe = 0.5 * volume * (x ** 2)
+    
+    return pe.rolling(window).mean()
+
 def calc_market_power(df, window=10):
     """
     Physics-inspired 'Power'.
@@ -360,7 +380,21 @@ def _calc_physics_window_features(w, df_minimal):
     res[f'kyle_lambda_{w}'] = lam
     
     # Market Energy (Kinetic)
-    res[f'market_energy_{w}'] = calc_market_energy(df_minimal, window=w)
+    ke = calc_market_energy(df_minimal, window=w)
+    res[f'market_energy_{w}'] = ke
+    
+    # Potential Energy (Spring/Tension)
+    pe = calc_potential_energy(df_minimal['close'], df_minimal['volume'], window=w)
+    res[f'potential_energy_{w}'] = pe
+    
+    # Lagrangian (Kinetic - Potential)
+    # L > 0: High Motion, Low Tension (Breakout/Trend)
+    # L < 0: Low Motion, High Tension (Overextended/Reversal Prone)
+    res[f'lagrangian_{w}'] = ke - pe
+    
+    # Hamiltonian (Total Energy)
+    # H = K + U (Total System Intensity)
+    res[f'hamiltonian_{w}'] = ke + pe
     
     # Market Power
     res[f'market_power_{w}'] = calc_market_power(df_minimal, window=w)
@@ -395,5 +429,63 @@ def add_advanced_physics_features(df, windows=[50, 100, 200]):
     for r in results:
         new_cols.update(r)
         
+    df_new = pd.DataFrame(new_cols, index=df.index)
+    return pd.concat([df, df_new], axis=1)
+
+def calc_rolling_vwap(df, window):
+    """
+    Calculates Rolling Volume-Weighted Average Price.
+    """
+    product = df['close'] * df['volume']
+    vwap = product.rolling(window).sum() / df['volume'].rolling(window).sum()
+    return vwap
+
+def add_interaction_features(df, windows=[100, 200, 400]):
+    """
+    Adds complex interaction features combining Physics, Microstructure, and Standard metrics.
+    Must be called AFTER all base feature generation steps.
+    """
+    if df is None: return None
+    print("Calculating Interaction Features (VWAP, Energy-Flow, FDI-Vol)...")
+    df = df.copy()
+    
+    # We collect new columns in a dict to avoid fragmentation
+    new_cols = {}
+    
+    for w in windows:
+        # 1. VWAP Deviation (Mean Reversion / Trend)
+        # (Close - VWAP) / VWAP
+        vwap = calc_rolling_vwap(df, w)
+        new_cols[f'vwap_diff_{w}'] = (df['close'] - vwap) / vwap
+        
+        # 2. Hurst-Adjusted Trend Strength
+        # Hurst < 0.5 (Mean Rev) -> Flip Trend Strength?
+        # Or just (Hurst - 0.5) * Trend.
+        # If Hurst > 0.5 (Trend), Positive * Positive = Positive Signal.
+        # If Hurst < 0.5 (Mean Rev), Negative * Positive = Negative Signal (Fade Trend).
+        h_col = f'hurst_{w}'
+        t_col = f'trend_strength_{w}'
+        if h_col in df.columns and t_col in df.columns:
+            new_cols[f'hurst_trend_{w}'] = (df[h_col] - 0.5) * df[t_col]
+            
+        # 3. FDI-Adjusted Volatility
+        # FDI ~ 1.5 (Random). FDI < 1.5 (Trend). FDI > 1.5 (Mean Rev).
+        # (FDI - 1.5) * Volatility.
+        # If FDI > 1.5 (Choppy), Positive * Vol = High Volatility Chop (Risk).
+        # If FDI < 1.5 (Trend), Negative * Vol = Trending Volatility (Opportunity?).
+        f_col = f'fdi_{w}'
+        v_col = f'volatility_{w}'
+        if f_col in df.columns and v_col in df.columns:
+             new_cols[f'fdi_vol_{w}'] = (df[f_col] - 1.5) * df[v_col]
+             
+        # 4. Energy-Flow (Intensity * Direction)
+        # Market Energy (Kinetic) * Flow Trend ( buying pressure)
+        # High Energy + High Buy Flow = Strong Upward Impulse
+        e_col = f'market_energy_{w}'
+        fl_col = f'flow_trend_{w}'
+        if e_col in df.columns and fl_col in df.columns:
+            new_cols[f'energy_flow_{w}'] = df[e_col] * df[fl_col]
+
+    # Batch assignment
     df_new = pd.DataFrame(new_cols, index=df.index)
     return pd.concat([df, df_new], axis=1)

@@ -32,8 +32,25 @@ def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     # 4. Skewness
     if w >= 400:
         res[f'skew_{w}'] = log_ret.rolling(w).skew()
+        res[f'kurt_{w}'] = log_ret.rolling(w).kurt()
     
-    # 5. Relative Volatility - PURGED (Low Signal)
+    # 5. Autocorrelation (Vectorized)
+    # Measures persistence (trendiness) vs mean reversion
+    roll_mean = log_ret.rolling(w).mean()
+    centered = log_ret - roll_mean
+    # Shift centered by 1 to align t with t-1
+    # Note: centered.shift(1) aligns t-1 with t.
+    numerator = (centered * centered.shift(1)).rolling(w).sum()
+    denominator = (centered ** 2).rolling(w).sum().replace(0, np.nan)
+    res[f'autocorr_{w}'] = numerator / denominator
+
+    # 6. Volatility Asymmetry
+    # Upside Vol / Downside Vol
+    std_pos = log_ret.where(log_ret > 0).rolling(w).std().fillna(0)
+    std_neg = log_ret.where(log_ret < 0).rolling(w).std().fillna(0)
+    res[f'vol_asymmetry_{w}'] = std_pos / std_neg.replace(0, 1)
+
+    # 7. Relative Volatility - PURGED (Low Signal)
     # vol_baseline = vol.rolling(w * 4, min_periods=w).mean()
     # res[f'rel_vol_{w}'] = vol / vol_baseline.replace(0, np.nan)
     

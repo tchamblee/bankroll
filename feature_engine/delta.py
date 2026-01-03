@@ -19,11 +19,10 @@ def add_delta_features(df, lookback=10):
         
         # NOISE FILTER: Exclude features where Delta is just double-noise or redundant
         noise_keywords = [
-            'volatility', 'rel_vol', 'news', 'fdi', 'skew', 'velocity', 
+            'rel_vol', 'news', 'velocity', 
             'alignment', 'trin', 'vpin', 'voltage', 'epu', 'ibit', 
-            'divergence', 'trend', 'hurst', 'efficiency', 'atr',
-            'flow_trend', 'pres_trend', 'order_book', 'kyle_lambda',
-            'smoothed_level'
+            'divergence', 'efficiency', 'atr',
+            'order_book', 'smoothed_level'
         ]
         
         c_lower = c.lower()

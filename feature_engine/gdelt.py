@@ -32,14 +32,37 @@ def add_gdelt_features(df, gdelt_df):
         if 'news_vol_usd' not in gdelt_df.columns:
             return df
             
-        gdelt_rolled = gdelt_df[['news_vol_usd']].copy()
-        gdelt_rolled['news_vol_usd'] = gdelt_rolled['news_vol_usd'].rolling(window, min_periods=1).sum()
+        cols_to_use = ['news_vol_usd']
+        if 'news_tone_usd' in gdelt_df.columns:
+            cols_to_use.append('news_tone_usd')
+            
+        gdelt_rolled = gdelt_df[cols_to_use].copy()
+        
+        # 1. Volume Rolling
+        gdelt_rolled['vol_sum_96'] = gdelt_rolled['news_vol_usd'].rolling(window, min_periods=1).sum()
         
         # RVOL (Relative Volume) - Normalize by 30-day average
         rvol_window = 2880 # 30 days * 96
         base_usd = gdelt_rolled['news_vol_usd'].rolling(rvol_window, min_periods=1).mean().replace(0, 1)
-        gdelt_rolled['news_rvol_usd'] = gdelt_rolled['news_vol_usd'] / base_usd
+        # Use sum of last 24h volume / expected 24h volume? 
+        # Or just current vol / expected?
+        # Existing logic: gdelt_rolled['news_vol_usd'] is 15-min vol.
+        # rvol_window mean is avg 15-min vol.
+        # So it's 15-min RVOL.
+        # Refactor: We want 24h accumulated Volume RVOL?
+        # Let's keep existing 15-min RVOL logic but maybe smooth it.
+        # Actually, let's stick to the existing working RVOL logic.
+        gdelt_rolled['news_rvol_usd'] = gdelt_rolled['news_vol_usd'].rolling(window, min_periods=1).mean() / base_usd
         
+        # 2. Sentiment (Volume-Weighted)
+        if 'news_tone_usd' in gdelt_rolled.columns:
+            # Weighted Tone = Sum(Tone * Vol) / Sum(Vol)
+            tone_vol = gdelt_rolled['news_tone_usd'] * gdelt_rolled['news_vol_usd']
+            gdelt_rolled['news_sentiment_trend'] = tone_vol.rolling(window, min_periods=1).sum() / gdelt_rolled['vol_sum_96'].replace(0, 1)
+            
+            # Sentiment Impact = Sentiment * RVOL (Magnitude * Intensity)
+            gdelt_rolled['news_sentiment_impact'] = gdelt_rolled['news_sentiment_trend'] * gdelt_rolled['news_rvol_usd']
+
         # Prepare for merge
         gdelt_reset = gdelt_rolled.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})
         
@@ -56,9 +79,14 @@ def add_gdelt_features(df, gdelt_df):
         if 'time_start' in gdelt_reset.columns:
             gdelt_reset['time_start'] = pd.to_datetime(gdelt_reset['time_start'], utc=True)
 
+        # Merge Columns
+        merge_cols = ['time_start', 'news_rvol_usd']
+        if 'news_sentiment_trend' in gdelt_reset.columns:
+            merge_cols.extend(['news_sentiment_trend', 'news_sentiment_impact'])
+
         merged = pd.merge_asof(
             df, 
-            gdelt_reset[['time_start', 'news_rvol_usd']], 
+            gdelt_reset[merge_cols], 
             on='time_start', 
             direction='backward'
         )
