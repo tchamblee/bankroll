@@ -5,6 +5,7 @@ from .fred import add_fred_features_v2 as add_fred_features
 from .cot import add_cot_features
 from .experimental import add_experimental_features
 from .physics import add_interaction_features
+from .profile import add_market_profile_features
 
 def run_pipeline(engine, data_cache=None):
     """
@@ -79,6 +80,10 @@ def run_pipeline(engine, data_cache=None):
     # 9b. Interaction Features
     if engine.bars is not None:
         engine.bars = add_interaction_features(engine.bars, windows=[100, 200, 400])
+        
+    # 9c. Market Profile
+    if engine.bars is not None:
+        engine.bars = add_market_profile_features(engine.bars)
     
     # 10. Deltas
     engine.add_delta_features(lookback=25)
