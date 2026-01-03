@@ -60,12 +60,24 @@ class GenomeFactory:
             if f in df.columns:
                 self.feature_stats[f] = {'mean': df[f].mean(), 'std': df[f].std()}
 
+    def _get_split_pools(self, pool):
+        """Caches the split of boosted vs regular features to avoid re-computation."""
+        pool_id = id(pool)
+        if not hasattr(self, '_split_cache'):
+            self._split_cache = {}
+            
+        if pool_id not in self._split_cache:
+            boosted = [f for f in pool if any(k in f for k in self.boost_keywords)]
+            regular = [f for f in pool if f not in boosted]
+            self._split_cache[pool_id] = (boosted, regular)
+            
+        return self._split_cache[pool_id]
+
     def _weighted_choice(self, pool):
         """Selects from pool with bias towards physics/microstructure."""
         if not pool: return None
         
-        boosted = [f for f in pool if any(k in f for k in self.boost_keywords)]
-        regular = [f for f in pool if f not in boosted]
+        boosted, regular = self._get_split_pools(pool)
         
         if not boosted: return random.choice(pool)
         if not regular: return random.choice(pool)

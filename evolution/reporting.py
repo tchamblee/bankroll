@@ -255,6 +255,8 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         if best_rejected_name:
             print(f"   👀 Closest Candidate: {best_rejected_name}")
             print(f"      Stats: {best_rejected_details}")
+        else:
+            print("   (No strategy reached even the basic Train/Val sorting gate)")
         return
 
     print(f"✅ {len(output)} Strategies passed final filtering.")

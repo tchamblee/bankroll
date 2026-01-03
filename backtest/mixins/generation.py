@@ -23,7 +23,7 @@ class SignalGenerationMixin:
         chunks = [population[i:i + batch_size] for i in range(0, num_strats, batch_size)]
         
         # Pass directory path, NOT dictionary or single file
-        results = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+        results = Parallel(n_jobs=n_jobs, max_nbytes=None, verbose=0)(
             delayed(_worker_generate_signals)(chunk, self.temp_dir) for chunk in chunks
         )
         

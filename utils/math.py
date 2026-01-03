@@ -38,7 +38,7 @@ def calc_slope(arr: np.ndarray, w: int) -> np.ndarray:
     if divisor == 0:
         return slope
         
-    slope = numerator / divisor
+    slope[:] = numerator / divisor
     slope[:w-1] = 0.0 # Warmup
     return slope
 

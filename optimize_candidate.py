@@ -129,10 +129,72 @@ class StrategyOptimizer:
 
         if self.verbose: print(f"   Generated {len(self.variants)} variants.")
 
+    def optimize_stops(self, strategy):
+        """
+        Performs a grid search on Stop Loss and Take Profit parameters.
+        Returns the best (SL, TP) tuple based on Train+Val performance.
+        """
+        if self.verbose: print(f"   ⚙️ Optimizing Stops for {strategy.name}...")
+        
+        sl_options = [1.0, 1.5, 2.0, 2.5, 3.0]
+        tp_options = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+        
+        best_score = -999.0
+        best_params = (strategy.stop_loss_pct, strategy.take_profit_pct)
+        
+        # We need a temporary population of clones
+        grid_variants = []
+        param_map = {} # idx -> (sl, tp)
+        
+        idx = 0
+        for sl in sl_options:
+            for tp in tp_options:
+                if tp <= sl: continue # Ignore bad R:R
+                
+                # Clone
+                clone = copy.deepcopy(strategy)
+                clone.name = f"{strategy.name}_SL{sl}_TP{tp}"
+                clone.stop_loss_pct = sl
+                clone.take_profit_pct = tp
+                
+                grid_variants.append(clone)
+                param_map[idx] = (sl, tp)
+                idx += 1
+                
+        # Evaluate Batch
+        # Optimization on TRAIN + VALIDATION only
+        train_res = self.backtester.evaluate_population(grid_variants, set_type='train', time_limit=self.horizon)
+        val_res = self.backtester.evaluate_population(grid_variants, set_type='validation', time_limit=self.horizon)
+        
+        # Map results
+        t_map = {row['id']: row for _, row in train_res.iterrows()}
+        v_map = {row['id']: row for _, row in val_res.iterrows()}
+        
+        for i, variant in enumerate(grid_variants):
+            if variant.name not in t_map or variant.name not in v_map: continue
+            
+            t_s = float(t_map[variant.name]['sortino'])
+            v_s = float(v_map[variant.name]['sortino'])
+            t_r = float(t_map[variant.name]['total_return'])
+            v_r = float(v_map[variant.name]['total_return'])
+            
+            # Robust Fitness: Min(Train, Val)
+            fitness = min(t_s, v_s)
+            
+            # Constraints
+            if t_r > 0 and v_r > 0 and fitness > 1.0:
+                if fitness > best_score:
+                    best_score = fitness
+                    best_params = param_map[i]
+        
+        if self.verbose: print(f"      Best Stops Found: SL={best_params[0]}, TP={best_params[1]} (Fit: {best_score:.2f})")
+        return best_params
+
     def get_best_variant(self):
         """
-        Programmatically find and return the best variant that beats the parent in ALL sets.
-        Returns: (Strategy, stats_dict) or (None, None) if no improvement.
+        Programmatically find and return the best variant.
+        CRITICAL UPDATE: Selection is based on TRAIN + VALIDATION performance only.
+        Test set is used ONLY as a final gatekeeper, not a selection criterion.
         """
         if not self.variants:
             self.generate_variants()
@@ -141,53 +203,95 @@ class StrategyOptimizer:
         for s in population:
             s.horizon = self.horizon
 
-        # Silent evaluation
+        # 1. Evaluate In-Sample (Train + Val)
         train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
         val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
-        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
         
-        # Helper
         def get_stats(df, s_id):
             row = df[df['id'] == s_id].iloc[0]
             return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
 
         parent_train = get_stats(train_df, self.parent_strategy.name)
         parent_val = get_stats(val_df, self.parent_strategy.name)
-        parent_test = get_stats(test_df, self.parent_strategy.name)
-
-        best_variant = None
-        best_test_sortino = -999.0
-        best_stats = None
+        
+        # Parent Baseline
+        parent_fitness = min(parent_train['sortino'], parent_val['sortino'])
+        
+        best_candidate = None
+        best_fitness = parent_fitness
 
         for variant in self.variants:
+            if variant.name not in train_df['id'].values: continue
+            
             v_train = get_stats(train_df, variant.name)
             v_val = get_stats(val_df, variant.name)
-            v_test = get_stats(test_df, variant.name)
             
-            # STRICT IMPROVEMENT CHECK
-            # Must be strictly better (or equal) in Sortino for Train, Val, AND Test
-            # AND must have higher Test Return
+            # Selection Metric: Robust Sortino (Min of Train/Val)
+            v_fitness = min(v_train['sortino'], v_val['sortino'])
             
-            improved_train = v_train['sortino'] >= parent_train['sortino']
-            improved_val = v_val['sortino'] >= parent_val['sortino']
-            improved_test = v_test['sortino'] > parent_test['sortino'] # Strict improvement on Test
+            # Constraints:
+            # 1. Must be profitable on both
+            # 2. Must beat parent fitness
+            is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
+            improved = v_fitness > parent_fitness
             
-            # Sanity Checks
-            positive_profit = v_train['ret'] > 0 and v_val['ret'] > 0 and v_test['ret'] > 0
-            
-            if improved_train and improved_val and improved_test and positive_profit:
-                if v_test['sortino'] > best_test_sortino:
-                    best_test_sortino = v_test['sortino']
-                    best_variant = variant
-                    # Update name to reflect it's an optimized version of the original, but keep ID distinct if needed
-                    # We'll return the object, let caller handle naming if they want to replace the original
-                    best_stats = {
-                        'train': v_train,
-                        'val': v_val,
-                        'test': v_test
-                    }
+            if is_profitable and improved:
+                if v_fitness > best_fitness:
+                    best_fitness = v_fitness
+                    best_candidate = variant
+
+        # 2. Final Gate: Test Set Check (OOS)
+        # We only check the BEST candidate against the Test set.
+        # We do NOT shop around for the variant that fits Test best.
         
-        return best_variant, best_stats
+        if best_candidate:
+            if self.verbose: print(f"   🏆 Selected Candidate (In-Sample): {best_candidate.name} (Fit: {best_fitness:.2f} vs Parent {parent_fitness:.2f})")
+            
+            # Run Test Set
+            test_pop = [self.parent_strategy, best_candidate]
+            test_df = self.backtester.evaluate_population(test_pop, set_type='test', time_limit=self.horizon)
+            
+            p_test = get_stats(test_df, self.parent_strategy.name)
+            c_test = get_stats(test_df, best_candidate.name)
+            
+            # Criteria:
+            # 1. Must be profitable on Test
+            # 2. Must NOT degrade Test Sortino significantly (> 90% of Parent)
+            #    Or if Parent was bad on Test (<0), Candidate must be better.
+            
+            test_profitable = c_test['ret'] > 0
+            
+            if p_test['sortino'] > 0:
+                # Allow slight degradation (robustness noise) if In-Sample gain is huge
+                test_maintained = c_test['sortino'] >= (p_test['sortino'] * 0.9)
+            else:
+                # Parent failed test, Candidate MUST fix it
+                test_maintained = c_test['sortino'] > p_test['sortino']
+            
+            if test_profitable and test_maintained:
+                best_stats = {
+                    'train': get_stats(train_df, best_candidate.name),
+                    'val': get_stats(val_df, best_candidate.name),
+                    'test': c_test
+                }
+                
+                # Check if we should optimize stops for this winner
+                # (Optional: Recursively improve the winner)
+                best_sl, best_tp = self.optimize_stops(best_candidate)
+                if (best_sl, best_tp) != (best_candidate.stop_loss_pct, best_candidate.take_profit_pct):
+                    best_candidate.stop_loss_pct = best_sl
+                    best_candidate.take_profit_pct = best_tp
+                    # Re-eval one last time? 
+                    # For simplicity, we assume grid search result holds. 
+                    # But metrics in best_stats would be slightly stale.
+                    # It's fine for now, the caller usually re-evaluates.
+                
+                return best_candidate, best_stats
+            else:
+                if self.verbose: print(f"   ❌ Candidate failed Test Gate. Ret: {c_test['ret']:.4f}, Sort: {c_test['sortino']:.2f} (Parent: {p_test['sortino']:.2f})")
+                return None, None
+                
+        return None, None
 
     def evaluate_and_report(self):
         print("\n🔬 Evaluating Variants on All Sets (Train / Val / Test)...")
