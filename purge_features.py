@@ -41,7 +41,12 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
                'rel_strength_z_6e', 
                'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
                'divergence_50_6e',
-               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
+               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100',
+               # BLACKLIST (Non-Stationary Raw Price Levels)
+               'day_open', 'prev_val', 'prev_vah', 'prev_vpoc',
+               'price_es', 'price_zn', 'price_bund', 'price_6e', 'price_gbpusd', 
+               'price_usdjpy', 'price_tnx', 'price_us2y', 'price_schatz',
+               'hamiltonian_3200', 'lagrangian_3200', 'potential_energy_3200']
     
     # Filter out SPECIFIC raw microstructure noise and kyle_lambda
     # We KEEP aggregations like flow_trend, pres_trend, order_book_alignment

@@ -192,6 +192,7 @@ def add_market_profile_features(df):
     merged['dist_to_vpoc'] = (merged['close'] - merged['prev_vpoc']) / merged['prev_vpoc']
     merged['dist_to_vah'] = (merged['close'] - merged['prev_vah']) / merged['prev_vah']
     merged['dist_to_val'] = (merged['close'] - merged['prev_val']) / merged['prev_val']
+    merged['dist_to_day_open'] = (merged['close'] - merged['day_open']) / merged['day_open']
     
     # Relative Volume at Price (How "thick" is the market here?)
     # This is hard without full profile, but we can use dist_to_vpoc as a proxy for "Magnetism"
