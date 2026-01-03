@@ -38,13 +38,11 @@ class GenomeFactory:
                                'yang_zhang', 'lambda', 'force', 'fdi',
                                'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol', 'premium']
         
-        # Boost keywords for Physics/Microstructure (Alpha Refinement)
-        self.boost_keywords = ['hurst', 'entropy', 'fdi', 'yang_zhang', 'kyle', 
-                              'flow', 'ofi', 'imbalance', 'vpin', 'liquidation', 'force', 'shock', 'seasonal', 'premium']
-        
         self.update_pools()
 
     def update_pools(self):
+        # self.features is presumed to be sorted by IC (descending) from purge_features.py
+        # Creating subsets using list comprehension preserves this order.
         self.regime_pool = [f for f in self.features if any(k in f for k in self.regime_keywords)]
         self.trigger_pool = [f for f in self.features if f not in self.regime_pool]
 
@@ -60,33 +58,27 @@ class GenomeFactory:
             if f in df.columns:
                 self.feature_stats[f] = {'mean': df[f].mean(), 'std': df[f].std()}
 
-    def _get_split_pools(self, pool):
-        """Caches the split of boosted vs regular features to avoid re-computation."""
-        pool_id = id(pool)
-        if not hasattr(self, '_split_cache'):
-            self._split_cache = {}
-            
-        if pool_id not in self._split_cache:
-            boosted = [f for f in pool if any(k in f for k in self.boost_keywords)]
-            regular = [f for f in pool if f not in boosted]
-            self._split_cache[pool_id] = (boosted, regular)
-            
-        return self._split_cache[pool_id]
-
     def _weighted_choice(self, pool):
-        """Selects from pool with bias towards physics/microstructure."""
+        """
+        Selects from pool using Rank-Based Probability.
+        Assumes 'pool' is sorted by quality (Best -> Worst), which is true
+        if inherited from the IC-sorted 'survivors_*.json'.
+        
+        Uses a Triangular Distribution biased towards index 0 (Top Rank).
+        This removes human bias ('boost_keywords') while favoring statistically strong features.
+        The 'Long Tail' of weaker features is still accessible for diversity.
+        """
         if not pool: return None
         
-        boosted, regular = self._get_split_pools(pool)
+        # random.triangular(low, high, mode)
+        # Mode 0 biases heavily towards the top of the list.
+        # Range [0, len(pool)] -> casting to int gives indices 0..len-1
+        idx = int(random.triangular(0, len(pool), 0))
         
-        if not boosted: return random.choice(pool)
-        if not regular: return random.choice(pool)
-            
-        # 60% chance to pick from boosted features
-        if random.random() < 0.60:
-            return random.choice(boosted)
-        else:
-            return random.choice(regular)
+        # Safety clamp
+        idx = min(idx, len(pool) - 1)
+        
+        return pool[idx]
 
     def create_gene_from_pool(self, pool):
         if not pool: return self.create_random_gene() # Fallback
