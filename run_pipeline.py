@@ -49,6 +49,9 @@ def main():
     run_step("generate_features.py", "Feature Matrix Generation")
     run_step("verify_data_integrity.py", "Data Integrity Audit")
     
+    # Safety Check: Verify Genome Logic
+    run_step("audit_genes.py", "Genome Integrity Self-Test")
+    
     # Feature Selection & Validation
     # Note: purge_features.py generates the survivors_*.json files needed later
     run_step("purge_features.py", "Feature Hunger Games (Selection)")

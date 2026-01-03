@@ -35,6 +35,10 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
             streaks[i] = current
         return streaks
 
+    # Save Consecutive Up/Down
+    _save_feature(temp_dir, existing_keys, 'consecutive_up', get_streak(up_mask))
+    _save_feature(temp_dir, existing_keys, 'consecutive_down', get_streak(~up_mask))
+
     # Precompute Base ATR (for Dynamic Barriers)
     # TR = Max(H-L, |H-C_prev|, |L-C_prev|)
     h, l, c = raw_data['high'].values, raw_data['low'].values, raw_data['close'].values
@@ -101,7 +105,7 @@ def ensure_feature_context(population, temp_dir, existing_keys):
             if gene.type == 'delta': 
                 needed.add(('delta', gene.feature, gene.lookback))
                 parse_feature_dependencies(gene.feature)
-            elif gene.type == 'zscore': 
+            elif gene.type == 'zscore' or gene.type == 'soft_zscore': 
                 needed.add(('zscore', gene.feature, gene.window))
                 parse_feature_dependencies(gene.feature)
             elif gene.type == 'persistence':
