@@ -7,7 +7,18 @@ import time
 import re
 import glob
 import shutil
+import tempfile
+import numpy as np
+import nest_asyncio
 from datetime import datetime, timezone, timedelta
+
+# Project Imports
+from feature_engine.core import FeatureEngine
+from genome.strategy import Strategy
+from backtest.feature_computation import precompute_base_features, ensure_feature_context
+import config as cfg
+
+nest_asyncio.apply()
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -41,6 +52,27 @@ def load_strategy_names():
     except Exception as e:
         return {}
 
+def load_strategies_full():
+    """Loads actual Strategy objects from mutex portfolio."""
+    if not os.path.exists(MUTEX_FILE):
+        return []
+    strategies = []
+    try:
+        with open(MUTEX_FILE, "r") as f:
+            data = json.load(f)
+            for d in data:
+                try:
+                    s = Strategy.from_dict(d)
+                    # Hydrate extras
+                    s.horizon = d.get('horizon', 120)
+                    s.stop_loss_pct = d.get('stop_loss_pct', 2.0)
+                    s.take_profit_pct = d.get('take_profit_pct', 4.0)
+                    strategies.append(s)
+                except: pass
+    except Exception as e:
+        st.error(f"Error loading strategies: {e}")
+    return strategies
+
 def load_state():
     if not os.path.exists(STATE_FILE):
         return None
@@ -51,7 +83,7 @@ def load_state():
         st.error(f"Error loading state: {e}")
         return None
 
-def load_bars(limit=300):
+def load_bars(limit=300, full_history=False):
     if not os.path.exists(BARS_FILE):
         return None
     try:
@@ -59,10 +91,114 @@ def load_bars(limit=300):
         # Ensure UTC
         if 'time_start' in df.columns:
             df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+        if full_history:
+            return df
         return df.tail(limit)
     except Exception as e:
         st.error(f"Error loading bars: {e}")
         return None
+
+def compute_live_features(strategies, bars_df):
+    """
+    Computes features on the fly for the Inspector View.
+    Returns a dict: {feature_key: current_value}
+    """
+    if bars_df is None or len(bars_df) < 200:
+        return {}
+
+    # 1. Feature Engine Setup
+    engine = FeatureEngine(os.path.join(BASE_DIR, "data"))
+    engine.bars = bars_df.copy()
+    
+    # Extract Helpers
+    def extract_series(name):
+        if name in engine.bars.columns:
+            # Create a minimal DF as expected by add_... methods
+            return engine.bars[[name, 'time_start']].rename(columns={name: 'close', 'time_start': 'ts_event'})
+        return None
+
+    # 2. Run Pipeline (Matching paper_trade.py)
+    windows = [25, 50, 100, 200, 400, 800, 1600, 3200]
+    
+    # Standard
+    engine.add_features_to_bars(windows=windows)
+    engine.add_physics_features()
+    engine.add_advanced_physics_features(windows=windows)
+    engine.add_microstructure_features()
+    engine.add_delta_features(lookback=25)
+    
+    # Macro
+    engine.add_macro_voltage_features(
+        us2y_df=extract_series('US2Y'), 
+        schatz_df=extract_series('SCHATZ'), 
+        tnx_df=extract_series('TNX'), 
+        bund_df=extract_series('BUND'), 
+        windows=[50, 100]
+    )
+    
+    # Crypto
+    engine.add_crypto_features(extract_series('IBIT'))
+    
+    # Intermarket
+    intermarket_dfs = {
+        '_es': extract_series('ES'),
+        '_zn': extract_series('ZN'),
+        '_6e': extract_series('6E')
+    }
+    intermarket_dfs = {k: v for k, v in intermarket_dfs.items() if v is not None}
+    if intermarket_dfs:
+        engine.add_intermarket_features(intermarket_dfs)
+
+    if 'time_start' in engine.bars.columns:
+        engine.bars['time_hour'] = engine.bars['time_start'].dt.hour
+        engine.bars['time_weekday'] = engine.bars['time_start'].dt.dayofweek
+
+    # 3. JIT Computation (Context)
+    feature_snapshot = {}
+    
+    # Use Temp Dir for JIT
+    with tempfile.TemporaryDirectory() as temp_dir:
+        existing_keys = set()
+        
+        # A. Base Features
+        precompute_base_features(engine.bars, temp_dir, existing_keys)
+        
+        # B. Derived Features (Genes)
+        ensure_feature_context(strategies, temp_dir, existing_keys)
+        
+        # C. Load Latest Values
+        for key in existing_keys:
+            try:
+                arr = np.load(os.path.join(temp_dir, f"{key}.npy"))
+                if len(arr) > 0:
+                    feature_snapshot[key] = arr[-1] # Take the latest value
+            except: pass
+            
+    return feature_snapshot
+
+def get_gene_key(gene):
+    """Resolves the feature key used by the gene (e.g., 'zscore_...')."""
+    if gene.type == 'delta': 
+        return f"delta_{gene.feature}_{gene.lookback}"
+    elif gene.type == 'zscore': 
+        return f"zscore_{gene.feature}_{gene.window}"
+    elif gene.type == 'slope':
+        # Divergence uses slope internally
+        pass 
+    elif gene.type == 'persistence':
+        return gene.feature # Uses raw feature
+    elif gene.type == 'correlation':
+        f1, f2 = sorted([gene.feature_left, gene.feature_right])
+        return f"corr_{f1}_{f2}_{gene.window}"
+    elif gene.type == 'flux':
+        return f"flux_{gene.feature}_{gene.lag}"
+    elif gene.type == 'efficiency':
+        return f"eff_{gene.feature}_{gene.window}"
+    
+    # Fallback for simple features or Cross/Relational which use raw features
+    if hasattr(gene, 'feature'): return gene.feature
+    if hasattr(gene, 'feature_left'): return gene.feature_left # Just return one for display context
+    return "unknown"
 
 def load_logs(lines=100):
     if not os.path.exists(LOG_FILE):
@@ -153,7 +289,7 @@ st.title("Paper Trade Dashboard")
 
 # Sidebar
 st.sidebar.header("Controls")
-view = st.sidebar.radio("View", ["Cockpit", "System Health"])
+view = st.sidebar.radio("View", ["Cockpit", "Strategy Inspector", "System Health"])
 auto_refresh = st.sidebar.checkbox("Auto-Refresh (5s)", value=False)
 if st.sidebar.button("Manual Refresh"):
     st.rerun()
@@ -344,6 +480,80 @@ if view == "Cockpit":
     logs.reverse()  # Show most recent first
     log_text = "\n".join(logs)
     st.text_area("Live Logs", log_text, height=300, disabled=True)
+
+elif view == "Strategy Inspector":
+    st.header("🧬 Strategy Inspector")
+    
+    with st.spinner("Loading Strategy Data & Computing Live Features..."):
+        strategies = load_strategies_full()
+        bars_full = load_bars(full_history=True)
+        
+        if not strategies:
+            st.warning("No strategies found in portfolio.")
+        elif bars_full is None:
+            st.warning("No live bar data available.")
+        else:
+            # Compute Context
+            context = compute_live_features(strategies, bars_full)
+            
+            st.success(f"Loaded {len(strategies)} strategies. Context contains {len(context)} live features.")
+            
+            for i, strat in enumerate(strategies):
+                with st.expander(f"Strat {i}: {strat.name} (H{strat.horizon})", expanded=(i==0)):
+                    col1, col2 = st.columns(2)
+                    
+                    # LONG GENES
+                    with col1:
+                        st.subheader("Long Genes")
+                        for gene in strat.long_genes:
+                            key = get_gene_key(gene)
+                            val = context.get(key, np.nan)
+                            
+                            # Determine Status
+                            met = False
+                            desc = f"{gene.type}"
+                            
+                            if gene.type == 'zscore' or gene.type == 'delta' or gene.type == 'persistence':
+                                desc = f"{key} {gene.operator} {gene.threshold:.4f}"
+                                if gene.operator == '>': met = val > gene.threshold
+                                elif gene.operator == '<': met = val < gene.threshold
+                                elif gene.operator == '>=': met = val >= gene.threshold
+                                elif gene.operator == '<=': met = val <= gene.threshold
+                                
+                            elif gene.type == 'cross':
+                                desc = f"{gene.feature_left} {gene.direction} {gene.feature_right}"
+                                # Cross is hard to visualize with single value, usually requires history
+                                # Simplified: Just show value of left?
+                                val = "N/A" 
+                                met = False # Cannot easily determine single-point cross without history logic
+                                
+                            # Display
+                            icon = "✅" if met else "⬜"
+                            val_str = f"{val:.4f}" if isinstance(val, (int, float)) else str(val)
+                            st.markdown(f"{icon} **{desc}** (Cur: `{val_str}`)")
+
+                    # SHORT GENES
+                    with col2:
+                        st.subheader("Short Genes")
+                        for gene in strat.short_genes:
+                            key = get_gene_key(gene)
+                            val = context.get(key, np.nan)
+                            
+                            # Determine Status
+                            met = False
+                            desc = f"{gene.type}"
+                            
+                            if gene.type == 'zscore' or gene.type == 'delta' or gene.type == 'persistence':
+                                desc = f"{key} {gene.operator} {gene.threshold:.4f}"
+                                if gene.operator == '>': met = val > gene.threshold
+                                elif gene.operator == '<': met = val < gene.threshold
+                                elif gene.operator == '>=': met = val >= gene.threshold
+                                elif gene.operator == '<=': met = val <= gene.threshold
+                                
+                            # Display
+                            icon = "✅" if met else "⬜"
+                            val_str = f"{val:.4f}" if isinstance(val, (int, float)) else str(val)
+                            st.markdown(f"{icon} **{desc}** (Cur: `{val_str}`)")
 
 elif view == "System Health":
     st.header("🏥 System Health & Status")
