@@ -17,17 +17,6 @@ def add_delta_features(df, lookback=10):
         if '_roc_' in c: return False
         if 'residual' in c: return False
         
-        # NOISE FILTER: Exclude features where Delta is just double-noise or redundant
-        noise_keywords = [
-            'rel_vol', 'news', 'velocity', 
-            'alignment', 'trin', 'vpin', 'voltage', 'epu', 'ibit', 
-            'divergence', 'efficiency', 'atr',
-            'order_book', 'smoothed_level'
-        ]
-        
-        c_lower = c.lower()
-        if any(k in c_lower for k in noise_keywords): return False
-        
         return True
 
     # Also exclude existing delta columns to avoid delta_delta...

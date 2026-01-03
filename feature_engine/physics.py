@@ -369,6 +369,15 @@ def add_physics_features(df):
     df['hurst_roc_100'] = df['hurst_100'].diff()
     df['hurst_roc_200'] = df['hurst_200'].diff()
     
+    # Shannon Entropy (Differential)
+    # Measures disorder/uncertainty.
+    df['entropy_100'] = get_shannon_entropy(df['log_ret'], window=100)
+    df['entropy_200'] = get_shannon_entropy(df['log_ret'], window=200)
+    df['entropy_400'] = get_shannon_entropy(df['log_ret'], window=400)
+    
+    df['entropy_roc_100'] = df['entropy_100'].diff()
+    df['entropy_roc_200'] = df['entropy_200'].diff()
+    
     return df
 
 def _calc_physics_window_features(w, df_minimal):
@@ -485,6 +494,14 @@ def add_interaction_features(df, windows=[100, 200, 400]):
         fl_col = f'flow_trend_{w}'
         if e_col in df.columns and fl_col in df.columns:
             new_cols[f'energy_flow_{w}'] = df[e_col] * df[fl_col]
+            
+        # 5. Clean Trend (Entropy-Adjusted Velocity)
+        # Velocity / Entropy
+        # High Velocity / Low Entropy = Strong Clean Trend
+        vel_col = f'velocity_{w}'
+        ent_col = f'entropy_{w}'
+        if vel_col in df.columns and ent_col in df.columns:
+            new_cols[f'clean_trend_{w}'] = df[vel_col] / df[ent_col].replace(0, 1)
 
     # Batch assignment
     df_new = pd.DataFrame(new_cols, index=df.index)
