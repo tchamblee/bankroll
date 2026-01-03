@@ -37,7 +37,7 @@ def audit_genes():
     print("[1/3] Instantiating Genes...")
     genes = [
         ZScoreGene('feature_a', '>', 1.0, 10),
-        SoftZScoreGene('feature_a', '>', 1.0, 10, 1.0),
+        SoftZScoreGene('feature_a', '>', 1.0, 20, 1.0),
         RelationalGene('feature_a', '>', 'feature_b'),
         SqueezeGene('feature_a', 'feature_b', 0.8),
         CorrelationGene('feature_a', 'feature_b', '>', 0.5, 20),
@@ -80,7 +80,8 @@ def audit_genes():
         
         # Verify Derived Features exist
         derived_checks = [
-            'zscore_feature_a_10',          # ZScore, SoftZScore, MeanRev
+            'zscore_feature_a_10',          # ZScore
+            'zscore_feature_a_20',          # SoftZScore (Unique)
             'corr_feature_a_feature_b_20',  # Correlation
             'flux_feature_a_5',             # Flux
             'eff_feature_a_10',             # Efficiency
@@ -117,6 +118,7 @@ def audit_genes():
         'close': np.random.randn(n),
         # Pre-calculated derived keys that genes expect
         'zscore_feature_a_10': np.random.randn(n),
+        'zscore_feature_a_20': np.random.randn(n),
         'corr_feature_a_feature_b_20': np.random.randn(n),
         'flux_feature_a_5': np.random.randn(n),
         'eff_feature_a_10': np.random.randn(n),
