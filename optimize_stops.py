@@ -10,7 +10,7 @@ from backtest.utils import find_strategy_in_files
 from genome import Strategy
 
 class StopLossOptimizer:
-    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, verbose=True):
+    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True):
         self.target_name = target_name
         self.source_file = source_file
         self.horizon = horizon
@@ -19,13 +19,17 @@ class StopLossOptimizer:
         self.variants = []
         self.verbose = verbose
         
-        if self.verbose: print("Loading Feature Matrix...")
-        self.data = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
-        self.backtester = BacktestEngine(
-            self.data, 
-            cost_bps=config.COST_BPS, 
-            annualization_factor=config.ANNUALIZATION_FACTOR
-        )
+        if backtester:
+            self.backtester = backtester
+            self.data = backtester.raw_data
+        else:
+            if self.verbose: print("Loading Feature Matrix...")
+            self.data = data if data is not None else pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+            self.backtester = BacktestEngine(
+                self.data, 
+                cost_bps=config.COST_BPS, 
+                annualization_factor=config.ANNUALIZATION_FACTOR
+            )
 
     def load_parent(self):
         if self.parent_strategy:

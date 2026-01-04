@@ -14,9 +14,25 @@ def optimize_mutex_portfolio(candidates, backtester):
     
     if not candidates: return [], {}
 
-    # 1. Filter Candidates (Top 14 by Robust Score)
-    candidates.sort(key=lambda x: getattr(x, 'fitness', -999), reverse=True)
-    top_candidates = candidates[:14]
+    # 1. Filter Candidates (Top 25 by Robust Score / Avg Sortino)
+    # Prefer robust_score (WFV), then Avg Sortino, then Test Sortino
+    def get_score(s):
+        if hasattr(s, 'fitness') and s.fitness != 0: return s.fitness
+        # Try dict lookup if attribute missing (Strategy object might not have dynamic attrs set from JSON)
+        # But 's' is a Strategy object here.
+        # We need to rely on what was loaded.
+        # The Strategy.from_dict method usually populates basic fields.
+        # Let's check if we can calculate avg sortino from known stats
+        
+        # We can't easily access the raw dict here unless we attached it.
+        # But we can try to find robust_score if attached.
+        if hasattr(s, 'robust_score'): return s.robust_score
+        
+        # Fallback: if we can't find metrics, return 0
+        return 0
+
+    candidates.sort(key=get_score, reverse=True)
+    top_candidates = candidates[:25]
     print(f"  Selected top {len(top_candidates)} candidates for combinatorial search.")
     
     # 2. Prepare Data (Validation Set)

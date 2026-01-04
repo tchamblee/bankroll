@@ -28,12 +28,27 @@ def load_all_candidates():
             strat.take_profit_pct = s_dict.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT)
             
             # Store metrics for sorting/ranking
-            if 'test_stats' in s_dict:
-                 strat.fitness = s_dict['test_stats'].get('sortino', 0)
+            # Prioritize: 1. Robust Score (WFV), 2. Test Sortino
+            
+            # Robust Score
+            strat.robust_score = s_dict.get('robust_score', 0.0)
+            
+            # Test Sortino
+            test_sortino = 0.0
+            if 'test_sortino' in s_dict:
+                test_sortino = s_dict['test_sortino']
+            elif 'test_stats' in s_dict:
+                test_sortino = s_dict['test_stats'].get('sortino', 0)
             elif 'metrics' in s_dict:
-                 strat.fitness = s_dict['metrics'].get('sortino_oos', 0)
+                test_sortino = s_dict['metrics'].get('sortino_oos', 0)
+            
+            strat.test_sortino = test_sortino
+            
+            # Fitness logic: Use robust_score if available, else test_sortino
+            if strat.robust_score != 0:
+                strat.fitness = strat.robust_score
             else:
-                 strat.fitness = 0.0
+                strat.fitness = strat.test_sortino
             
             strategies.append(strat)
         except Exception as e:

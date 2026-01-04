@@ -161,6 +161,31 @@ def remove_from_inbox(name):
     else:
         print(f"⚠️  Strategy '{name}' not found in Inbox.")
 
+def add_all_from_inbox():
+    inbox_path = config.DIRS['STRATEGY_INBOX']
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    with open(inbox_path, 'r') as f:
+        inbox_strategies = json.load(f)
+        
+    candidates = load_candidates()
+    candidate_names = {c['name'] for c in candidates}
+    
+    added_count = 0
+    for s in inbox_strategies:
+        if s['name'] not in candidate_names:
+            candidates.append(s)
+            candidate_names.add(s['name'])
+            added_count += 1
+            
+    if added_count > 0:
+        save_candidates(candidates)
+        print(f"✅ Added {added_count} strategies from Inbox to Candidates.")
+    else:
+        print("⚠️  No new strategies to add (all already in candidates).")
+
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
@@ -170,6 +195,8 @@ def main():
     
     add_parser = subparsers.add_parser('add', help='Add a strategy by name')
     add_parser.add_argument('name', type=str, help='Name of the strategy (e.g., Child_2080)')
+    
+    subparsers.add_parser('add-all', help='Add ALL strategies from inbox to candidates')
     
     rm_parser = subparsers.add_parser('remove', help='Remove a strategy from CANDIDATES list')
     rm_parser.add_argument('name', type=str, help='Name of the strategy')
@@ -190,6 +217,8 @@ def main():
         list_inbox()
     elif args.command == 'add':
         add_strategy(args.name)
+    elif args.command == 'add-all':
+        add_all_from_inbox()
     elif args.command == 'remove':
         remove_strategy(args.name)
     elif args.command == 'remove-inbox':

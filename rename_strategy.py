@@ -184,72 +184,62 @@ def rename_strategy_in_files(old_name, new_name):
             
     return count
 
-def main():
-    parser = argparse.ArgumentParser(description="Analyze and Rename Strategies")
-    parser.add_argument("name", type=str, help="Current Strategy Name (e.g. Mutant_1234)")
-    parser.add_argument("--new", type=str, help="Skip interactive mode and use this new name")
-    parser.add_argument("--yes", "-y", action="store_true", help="Auto-accept generated name")
-    
-    args = parser.parse_args()
-    
+def process_strategy(name, auto_accept=False):
     # 1. Find Strategy
-    print(f"🔍 Searching for '{args.name}'...")
-    strat_data = find_strategy_in_files(args.name)
-    
+    strat_data = find_strategy_in_files(name)
     if not strat_data:
-        print(f"❌ Strategy '{args.name}' not found in any output files.")
+        print(f"❌ Strategy '{name}' not found.")
         return
 
     # 2. Analyze
     desc, style, features, horizon = analyze_dna(strat_data)
     
-    print("\n🧬 STRATEGY DNA ANALYSIS")
-    print("="*40)
-    print(desc)
-    print("="*40)
-    
     # 3. Propose Name
-    proposal = generate_name(args.name, style, features, horizon)
-    
-    print(f"\n💡 Proposed Name:  \033[1m{proposal}\033[0m")
+    proposal = generate_name(name, style, features, horizon)
     
     final_name = None
-    
-    if args.new:
-        final_name = args.new
-    elif args.yes:
+    if auto_accept:
         final_name = proposal
+        print(f"   Renaming {name} -> {final_name}")
     else:
-        print(f"Current Name:   {args.name}")
-        choice = input("\nAccept proposal? [Y/n/custom]: ").strip().lower()
-        
+        print(f"\n🧬 Analysis for {name}: {style} | {features}")
+        print(f"💡 Proposed Name: {proposal}")
+        choice = input("Accept? [Y/n/custom]: ").strip().lower()
         if choice in ['', 'y', 'yes']:
             final_name = proposal
         elif choice in ['n', 'no']:
-            print("❌ Rename cancelled.")
             return
         else:
-            final_name = choice # Custom name
-            
-    # 4. Execute
-    if final_name:
-        # Safety Check: Does new name exist?
-        exists = find_strategy_in_files(final_name)
-        if exists:
-            print(f"⚠️  Warning: A strategy named '{final_name}' already exists.")
-            confirm = input("Overwrite/Merge? [y/N]: ").strip().lower()
-            if confirm not in ['y', 'yes']:
-                print("❌ Cancelled.")
-                return
+            final_name = choice
 
-        print(f"\n🚀 Renaming '{args.name}' -> '{final_name}'...")
-        count = rename_strategy_in_files(args.name, final_name)
-        
+    # 4. Execute
+    if final_name and final_name != name:
+        count = rename_strategy_in_files(name, final_name)
         if count > 0:
-            print(f"✅ Success! Updated {count} occurrences.")
-            print("   The Dashboard and Reports will reflect this change immediately.")
+            print(f"✅ Renamed to {final_name}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze and Rename Strategies")
+    parser.add_argument("name", type=str, nargs='?', help="Current Strategy Name")
+    parser.add_argument("--new", type=str, help="Skip interactive mode and use this new name")
+    parser.add_argument("--yes", "-y", action="store_true", help="Auto-accept generated name")
+    parser.add_argument("--all", action="store_true", help="Process all strategies in inbox")
+    
+    args = parser.parse_args()
+
+    if args.all:
+        inbox_path = config.DIRS['STRATEGY_INBOX']
+        data = load_json(inbox_path)
+        print(f"Processing {len(data)} strategies...")
+        for s in data:
+            process_strategy(s['name'], auto_accept=True)
+    elif args.name:
+        if args.new:
+            rename_strategy_in_files(args.name, args.new)
         else:
-            print("⚠️  Odd... No files were updated. Maybe the file changed externally?")
+            process_strategy(args.name, auto_accept=args.yes)
+    else:
+        print("Please provide a name or use --all")
 
 if __name__ == "__main__":
     main()
