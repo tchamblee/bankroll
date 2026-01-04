@@ -94,9 +94,9 @@ class EvolutionaryAlphaFactory:
         # Batch generation with progress logging
         for i in range(self.pop_size):
             self.population.append(self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)))
-        #     if (i + 1) % 500 == 0:
-        #         print(f"    ... Generated {i + 1}/{self.pop_size} strategies", end='\r')
-        # print(f"    ... Generated {self.pop_size}/{self.pop_size} strategies. Done.")
+            if (i + 1) % 500 == 0:
+                print(f"    ... Generated {i + 1}/{self.pop_size} strategies")
+        print(f"    ... Generated {self.pop_size}/{self.pop_size} strategies. Done.")
 
     def evolve(self, horizon=60):
         self.initialize_population(horizon=horizon)

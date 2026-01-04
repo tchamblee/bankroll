@@ -399,7 +399,13 @@ def _calc_physics_window_features(w, df_minimal):
     # Lagrangian (Kinetic - Potential)
     # L > 0: High Motion, Low Tension (Breakout/Trend)
     # L < 0: Low Motion, High Tension (Overextended/Reversal Prone)
-    res[f'lagrangian_{w}'] = ke - pe
+    lag = ke - pe
+    res[f'lagrangian_{w}'] = lag
+    
+    # Action (Accumulated Lagrangian)
+    # "Least Action Principle": Path of physical system minimizes action.
+    # High Action accumulation = "Stressed" path (Potential Reversal/Shift).
+    res[f'market_action_{w}'] = lag.rolling(w).sum()
     
     # Hamiltonian (Total Energy)
     # H = K + U (Total System Intensity)
@@ -502,6 +508,15 @@ def add_interaction_features(df, windows=[100, 200, 400]):
         ent_col = f'entropy_{w}'
         if vel_col in df.columns and ent_col in df.columns:
             new_cols[f'clean_trend_{w}'] = df[vel_col] / df[ent_col].replace(0, 1)
+
+        # 6. Market Temperature
+        # Temp = Energy / Entropy
+        # High Energy + Low Entropy = "Hot" Trend (Coherent)
+        # High Energy + High Entropy = "Boiling" Chop (Incoherent)
+        e_col = f'market_energy_{w}'
+        ent_col = f'entropy_{w}'
+        if e_col in df.columns and ent_col in df.columns:
+             new_cols[f'market_temperature_{w}'] = df[e_col] / df[ent_col].replace(0, np.nan)
 
     # Batch assignment
     df_new = pd.DataFrame(new_cols, index=df.index)

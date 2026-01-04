@@ -14,7 +14,7 @@ from .constants import (
 from .genes import (
     ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
     EfficiencyGene, DivergenceGene, EventGene, CrossGene, PersistenceGene,
-    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, gene_from_dict
+    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, HysteresisGene, gene_from_dict
 )
 from .strategy import Strategy
 
@@ -202,8 +202,8 @@ class GenomeFactory:
             else:
                 return self.create_random_gene()
 
-        # 5% Event Gene (Memory - "Did X happen recently?")
-        elif rand_val < 0.95:
+        # 3% Event Gene (Memory - "Did X happen recently?")
+        elif rand_val < 0.93:
             feature = self._weighted_choice(pool)
             
             # Make Event Adaptive: Wrap in Z-Score
@@ -217,8 +217,8 @@ class GenomeFactory:
             
             return EventGene(adaptive_feature, operator, threshold, window)
 
-        # 3% Cross Gene (Event - "A crossed B")
-        elif rand_val < 0.98:
+        # 2% Cross Gene (Event - "A crossed B")
+        elif rand_val < 0.95:
             feature_left = self._weighted_choice(pool)
             # Enforce Compatibility
             root = feature_left.rsplit('_', 1)[0]
@@ -230,6 +230,13 @@ class GenomeFactory:
                 return CrossGene(feature_left, direction, feature_right)
             else:
                 return self.create_random_gene()
+
+        # 3% Hysteresis Gene (Path Dependency - "Is Price > Price when Feature was last here?")
+        elif rand_val < 0.98:
+            feature = self._weighted_choice(pool)
+            operator = random.choice(['>', '<'])
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return HysteresisGene(feature, operator, window)
 
         # Remaining: Persistence, Extrema, Consecutive, Delta
         else:
@@ -272,6 +279,7 @@ class GenomeFactory:
 
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
+        # print("DEBUG: Creating strategy...") 
         num_genes = random.randint(max(2, num_genes_range[0]), max(2, num_genes_range[1])) # Ensure at least 2 for Setup+Trigger
         
         long_genes = []
@@ -279,15 +287,18 @@ class GenomeFactory:
         
         # --- ORGANIC GATING ENFORCEMENT ---
         # 1. The Setup (Regime Gene)
+        # print("DEBUG: Creating Setup Gene")
         long_genes.append(self.create_gene_from_pool(self.regime_pool))
         short_genes.append(self.create_gene_from_pool(self.regime_pool))
         
         # 2. The Trigger (Action Gene)
+        # print("DEBUG: Creating Trigger Gene")
         long_genes.append(self.create_gene_from_pool(self.trigger_pool))
         short_genes.append(self.create_gene_from_pool(self.trigger_pool))
         
         # 3. Filler (Random Mix)
         for _ in range(num_genes - 2):
+            # print("DEBUG: Creating Filler Gene")
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
             long_genes.append(self.create_gene_from_pool(pool))
             

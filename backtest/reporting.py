@@ -161,6 +161,13 @@ class GeneTranslator:
             reg_thresh = f"{gene_dict['regime_threshold']:.2f}"
             direction = "Buy Dip" if gene_dict['direction'] == 'long' else "Sell Rip"
             return f"{direction} on {f} ({win}-bar Z > {thresh}) when {reg} > {reg_thresh}"
+
+        elif g_type == 'hysteresis':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            op = gene_dict['operator']
+            op_str = "Higher" if op == '>' else "Lower"
+            win = gene_dict['window']
+            return f"Price is {op_str} than last time {f} was at this level (Window: {win})"
             
         return f"Unknown Rule (Type: {g_type})"
 

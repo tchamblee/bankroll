@@ -15,4 +15,5 @@ from .delta import DeltaGene
 from .mean_reversion import MeanReversionGene
 from .time import TimeGene
 from .seasonality import SeasonalityGene
+from .hysteresis import HysteresisGene
 from .utils import gene_from_dict
