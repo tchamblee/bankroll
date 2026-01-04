@@ -27,6 +27,14 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
 
     corr_clean = correlator_df[['ts_event', price_col]].sort_values('ts_event').dropna()
     
+    # CRITICAL FIX: Shift 1-min Bar timestamps to prevent look-ahead
+    if len(corr_clean) > 100:
+        sample_diffs = corr_clean['ts_event'].diff().dropna().iloc[:1000]
+        median_diff = sample_diffs.median().total_seconds()
+        if 58 <= median_diff <= 62:
+            print(f"  ⚠️  Detected 1-min Bars for {suffix}. Shifting timestamps +60s.")
+            corr_clean['ts_event'] = corr_clean['ts_event'] + pd.Timedelta(seconds=60)
+    
     # Get Start Prices
     # We merge onto df. We need to ensure types match.
     start_prices = pd.merge_asof(
@@ -104,6 +112,14 @@ def add_crypto_features(df, ibit_df):
     
     # IBIT
     ibit_df['ts_event'] = pd.to_datetime(ibit_df['ts_event'])
+    
+    # CRITICAL FIX: Shift 1-min Bar timestamps
+    if len(ibit_df) > 100:
+        sample_diffs = ibit_df['ts_event'].diff().dropna().iloc[:1000]
+        median_diff = sample_diffs.median().total_seconds()
+        if 58 <= median_diff <= 62:
+            print(f"  ⚠️  Detected 1-min Bars for IBIT. Shifting timestamps +60s.")
+            ibit_df['ts_event'] = ibit_df['ts_event'] + pd.Timedelta(seconds=60)
     
     price_col = 'mid_price'
     if 'mid_price' not in ibit_df.columns:

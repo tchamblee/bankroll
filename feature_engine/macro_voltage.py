@@ -34,6 +34,15 @@ def add_macro_voltage_features(df, us2y_df, schatz_df, tnx_df, bund_df, windows=
             macro_df['ts_event'] = macro_df['ts_event'].dt.tz_convert('UTC')
             
         macro_df = macro_df.sort_values('ts_event')
+        
+        # CRITICAL FIX: Shift 1-min Bar timestamps
+        if len(macro_df) > 100:
+            sample_diffs = macro_df['ts_event'].diff().dropna().iloc[:1000]
+            median_diff = sample_diffs.median().total_seconds()
+            if 58 <= median_diff <= 62:
+                print(f"  ⚠️  Detected 1-min Bars for {name}. Shifting timestamps +60s.")
+                macro_df['ts_event'] = macro_df['ts_event'] + pd.Timedelta(seconds=60)
+
         macro_df = macro_df[['ts_event', price_col]].dropna().rename(columns={price_col: name})
         return macro_df
 
