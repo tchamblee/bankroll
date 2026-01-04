@@ -33,6 +33,18 @@ def add_intermarket_features(primary_df, correlator_dfs):
         if 'ts_event' in corr_df.columns:
             corr_df['ts_event'] = pd.to_datetime(corr_df['ts_event'])
             corr_df = corr_df.sort_values('ts_event')
+            
+            # CRITICAL FIX: Look-Ahead Bias Prevention
+            # IBKR Historical Data uses Bar Start Time. Close price is known at End Time.
+            # If we merge on Start Time, we peek 1 minute into future.
+            # Heuristic: If median delta is ~60s, it's 1-min bars. Shift +60s.
+            if len(corr_df) > 100:
+                sample_diffs = corr_df['ts_event'].diff().dropna().iloc[:1000]
+                median_diff = sample_diffs.median().total_seconds()
+                
+                if 58 <= median_diff <= 62:
+                    print(f"  ⚠️  Detected 1-min Bars for {suffix}. Shifting timestamps +60s to prevent look-ahead.")
+                    corr_df['ts_event'] = corr_df['ts_event'] + pd.Timedelta(seconds=60)
         else:
              print(f"  Warning: No 'ts_event' in {suffix}. Skipping.")
              continue
