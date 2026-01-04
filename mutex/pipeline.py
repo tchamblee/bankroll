@@ -74,56 +74,8 @@ def run_mutex_backtest():
             config.COMMISSION_THRESHOLD
         )
         
-        # --- PRUNING STEP ---
-        # Identify Losers in Test Set
-        losers_indices = []
-        for i, s in enumerate(best_portfolio):
-            s_profit = np.sum(strat_rets[:, i]) * config.ACCOUNT_SIZE
-            if s_profit < 0:
-                losers_indices.append(i)
-                
-        if losers_indices:
-            print(f"\n✂️  PRUNING: Removing {len(losers_indices)} strategies that lost money in Test Set...")
-            new_portfolio = []
-            new_sig_list = []
-            
-            for i, s in enumerate(best_portfolio):
-                s_profit = np.sum(strat_rets[:, i]) * config.ACCOUNT_SIZE
-                if i in losers_indices:
-                    print(f"   - Removing {s.name} (Loss: ${s_profit:.2f})")
-                else:
-                    new_portfolio.append(s)
-                    new_sig_list.append(oos_sig[:, i])
-            
-            if not new_portfolio:
-                print("❌ All strategies failed in Test Set. Portfolio is empty.")
-                return
-
-            best_portfolio = new_portfolio
-            oos_sig = np.column_stack(new_sig_list) if new_sig_list else np.zeros((len(oos_sig), 0))
-            
-            # Update Arrays
-            horizons = np.array([s.horizon for s in best_portfolio], dtype=np.int64)
-            sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
-            tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
-            
-            print(f"🔄 Re-simulating pruned portfolio ({len(best_portfolio)} strategies)...")
-            strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
-                oos_sig.astype(np.float64), 
-                prices, highs, lows, atr, hours, weekdays, 
-                horizons, sl_mults, tp_mults, 
-                config.STANDARD_LOT_SIZE, 
-                config.SPREAD_BPS / 10000.0, 
-                config.COST_BPS / 10000.0, 
-                config.ACCOUNT_SIZE, 
-                config.TRADING_END_HOUR, 
-                config.STOP_LOSS_COOLDOWN_BARS,
-                config.MIN_COMMISSION,
-                config.SLIPPAGE_ATR_FACTOR,
-                config.COMMISSION_THRESHOLD
-            )
-
-        # Save Mutex Result (AFTER PRUNING)
+        
+        # Save Mutex Result
         mutex_data = []
         for s in best_portfolio:
             s_dict = s.to_dict()
