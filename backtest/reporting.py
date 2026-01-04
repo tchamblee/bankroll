@@ -152,8 +152,17 @@ class GeneTranslator:
             op = gene_dict['operator']
             sigma = f"{gene_dict['threshold']:.2f}σ"
             return f"Seasonal Deviation is {op} {sigma}"
+
+        elif g_type == 'mean_reversion':
+            f = GeneTranslator.translate_feature(gene_dict['feature'])
+            reg = GeneTranslator.translate_feature(gene_dict['regime_feature'])
+            win = gene_dict['window']
+            thresh = f"{gene_dict['threshold']:.2f}σ"
+            reg_thresh = f"{gene_dict['regime_threshold']:.2f}"
+            direction = "Buy Dip" if gene_dict['direction'] == 'long' else "Sell Rip"
+            return f"{direction} on {f} ({win}-bar Z > {thresh}) when {reg} > {reg_thresh}"
             
-        return "Unknown Rule"
+        return f"Unknown Rule (Type: {g_type})"
 
     @staticmethod
     def interpret_strategy_logic(strategy_dict):

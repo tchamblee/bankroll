@@ -28,8 +28,8 @@ def evaluate_batch(backtester, batch, horizon):
         ret_val = res_val.iloc[i]['total_return']
         ret_test = res_test.iloc[i]['total_return']
         
-        # Robust Return: Mean of Val + Test (Excluding Train)
-        robust_ret = np.mean([ret_val, ret_test])
+        # Robust Return: Mean of Train + Val + Test
+        robust_ret = np.mean([ret_train, ret_val, ret_test])
         
         # STRICT FILTER: Must be profitable in OOS (Test) and Robust > 0
         # Relaxed Train/Val requirement to allow recovery strategies

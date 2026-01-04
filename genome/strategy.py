@@ -34,6 +34,16 @@ class Strategy:
         self.long_genes = _dedup(self.long_genes)
         self.short_genes = _dedup(self.short_genes)
         
+    def copy(self):
+        """Creates a deep copy of the strategy."""
+        # Genes usually have their own copy/to_dict methods, or are immutable enough.
+        # But to be safe, we re-instantiate from dict logic or manual copy.
+        # Using from_dict(to_dict) is cleanest for deep copy of nested genes.
+        c = Strategy.from_dict(self.to_dict())
+        c.generation_found = getattr(self, 'generation_found', '?')
+        # Metrics are ephemeral, don't copy
+        return c
+
     def recalculate_concordance(self):
         """
         Updates min_concordance based on gene count.
