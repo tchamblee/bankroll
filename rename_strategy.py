@@ -162,11 +162,32 @@ def generate_name(current_name, primary_style, features, horizon):
     style_str = style_map.get(primary_style, primary_style)
     
     # Construct Name
-    # Ensure uniqueness? The calling function handles checking, this just proposes.
     proposal = f"{style_str}_{best_feat}_H{horizon}"
+    
+    # Ensure uniqueness
+    base_proposal = proposal
+    counter = 1
+    while check_name_exists(proposal) and proposal != current_name:
+        counter += 1
+        proposal = f"{base_proposal}_v{counter}"
+        
     return proposal
 
+def check_name_exists(name):
+    """Checks if a strategy name exists in any of the tracked files."""
+    for path in FILES_TO_UPDATE:
+        data = load_json(path)
+        if not data: continue
+        for s in data:
+            if s.get('name') == name:
+                return True
+    return False
+
 def rename_strategy_in_files(old_name, new_name):
+    if check_name_exists(new_name):
+        print(f"❌ Error: Strategy '{new_name}' already exists! Aborting rename.")
+        return 0
+
     count = 0
     for path in FILES_TO_UPDATE:
         data = load_json(path)
@@ -204,13 +225,20 @@ def process_strategy(name, auto_accept=False):
     else:
         print(f"\n🧬 Analysis for {name}: {style} | {features}")
         print(f"💡 Proposed Name: {proposal}")
-        choice = input("Accept? [Y/n/custom]: ").strip().lower()
-        if choice in ['', 'y', 'yes']:
-            final_name = proposal
-        elif choice in ['n', 'no']:
-            return
-        else:
-            final_name = choice
+        
+        while True:
+            choice = input("Accept? [Y/n/custom]: ").strip()
+            if choice.lower() in ['', 'y', 'yes']:
+                final_name = proposal
+                break
+            elif choice.lower() in ['n', 'no']:
+                return
+            else:
+                if check_name_exists(choice):
+                    print(f"❌ Name '{choice}' already exists! Please choose another.")
+                else:
+                    final_name = choice
+                    break
 
     # 4. Execute
     if final_name and final_name != name:
