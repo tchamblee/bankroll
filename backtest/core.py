@@ -19,10 +19,11 @@ class BacktestEngineBase:
         
         # Temp dir for individual npy files
         # Optimization: Prefer /dev/shm (RAM Disk) on Linux to avoid Disk I/O bottlenecks
-        if os.path.exists('/dev/shm') and os.access('/dev/shm', os.W_OK):
-            base_temp = '/dev/shm'
-        else:
-            base_temp = config.DIRS.get('TEMP_DIR', tempfile.gettempdir())
+        # Update: Disabled /dev/shm due to stability issues (OSError: Write failed) on large runs.
+        # if os.path.exists('/dev/shm') and os.access('/dev/shm', os.W_OK):
+        #     base_temp = '/dev/shm'
+        # else:
+        base_temp = config.DIRS.get('TEMP_DIR', tempfile.gettempdir())
             
         os.makedirs(base_temp, exist_ok=True)
         self.temp_dir = tempfile.mkdtemp(prefix="backtest_ctx_", dir=base_temp)

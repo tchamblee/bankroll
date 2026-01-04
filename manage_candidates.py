@@ -15,7 +15,7 @@ import glob
 CANDIDATES_FILE = config.CANDIDATES_FILE
 
 def load_candidates():
-    if os.path.exists(CANDIDATES_FILE):
+    if not os.path.exists(CANDIDATES_FILE):
         return []
     with open(CANDIDATES_FILE, 'r') as f:
         try:

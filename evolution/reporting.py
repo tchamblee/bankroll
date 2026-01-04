@@ -407,17 +407,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                         o_val_sort = conflict_data.get('val_sortino', 0)
                         o_te_sort = conflict_data.get('test_sortino', 0)
                         
-                        # If Sortinos are missing (legacy), try Returns?
-                        # Actually, newly generated dicts will have them. 
-                        # We will stick to Sortino if present in New. If Old is 0 (missing), New wins.
-                        # Wait, if Old is missing, it's 0. New > 0 is easy. 
-                        # But is it fair? Yes, we want to upgrade legacy data.
+                        # Calculate Averages
+                        n_avg = (n_tr_sort + n_val_sort + n_te_sort) / 3.0
+                        o_avg = (o_tr_sort + o_val_sort + o_te_sort) / 3.0
                         
-                        better_train = n_tr_sort > o_tr_sort
-                        better_val = n_val_sort > o_val_sort
-                        better_test = n_te_sort > o_te_sort
-                        
-                        if better_train and better_val and better_test:
+                        if n_avg > o_avg:
                             print(f"      🔄 Replacing Correlated Strategy ({max_corr:.2f}): {conflict_data['name']} -> {name}")
                             
                             # Remove Conflict

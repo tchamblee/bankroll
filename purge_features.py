@@ -332,6 +332,9 @@ if __name__ == "__main__":
     if all_exist and not force_purge:
         print(f"⏩ Survivor lists for all horizons ({config.PREDICTION_HORIZONS}) already exist. Skipping.")
         print(f"   (Use '--force' to override)")
+        # Ensure marker exists so validation can proceed
+        with open(marker_path, 'w') as f:
+            f.write("Cached")
         exit(0)
 
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")

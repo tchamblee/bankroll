@@ -270,80 +270,8 @@ class GenomeFactory:
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 
-    def create_archetype_strategy(self, archetype_name):
-        """Creates a structured strategy based on known market phenomena."""
-        long_genes = []
-        short_genes = []
-        
-        # Helper to find specific features
-        def find_feat(keyword):
-            candidates = [f for f in self.features if keyword in f]
-            return random.choice(candidates) if candidates else random.choice(self.features)
-
-        if archetype_name == "Trend":
-            # Setup: High Hurst or Low FDI (Trending Regime)
-            regime_feat = find_feat('hurst')
-            long_genes.append(PersistenceGene(regime_feat, '>', 0.5, 5))
-            short_genes.append(PersistenceGene(regime_feat, '>', 0.5, 5))
-            
-            # Trigger: Momentum / Breakout
-            mom_feat = find_feat('close')
-            long_genes.append(DeltaGene(mom_feat, '>', 0.0, 50)) # Price Up
-            short_genes.append(DeltaGene(mom_feat, '<', 0.0, 50)) # Price Down
-            
-        elif archetype_name == "MeanRev":
-            # Setup: Low Hurst or High FDI (Choppy Regime)
-            # OR High Vol Premium
-            prem_feat = find_feat('premium')
-            if prem_feat and 'premium' in prem_feat:
-                # Use Advanced MeanReversionGene
-                z_feat = find_feat('close')
-                long_genes.append(MeanReversionGene(z_feat, prem_feat, 2.0, 0.0, 'long', 50))
-                short_genes.append(MeanReversionGene(z_feat, prem_feat, 2.0, 0.0, 'short', 50))
-            else:
-                # Fallback to Old Logic
-                regime_feat = find_feat('hurst')
-                long_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
-                short_genes.append(PersistenceGene(regime_feat, '<', 0.5, 5))
-                
-                z_feat = find_feat('close')
-                long_genes.append(ZScoreGene(z_feat, '<', -2.0, 100)) # Oversold -> Buy
-                short_genes.append(ZScoreGene(z_feat, '>', 2.0, 100)) # Overbought -> Sell
-
-        elif archetype_name == "Breakout":
-            # Setup: Volatility Compression (Squeeze)
-            vol_feat = find_feat('volatility')
-            long_genes.append(ZScoreGene(vol_feat, '<', -1.0, 50)) # Low Vol
-            short_genes.append(ZScoreGene(vol_feat, '<', -1.0, 50))
-            
-            # Trigger: High Volume or Sharp Move
-            vol_feat = find_feat('volume') # or trade count
-            long_genes.append(ZScoreGene(vol_feat, '>', 2.0, 10)) # Volume Spike
-            short_genes.append(ZScoreGene(vol_feat, '>', 2.0, 10))
-
-        # Filler (Optional: 1 extra gene for flavor)
-        if random.random() < 0.5:
-             long_genes.append(self.create_gene_from_pool(self.trigger_pool))
-             short_genes.append(self.create_gene_from_pool(self.trigger_pool))
-
-        sl_pct = random.choice(config.STOP_LOSS_OPTIONS)
-        tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
-
-        return Strategy(
-            name=f"{archetype_name}_{random.randint(1000,9999)}",
-            long_genes=long_genes,
-            short_genes=short_genes,
-            min_concordance=len(long_genes), # Require ALL conditions for archetypes (Strict)
-            stop_loss_pct=sl_pct,
-            take_profit_pct=tp_pct
-        )
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
-        # 30% Chance to use an Alpha Seed (Archetype)
-        if random.random() < 0.30:
-            atype = random.choice(["Trend", "MeanRev", "Breakout"])
-            return self.create_archetype_strategy(atype)
-            
         num_genes = random.randint(max(2, num_genes_range[0]), max(2, num_genes_range[1])) # Ensure at least 2 for Setup+Trigger
         
         long_genes = []

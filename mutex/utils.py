@@ -3,9 +3,9 @@ import json
 import config
 from genome import Strategy
 
-def load_candidates_grouped():
+def load_all_candidates():
     """
-    Loads candidates from candidates.json and groups them by horizon.
+    Loads candidates from candidates.json.
     """
     candidates_path = config.CANDIDATES_FILE
     if not os.path.exists(candidates_path):

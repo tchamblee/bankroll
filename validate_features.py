@@ -72,8 +72,24 @@ def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT, tp_pct=config
     return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
-    # Check if Purge is complete
     marker_path = config.PURGE_MARKER_FILE
+    
+    # Check if metrics already exist
+    all_metrics_exist = True
+    for horizon in config.PREDICTION_HORIZONS:
+        p = os.path.join(config.DIRS['FEATURES_DIR'], f"feature_metrics_{horizon}.csv")
+        if not os.path.exists(p):
+            all_metrics_exist = False
+            break
+            
+    if all_metrics_exist:
+        # Check if Purge marker exists, consume it to clear the "pipe" even if we skip
+        if os.path.exists(marker_path):
+            os.remove(marker_path)
+        print(f"⏩ Feature Metrics for all horizons already exist. Skipping validation.")
+        exit(0)
+
+    # Check if Purge is complete
     if not os.path.exists(marker_path):
         print(f"❌ Purge marker not found at {marker_path}. Run purge_features.py first.")
         sys.exit(1)
