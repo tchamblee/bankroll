@@ -33,6 +33,11 @@ def load_ticker_data(data_dir, pattern):
     if not dfs: return None
 
     df = pd.concat(dfs, ignore_index=True)
+    
+    # FIX: Deduplicate rows to handle potential overlaps/appends from data lake
+    # We check all columns for exact duplicates, which handles the 'double-write' bug.
+    df = df.drop_duplicates()
+    
     df = df.sort_values("ts_event").reset_index(drop=True)
     
     # Calculate Mid Price logic

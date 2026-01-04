@@ -233,7 +233,9 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
                          logger.warning(f"      [OVERWRITE] {name} {date_str}: Existing file has {existing_len} rows (likely Ticks) but requested 1-min bars ({len(data)}). Overwriting to match config.")
                          df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
                          df = df.sort_values(by="ts_event").reset_index(drop=True)
-                         save_chunk(df, filename)
+                         # FIX: Direct write to force replacement (save_chunk appends!)
+                         df.to_parquet(filename, index=False)
+                         logger.info(f"      💾 Forced Overwrite: {len(df)} rows.")
                     else:
                          logger.warning(f"      [IGNORE] {name} {date_str}: Fetched fewer rows ({len(data)}) than existing ({existing_len}). Keeping existing.")
                          return
