@@ -56,7 +56,7 @@ except Exception as e:
 # CONFIGURATION
 # --------------------------------------------------------------------------------------
 
-CLIENT_ID = 2
+CLIENT_ID = cfg.IBKR_CLIENT_ID_PAPER
 WINDOW_SIZE = 4000 
 WARMUP_DAYS = 7
 LIVE_STATE_FILE = os.path.join(cfg.DIRS['OUTPUT_DIR'], "live_state.json")
@@ -699,6 +699,11 @@ class PaperTradeApp:
                 await self.ib.qualifyContractsAsync(eur)
                 self.primary_contract = eur
                 self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']==cfg.PRIMARY_TICKER][0]
+                
+                # --- SUBSCRIBE PRIMARY TICKER ---
+                self.ib.reqMktData(eur, "", False, False)
+                self.ib.reqTickByTickData(eur, "BidAsk", numberOfTicks=0, ignoreSize=False)
+                logger.info(f"   ✅ Subscribed Primary Ticker: {eur.localSymbol}")
                 
                 # --- GAP FILLING ---
                 await self.data_manager.fill_gaps(self.ib, eur)

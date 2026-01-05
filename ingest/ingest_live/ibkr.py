@@ -26,7 +26,7 @@ class IBKRStreamer:
     async def connect_and_stream(self, stop_event: asyncio.Event):
         try:
             logger.info("🔄 Connecting to IBKR...")
-            await asyncio.wait_for(self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=0), timeout=15)
+            await asyncio.wait_for(self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=cfg.IBKR_CLIENT_ID_INGEST), timeout=15)
             self.ib.reqMarketDataType(1) 
             logger.info("✅ Connected. Starting Stream...")
             await self.ingest_stream(stop_event)
