@@ -561,6 +561,7 @@ class PaperTradeApp:
         self.executor = None
         self.stop_event = asyncio.Event()
         self.contract_map = {}
+        self.primary_contract = None
         self.last_eur_tick = datetime.now()
         
         # Temp dir for JIT feature calculation (JIT Parity)
@@ -670,35 +671,34 @@ class PaperTradeApp:
             await self.ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=CLIENT_ID)
             self.executor = ExecutionEngine(self.strategies) # Re-init in case strategies were dropped
             self.ib.reqMarketDataType(1)
-        if not self.primary_contract:
-            # Fallback if qualification failed or config issue
-            logger.warning(f"⚠️ Primary Contract ({cfg.PRIMARY_TICKER}) not qualified. Attempting manual...")
-            eur = Forex(cfg.PRIMARY_TICKER)
-            await self.ib.qualifyContractsAsync(eur)
-            self.primary_contract = eur
-            self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']==cfg.PRIMARY_TICKER][0]
-            
-            # --- GAP FILLING ---
-            await self.data_manager.fill_gaps(self.ib, eur)
-            # -------------------
+            if not self.primary_contract:
+                # Fallback if qualification failed or config issue
+                logger.warning(f"⚠️ Primary Contract ({cfg.PRIMARY_TICKER}) not qualified. Attempting manual...")
+                eur = Forex(cfg.PRIMARY_TICKER)
+                await self.ib.qualifyContractsAsync(eur)
+                self.primary_contract = eur
+                self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name']==cfg.PRIMARY_TICKER][0]
+                
+                # --- GAP FILLING ---
+                await self.data_manager.fill_gaps(self.ib, eur)
+                # -------------------
             
             for t in cfg.TARGETS:
-            t = self.contract_map[c.conId]
-            if t['name'] == cfg.PRIMARY_TICKER: continue # Handled below
-            
-            if t['mode'] == 'BARS_TRADES_1MIN':
-                c = None
-                if t['secType'] == 'IND': c = Index(t['symbol'], t['exchange'], t['currency'])
-                elif t['secType'] == 'CONTFUT': c = ContFuture(t['symbol'], t['exchange'], t['currency'])
-                elif t['secType'] == 'STK': c = Stock(t['symbol'], t['exchange'], t['currency'])
-                elif t['secType'] == 'CASH': c = Forex(t['symbol'] + t['currency'])
-                if c:
-                    try:
-                        await self.ib.qualifyContractsAsync(c)
-                        self.ib.reqMktData(c, "", False, False)
-                        self.contract_map[c.conId] = t
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to qualify/request {t['name']}: {e}")
+                if t['name'] == cfg.PRIMARY_TICKER: continue # Handled below
+                
+                if t['mode'] == 'BARS_TRADES_1MIN':
+                    c = None
+                    if t['secType'] == 'IND': c = Index(t['symbol'], t['exchange'], t['currency'])
+                    elif t['secType'] == 'CONTFUT': c = ContFuture(t['symbol'], t['exchange'], t['currency'])
+                    elif t['secType'] == 'STK': c = Stock(t['symbol'], t['exchange'], t['currency'])
+                    elif t['secType'] == 'CASH': c = Forex(t['symbol'] + t['currency'])
+                    if c:
+                        try:
+                            await self.ib.qualifyContractsAsync(c)
+                            self.ib.reqMktData(c, "", False, False)
+                            self.contract_map[c.conId] = t
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to qualify/request {t['name']}: {e}")
                         
             self.ib.pendingTickersEvent += self.on_pending_tickers
             logger.info("🟢 VIRTUAL PAPER TRADING ACTIVE (NO BROKER ORDERS)")

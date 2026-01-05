@@ -39,7 +39,7 @@ FRED_FILE = os.path.join(BASE_DIR, "data", "fred_macro_daily.parquet")
 COT_FILE = os.path.join(BASE_DIR, "data", "cot_weekly.parquet")
 GDELT_DIR = os.path.join(BASE_DIR, "data", "gdelt", "v2_gkg")
 RAW_TICKS_DIR = os.path.join(BASE_DIR, "data", "raw_ticks")
-MUTEX_FILE = config.MUTEX_PORTFOLIO_FILE
+MUTEX_FILE = cfg.MUTEX_PORTFOLIO_FILE
 
 # --- HELPER FUNCTIONS ---
 
@@ -191,7 +191,7 @@ def load_logs(lines=100):
 def parse_trades_from_logs(strat_map=None):
     """Parses paper_trade.log to extract recent Entry/Exit events for plotting."""
     if not os.path.exists(LOG_FILE):
-        return []
+        return pd.DataFrame()
     
     events = []
     # Regex patterns
@@ -443,13 +443,14 @@ if view == "Cockpit":
     st.divider()
 
     # --- CHARTS ---
-                                ui.markdown(f"### {cfg.PRIMARY_TICKER} (Live)")
-                                ui.markdown(f"**Last:** {last_row['close']:.5f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
-
     bars_df = load_bars(300)
     trade_events = parse_trades_from_logs(strat_map)
 
     if bars_df is not None and not bars_df.empty:
+        last_row = bars_df.iloc[-1]
+        st.markdown(f"### {cfg.PRIMARY_TICKER} (Live)")
+        st.markdown(f"**Last:** {last_row['close']:.5f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
+
         fig = go.Figure(data=[go.Candlestick(x=bars_df['time_start'],
                         open=bars_df['open'],
                         high=bars_df['high'],

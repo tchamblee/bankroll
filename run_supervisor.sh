@@ -83,6 +83,8 @@ while true; do
         echo "❌ Ingest process died. Restarting..."
         start_ingest
     elif ! check_heartbeat $INGEST_HB "Ingest"; then
+        echo "💀 Killing Ingest PID $INGEST_PID and children..."
+        pkill -P $INGEST_PID
         kill -9 $INGEST_PID
         start_ingest
     fi
@@ -92,6 +94,8 @@ while true; do
         echo "❌ Paper process died. Restarting..."
         start_paper
     elif ! check_heartbeat $PAPER_HB "Paper"; then
+        echo "💀 Killing Paper PID $PAPER_PID and children..."
+        pkill -P $PAPER_PID
         kill -9 $PAPER_PID
         start_paper
     fi
