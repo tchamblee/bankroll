@@ -59,6 +59,8 @@ def run_mutex_backtest():
         sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
         tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
         
+        target_risk_dollars = config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT
+        
         strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
             oos_sig.astype(np.float64), 
             prices, highs, lows, atr, hours, weekdays, 
@@ -71,7 +73,11 @@ def run_mutex_backtest():
             config.STOP_LOSS_COOLDOWN_BARS,
             config.MIN_COMMISSION,
             config.SLIPPAGE_ATR_FACTOR,
-            config.COMMISSION_THRESHOLD
+            config.COMMISSION_THRESHOLD,
+            True, # Vol Targeting Enabled
+            target_risk_dollars,
+            float(config.MIN_LOTS),
+            float(config.MAX_LOTS)
         )
         
         

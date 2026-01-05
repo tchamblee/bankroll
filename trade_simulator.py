@@ -13,7 +13,8 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                        lot_size: float, spread_pct: float, comm_pct: float, min_comm: float,
                        account_size: float, sl_mult: float, 
                        tp_mult: float, time_limit_bars: int, cooldown_bars: int,
-                       slippage_factor: float) -> Tuple[np.ndarray, int]:
+                       slippage_factor: float,
+                       vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float) -> Tuple[np.ndarray, int]:
     """
     JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers and Cooldown.
     """
@@ -23,7 +24,7 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     trade_count = 0
     
     # Position entering step i (from i-1)
-    position = 0.0 
+    position = 0.0 # This is now SIGNED LOTS
     entry_price = 0.0
     entry_atr = 0.0
     entry_idx = 0
@@ -92,9 +93,18 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             realized_signals[i] = 0.0
             position = 0.0
         elif position == 0.0:
-            # New Entry
-            if realized_signals[i] != 0.0 and cooldown == 0:
-                position = realized_signals[i]
+            # New Entry Logic
+            sig = realized_signals[i]
+            if sig != 0.0 and cooldown == 0:
+                # Calculate Size
+                size = 1.0
+                if vol_targeting:
+                    eff_sl = sl_mult if sl_mult > 0 else 1.0
+                    eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                    calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
+                    size = min(max(calc_size, min_lots), max_lots)
+                
+                position = np.sign(sig) * size
                 entry_price = prices[i]
                 entry_atr = atr_vec[i]
                 entry_idx = i
@@ -102,11 +112,23 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             # Position Active: Check for Reversal
             sig = realized_signals[i]
             if sig != 0.0 and np.sign(sig) != np.sign(position):
-                # Reversal
-                position = sig
+                # Reversal - Calc New Size
+                size = 1.0
+                if vol_targeting:
+                    eff_sl = sl_mult if sl_mult > 0 else 1.0
+                    eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                    calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
+                    size = min(max(calc_size, min_lots), max_lots)
+                    
+                position = np.sign(sig) * size
                 entry_price = prices[i]
                 entry_atr = atr_vec[i]
                 entry_idx = i
+            else:
+                # Hold - ensure signal matches held position (size and all)
+                # But realized_signals originally only has -1/1/0.
+                # We need to overwrite it with the actual held position size.
+                pass
             
         realized_signals[i] = position
         
@@ -206,7 +228,9 @@ class TradeSimulator:
                  highs: Optional[np.ndarray] = None,
                  lows: Optional[np.ndarray] = None,
                  atr: Optional[np.ndarray] = None,
-                 cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS) -> Tuple[List[Trade], np.ndarray]:
+                 cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS,
+                 vol_targeting: bool = True,
+                 target_risk_pct: float = config.RISK_PER_TRADE_PERCENT) -> Tuple[List[Trade], np.ndarray]:
         """
         Simulates trading a signal vector with barriers.
         Detailed version returning Trade objects for visualization.
@@ -307,7 +331,33 @@ class TradeSimulator:
                 if position == 0 and cooldown > 0:
                     target_pos = 0
             
+            # --- POSITION SIZING LOGIC ---
+            target_size = 0.0
+            if target_pos != 0:
+                if position == 0:
+                     # New Entry - Calculate Size
+                     if vol_targeting and use_atr:
+                         # Risk Parity Sizing
+                         # Risk = Size * LotSize * (SL_Mult * ATR)
+                         # Size = Risk / (LotSize * SL_Mult * ATR)
+                         eff_sl = sl_mult if sl_mult > 0 else 1.0
+                         eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                         target_risk_dollars = self.account_size * target_risk_pct
+                         
+                         calc_size = target_risk_dollars / (self.lot_size * eff_sl * eff_atr)
+                         target_size = min(max(calc_size, config.MIN_LOTS), config.MAX_LOTS)
+                     else:
+                         target_size = 1.0 # Fixed Lot
+                         
+                     # Apply Direction
+                     target_pos = np.sign(target_pos) * target_size
+                else:
+                     # Existing Position - Maintain Size
+                     target_size = abs(position)
+                     target_pos = np.sign(target_pos) * target_size
+
             if target_pos != position:
+                # change is now difference in signed lots
                 change = target_pos - position
                 exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else price
                 
@@ -318,6 +368,7 @@ class TradeSimulator:
                     step_pnl += pnl_adj
                 
                 # Cost Calculation via Shared Logic
+                # Use lots traded (abs(change))
                 current_atr = atr_vec[i] if use_atr else (exec_price * 0.001)
                 
                 cost = utrade.calculate_cost(
@@ -363,7 +414,9 @@ class TradeSimulator:
                       hours: Optional[np.ndarray] = None, weekdays: Optional[np.ndarray] = None,
                       highs: Optional[np.ndarray] = None, lows: Optional[np.ndarray] = None,
                       atr: Optional[np.ndarray] = None,
-                      cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS) -> Tuple[np.ndarray, int]:
+                      cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS,
+                      vol_targeting: bool = True,
+                      target_risk_pct: float = config.RISK_PER_TRADE_PERCENT) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
         """
@@ -381,6 +434,8 @@ class TradeSimulator:
             atr_vec = self.prices * 0.001 
         else:
             atr_vec = atr.astype(np.float64)
+            
+        target_risk_dollars = self.account_size * target_risk_pct
         
         return _jit_simulate_fast(
             signals.astype(np.float64),
@@ -399,5 +454,9 @@ class TradeSimulator:
             tp_mult,
             limit_val,
             cooldown_bars,
-            config.SLIPPAGE_ATR_FACTOR
+            config.SLIPPAGE_ATR_FACTOR,
+            vol_targeting,
+            target_risk_dollars,
+            float(config.MIN_LOTS),
+            float(config.MAX_LOTS)
         )

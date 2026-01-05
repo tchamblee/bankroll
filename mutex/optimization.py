@@ -124,7 +124,11 @@ def optimize_mutex_portfolio(candidates, backtester):
                     config.STOP_LOSS_COOLDOWN_BARS,
                     config.MIN_COMMISSION,
                     config.SLIPPAGE_ATR_FACTOR,
-                    config.COMMISSION_THRESHOLD
+                    config.COMMISSION_THRESHOLD,
+                    True, # Vol Targeting
+                    config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT,
+                    float(config.MIN_LOTS),
+                    float(config.MAX_LOTS)
                 )
                 
                 # 1. Check Constraint: No Individual Losers

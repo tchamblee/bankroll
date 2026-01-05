@@ -55,7 +55,9 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
             weekdays=weekdays,
             highs=highs,
             lows=lows,
-            atr=atr
+            atr=atr,
+            vol_targeting=True, # ENABLE VOL TARGETING FOR ALL STRATEGIES
+            target_risk_pct=config.RISK_PER_TRADE_PERCENT
         )
         net_returns[:, i] = net_rets
         trades_count[i] = t_count

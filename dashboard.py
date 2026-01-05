@@ -823,7 +823,7 @@ elif view == "System Health":
                 enriched_cols = engine.bars.columns
                 
                 checks = {
-                    "Seasonality": "seasonal_deviation" in enriched_cols,
+                    "Seasonality": "hour_sin" in enriched_cols,
                     "FRED (Macro)": "net_liq_zscore_60d" in enriched_cols,
                     "COT (Positioning)": any("cot_" in c for c in enriched_cols if "btc" not in c), 
                     "Event Decay": "bars_since_high_100" in enriched_cols,

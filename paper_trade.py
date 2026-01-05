@@ -489,7 +489,7 @@ class ExecutionEngine:
     async def execute_signal(self, signal, strat_idx, price, atr):
         self.last_atr = atr
         if signal == self.position:
-            # Ensure SL/TP are hydrated for the dashboard even on restored positions
+            # Ensure SL/TP are hydrated
             if self.position != 0 and (self.current_sl == 0.0 or self.current_tp == 0.0):
                 try:
                     strat = self.strategies[self.active_strat_idx]
@@ -508,12 +508,14 @@ class ExecutionEngine:
         
         state_changed = False
         
+        # --- CLOSE EXISTING POSITION ---
         if self.position != 0:
             logger.info(f"📝 VIRTUAL EXIT: Signal Reversal @ {price:.5f}")
             play_sound("resources/exit.mp3")
             
             # --- PnL Calculation ---
             try:
+                # Calculate PnL on the SPECIFIC SIZE held
                 raw_pnl = (price - self.entry_price) * self.position * cfg.STANDARD_LOT_SIZE
                 comm = self.calculate_commission(self.entry_price, self.position) + \
                        self.calculate_commission(price, self.position)
@@ -530,18 +532,37 @@ class ExecutionEngine:
             self.current_sl, self.current_tp = 0.0, 0.0
             state_changed = True
             
+        # --- OPEN NEW POSITION ---
         if signal != 0:
+            # VOLATILITY TARGETING SIZING
+            strat = self.strategies[strat_idx]
+            eff_sl = strat.stop_loss_pct if strat.stop_loss_pct > 0 else 1.0
+            eff_atr = atr if atr > 1e-6 else 1e-6
+            
+            target_risk_dollars = self.balance * cfg.RISK_PER_TRADE_PERCENT
+            
+            # Size = Risk / (LotSize * SL_Mult * ATR)
+            calc_size = target_risk_dollars / (cfg.STANDARD_LOT_SIZE * eff_sl * eff_atr)
+            
+            # Clamp
+            final_size = min(max(calc_size, cfg.MIN_LOTS), cfg.MAX_LOTS)
+            
+            # Apply Direction
+            signed_size = np.sign(signal) * final_size
+            
             action = 'BUY' if signal > 0 else 'SELL'
-            logger.info(f"📝 VIRTUAL ENTRY: {action} {abs(signal)} lots (Strat {strat_idx}) @ {price:.5f}")
+            logger.info(f"📝 VIRTUAL ENTRY: {action} {final_size:.2f} lots (Risk ${target_risk_dollars:.0f}) Strat {strat.name} @ {price:.5f}")
             play_sound("resources/entry.mp3")
-            self.position, self.active_strat_idx, self.entry_price = signal, strat_idx, price
+            
+            self.position = signed_size # Store actual size (e.g. 2.5 or -0.5)
+            self.active_strat_idx = strat_idx
+            self.entry_price = price
             
             # Calculate SL/TP
-            strat = self.strategies[strat_idx]
             sl_dist = atr * strat.stop_loss_pct
             tp_dist = atr * strat.take_profit_pct
             
-            if signal > 0: # Long
+            if signed_size > 0: # Long
                 self.current_sl = price - sl_dist
                 self.current_tp = price + tp_dist
             else: # Short

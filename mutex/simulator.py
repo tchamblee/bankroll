@@ -8,7 +8,8 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                                horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
                                lot_size: float, spread_pct: float, comm_pct: float, 
                                account_size: float, end_hour: int, cooldown_bars: int,
-                               min_comm: float, slippage_factor: float, commission_threshold: float):
+                               min_comm: float, slippage_factor: float, commission_threshold: float,
+                               vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float):
     """
     Simulates a portfolio of strategies running concurrently on one account.
     Each strategy manages its own position logic (Horizon, SL, TP).
@@ -17,7 +18,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
     n_bars, n_strats = signals.shape
     
     # State tracking per strategy
-    # 0: Flat, 1: Long, -1: Short
+    # 0: Flat, != 0: Size (Signed)
     positions = np.zeros(n_strats, dtype=np.float64) 
     entry_prices = np.zeros(n_strats, dtype=np.float64)
     entry_indices = np.zeros(n_strats, dtype=np.int64)
@@ -108,7 +109,19 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                 if active_strat == -1:
                     sig = signals[i, s]
                     if sig != 0 and cooldowns[s] == 0 and not force_close:
-                        target_pos = float(sig)
+                        # POSITION SIZING
+                        size = 1.0
+                        if vol_targeting:
+                            # Risk = Size * LotSize * (SL * ATR)
+                            # Size = Risk / (LotSize * SL * ATR)
+                            eff_sl = sl_mults[s] if sl_mults[s] > 0 else 1.0
+                            eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                            
+                            calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
+                            size = min(max(calc_size, min_lots), max_lots)
+                            
+                        target_pos = float(np.sign(sig) * size)
+                        
                         # MUTEX: We claim the lock immediately for this bar loop
                         active_strat = s
             
@@ -133,6 +146,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                         else: exec_price = e_price - tp_dist
 
             # Calculate Costs for this bar's activity
+            # change is difference in Lots (Size)
             change = abs(target_pos - curr_pos)
             total_cost = 0.0
             
@@ -155,49 +169,13 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                      entry_atrs[s] = atr_vec[i]
 
             # Mark-to-Market PnL (Bar-by-Bar)
-            # 1. PnL from holding PREVIOUS position to CURRENT price (or Exit Price)
-            # If we held a position coming into this bar:
             bar_pnl = 0.0
             
             if curr_pos != 0:
-                # Price used for MTM: 
-                # If we exited this bar, use exec_price. 
-                # If we held through, use Close[i] (or Open[i+1] approx -> prices[i]) 
-                # **Standard Sim uses Open-to-Open returns.**
-                # So we compare prices[i] (Current Open) vs prices[i-1] (Prev Open)
-                # If we exit, we go from Prev Open -> Exec Price.
-                
-                price_start = prices[i-1] # Open of prev bar (where we evaluated last)
-                # But wait, logic is Open[i]. 
-                # Let's simplify: Returns are generated AT step i.
-                # We held from i-1 to i.
-                
-                # Effective Close for this interval
-                price_end = exec_price if exit_signal or change > 0 else prices[i]
-                
-                # Actually, simpler:
-                # We simply book the diff from Entry for the CLOSED portion
-                # AND the diff from Prev Close for the OPEN portion? 
-                # No, easier:
-                # Just book (Price_End - Price_Start) * Size
-                
-                # Correct Logic for Open-to-Open MTM:
-                # We moved from prices[i-1] to prices[i].
-                # If we exit, we move from prices[i-1] to exec_price.
-                
-                # However, signals align such that decision at i-1 effects i.
-                # Let's stick to the "Trade Close" PnL for accuracy of TOTAL profit,
-                # BUT distribute it? No, that requires lookahead.
-                
-                # MTM Approach:
-                # Prev Price was prices[i-1] (Open).
-                # Current Price is prices[i] (Open).
-                # If Exit, Price is ExecPrice.
-                
+                # MTM PnL
                 p_prev = prices[i-1] if i > 0 else entry_prices[s]
                 p_curr = exec_price if (change > 0) else prices[i]
                 
-                # MTM PnL
                 price_delta = p_curr - p_prev
                 bar_pnl = price_delta * curr_pos * lot_size
                 
@@ -208,17 +186,8 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             # Update Position
             positions[s] = target_pos
             
-            # Check Win (only on exit for stats, though PnL is distributed)
+            # Check Win (approx)
             if curr_pos != 0 and target_pos == 0:
-                # Reconstruct total trade PnL to check if it was a win
-                # This is just for the 'wins' counter, doesn't affect equity curve
-                # We can't easily sum bar_pnl history here without memory.
-                # Approximation: Compare Entry vs Exit
-                total_trade_pnl = (exec_price - entry_prices[s]) * curr_pos * lot_size - total_cost # cost includes exit cost only here? No.
-                # The total_cost computed above is only for THIS bar (exit).
-                # We miss entry cost. This makes 'strat_wins' inaccurate in MTM mode.
-                # BUT, strat_wins is rarely used for critical optimization (Sortino is).
-                # We'll leave strat_wins approximate or just check raw price delta.
                 if (exec_price - entry_prices[s]) * curr_pos > 0:
                      strat_wins[s] += 1
 
