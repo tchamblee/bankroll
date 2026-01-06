@@ -19,6 +19,10 @@ def add_intermarket_features(primary_df, correlator_dfs):
     print(f"Calculating Intermarket Features (ES, ZN, 6E)...")
     df = primary_df.copy()
     
+    # Ensure sorted by time_end for merge_asof
+    if 'time_end' in df.columns:
+        df = df.sort_values('time_end')
+    
     # We need to create a unified time index to align these assets
     # Since primary_df is Volume Bars, we use 'time_end' as the sync point.
     

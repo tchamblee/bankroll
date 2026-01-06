@@ -187,6 +187,10 @@ def prepare_simulation_data(prices, highs=None, lows=None, atr=None):
             atr_vec = prices * (config.ATR_FALLBACK_BPS / 10000.0) 
     else:
         atr_vec = atr.astype(np.float64)
+    
+    # Enforce Floor (MIN_ATR_BPS)
+    min_atr = prices * (config.MIN_ATR_BPS / 10000.0)
+    atr_vec = np.maximum(atr_vec, min_atr)
 
     # CRITICAL: Shift ATR by 1 to prevent Look-Ahead Bias
     # Simulator executes at Open[t], so it must use Volatility[t-1]

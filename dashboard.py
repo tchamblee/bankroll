@@ -195,7 +195,7 @@ def parse_trades_from_logs(strat_map=None):
     
     events = []
     # Regex patterns
-    entry_pattern = re.compile(r"VIRTUAL ENTRY: (BUY|SELL) (\d+) lots \(Strat (\d+)\) @ ([\d\.]+)")
+    entry_pattern = re.compile(r"VIRTUAL ENTRY: (BUY|SELL) ([\d\.]+) lots .*?Strat (.*?) @ ([\d\.]+)")
     exit_pattern = re.compile(r"VIRTUAL EXIT: (.*?) @ ([\d\.]+)")
     
     try:
@@ -210,8 +210,7 @@ def parse_trades_from_logs(strat_map=None):
                 # Check Entry
                 m_entry = entry_pattern.search(line)
                 if m_entry:
-                    s_idx = int(m_entry.group(3))
-                    s_name = strat_map.get(s_idx, str(s_idx)) if strat_map else str(s_idx)
+                    s_name = m_entry.group(3)
                     
                     events.append({
                         "time": ts,
@@ -246,7 +245,7 @@ def parse_closed_trades(strat_map=None):
     current_trade = None
     
     # Regex patterns
-    entry_pattern = re.compile(r"VIRTUAL ENTRY: (BUY|SELL) (\d+) lots \(Strat (\d+)\) @ ([\d\.]+)")
+    entry_pattern = re.compile(r"VIRTUAL ENTRY: (BUY|SELL) ([\d\.]+) lots .*?Strat (.*?) @ ([\d\.]+)")
     exit_pattern = re.compile(r"VIRTUAL EXIT: (.*?) @ ([\d\.]+)")
     pnl_pattern = re.compile(r"Trade PnL: \$([-+]?[\d\.,]+)")
     
@@ -262,13 +261,12 @@ def parse_closed_trades(strat_map=None):
                 # Check Entry
                 m_entry = entry_pattern.search(line)
                 if m_entry:
-                    s_idx = int(m_entry.group(3))
-                    s_name = strat_map.get(s_idx, str(s_idx)) if strat_map else str(s_idx)
+                    s_name = m_entry.group(3)
                     
                     current_trade = {
                         "Entry Time": ts,
                         "Type": m_entry.group(1),
-                        "Lots": int(m_entry.group(2)),
+                        "Lots": float(m_entry.group(2)),
                         "Strat": s_name,
                         "Entry Price": float(m_entry.group(4)),
                         "Exit Time": pd.NaT,

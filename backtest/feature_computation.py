@@ -57,6 +57,11 @@ def precompute_base_features(raw_data, temp_dir, existing_keys):
         atr[:w_atr] = tr[:w_atr] 
     else:
         atr = tr
+
+    # Enforce Floor (MIN_ATR_BPS)
+    from config import MIN_ATR_BPS
+    min_atr = close * (MIN_ATR_BPS / 10000.0)
+    atr = np.maximum(atr, min_atr)
         
     _save_feature(temp_dir, existing_keys, 'atr_base', atr.astype(np.float32))
 

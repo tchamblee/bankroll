@@ -33,6 +33,8 @@ class CalendarFeature:
         if 'time_end' not in bars_df.columns:
             return bars_df # Can't align
             
+        bars_df = bars_df.sort_values('time_end')
+            
         # 1. Find NEXT event (Forward Search)
         # merge_asof direction='forward' finds the first event timestamp >= bar_time
         # Note: merge_asof requires both to be sorted.

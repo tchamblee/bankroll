@@ -69,11 +69,11 @@ AVG_BAR_MINS = 1.5 # Average duration of a volume bar in minutes
 ANNUALIZATION_FACTOR = 338363
 
 ATR_FALLBACK_BPS = 10.0 # 0.1% of price
-MIN_ATR_BPS = 5.0 # 0.05% of price
+MIN_ATR_BPS = 1.5 # 0.015% of price (~1.8 pips floor for EURUSD)
 
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
-STOP_LOSS_OPTIONS = [1.0, 1.5, 2.0, 2.5, 3.0]
+STOP_LOSS_OPTIONS = [2.0, 2.5, 3.0, 4.0, 5.0]
 TAKE_PROFIT_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0]
 
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)

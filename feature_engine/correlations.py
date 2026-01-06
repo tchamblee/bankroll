@@ -15,6 +15,10 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     print(f"Calculating Residuals for {suffix} (Window={window})...")
     df = primary_df.copy()
     
+    # Ensure sorted by time_start for merge_asof
+    if 'time_start' in df.columns:
+        df = df.sort_values('time_start')
+    
     # 1. Align Correlator Prices to Bar Start/End
     # We use merge_asof to find the Correlator price at the exact moment the bar started and ended.
     # This effectively 'resamples' the Correlator to the Primary's Volume Clock.
@@ -46,13 +50,24 @@ def add_correlator_residual(primary_df, correlator_df, suffix="_corr", window=10
     )[price_col]
     
     # Get End Prices
-    end_prices = pd.merge_asof(
-        df[['time_end']], 
+    # CRITICAL: merge_asof requires strict sorting on the key.
+    # While df is sorted by time_start, time_end might theoretically be slightly out of order
+    # if overlapping bars existed (unlikely) or just simply not guaranteed.
+    # We must sort by time_end for this specific merge.
+    df_end_sorted = df[['time_end']].sort_values('time_end')
+    
+    end_prices_merged = pd.merge_asof(
+        df_end_sorted, 
         corr_clean, 
         left_on='time_end', 
         right_on='ts_event', 
         direction='backward'
-    )[price_col]
+    )
+    
+    # We need to map these back to the original index because we sorted/sliced
+    # The merge result index matches df_end_sorted index.
+    # So we can just reindex back to df.index
+    end_prices = end_prices_merged.set_index(df_end_sorted.index)[price_col].reindex(df.index)
     
     # 2. Calculate Returns over the Interval
     # Handle gaps where correlator might not have data (NaNs)

@@ -636,6 +636,10 @@ class PaperTradeApp:
         else:
             atr = full_df['close'].iloc[-1] * 0.001 
 
+        # Enforce Floor (MIN_ATR_BPS)
+        min_atr = full_df['close'].iloc[-1] * (cfg.MIN_ATR_BPS / 10000.0)
+        atr = max(atr, min_atr)
+
         return full_df, context, atr
 
     def validate_strategies(self):

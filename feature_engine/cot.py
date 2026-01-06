@@ -164,9 +164,9 @@ def add_cot_features(bars_df, cot_path=None, symbol=None):
     available_cols = [c for c in cols_to_merge if c in cot_df.columns]
     cot_subset = cot_df[available_cols].rename(columns={'date': 'cot_report_date'}).sort_values('merge_date').copy()
     
-    # Ensure bars are sorted
+    # Ensure bars are sorted (Required for merge_asof)
     if 'time_start' not in bars_df.columns: return bars_df
-    # bars_df should be sorted by time_start for merge_asof
+    bars_df = bars_df.sort_values('time_start')
     
     # Use merge_asof to handle the "Last Known Value" logic (Forward Fill effectively)
     # This solves the issue where merge_date (Saturday) doesn't exist in bars_df (Monday-Friday)
