@@ -34,10 +34,18 @@ nest_asyncio.apply()
 logger = setup_logging("PaperTrade", "paper_trade.log")
 
 def play_sound(sound_file):
-    """Plays a sound file using mpg123 in a non-blocking subprocess."""
+    """Plays a sound file using mpg123 in a non-blocking subprocess if enabled."""
+    if not cfg.ENABLE_SOUND:
+        return
+        
     if os.path.exists(sound_file):
         try:
-            subprocess.Popen(['mpg123', '-q', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Use a timeout-capable call or just ensure we don't spawn if not needed.
+            # On Linux/WSL, mpg123 -q can hang if no audio device is found.
+            subprocess.Popen(['mpg123', '-q', sound_file], 
+                             stdout=subprocess.DEVNULL, 
+                             stderr=subprocess.DEVNULL,
+                             start_new_session=True) # Decouple from parent
         except Exception as e:
             logger.error(f"Failed to play sound {sound_file}: {e}")
 

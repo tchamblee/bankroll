@@ -22,6 +22,8 @@ import config as cfg
 
 nest_asyncio.apply()
 
+LOCAL_TZ = datetime.now().astimezone().tzinfo
+
 # --- CONFIGURATION ---
 st.set_page_config(
     page_title="Bankroll Cockpit",
@@ -203,7 +205,8 @@ def parse_trades_from_logs(strat_map=None):
             for line in f:
                 ts_str = line.split(",")[0] 
                 try:
-                    ts = pd.to_datetime(ts_str) 
+                    # Log timestamps are Local Time. Convert to UTC.
+                    ts = pd.to_datetime(ts_str).tz_localize(LOCAL_TZ).tz_convert('UTC')
                 except:
                     continue 
                 
@@ -254,7 +257,8 @@ def parse_closed_trades(strat_map=None):
             for line in f:
                 ts_str = line.split(",")[0]
                 try:
-                    ts = pd.to_datetime(ts_str)
+                    # Log timestamps are Local Time. Convert to UTC.
+                    ts = pd.to_datetime(ts_str).tz_localize(LOCAL_TZ).tz_convert('UTC')
                 except:
                     continue
                 

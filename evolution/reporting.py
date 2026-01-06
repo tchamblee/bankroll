@@ -20,9 +20,12 @@ except ImportError:
 
 def play_success_sound():
     """
-    Attempts to play a custom alert sound.
+    Attempts to play a custom alert sound if enabled.
     Falls back to system bell if file not found or player missing.
     """
+    if not config.ENABLE_SOUND:
+        return
+
     sound_path = os.path.join(os.getcwd(), 'resources', 'alert.mp3')
     
     if os.path.exists(sound_path):
@@ -92,11 +95,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         passed_gate = True
         rejection_reason = []
 
-        # 1. Strict Sortino Filter (> 1.5 on Train/Val)
-        if train_sortino < 1.5 or val_sortino < 1.5:
+        # 1. Strict Sortino Filter (> MIN_SORTINO_THRESHOLD on Train/Val)
+        if train_sortino < config.MIN_SORTINO_THRESHOLD or val_sortino < config.MIN_SORTINO_THRESHOLD:
             passed_gate = False
-            if train_sortino < 1.5: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
-            if val_sortino < 1.5: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
+            if train_sortino < config.MIN_SORTINO_THRESHOLD: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
+            if val_sortino < config.MIN_SORTINO_THRESHOLD: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
         
         # 2. Positive Return Filter
         elif train_ret <= 0 or val_ret <= 0:
@@ -202,8 +205,12 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             except Exception as e:
                 print(f"       ⚠️ Optimization skipped for {s.name}: {e}")
 
+            # Determine final stats for saving
+            final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
+            final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
+
             # --- FINAL GATE: Test Performance Check ---
-            if final_test_ret <= 0 or final_test_sortino < 1.5 or final_test_trades < config.MIN_TRADES_FOR_METRICS:
+            if final_test_ret <= 0 or final_test_sortino < config.MIN_SORTINO_THRESHOLD or final_train_sortino < config.MIN_SORTINO_THRESHOLD or final_val_sortino < config.MIN_SORTINO_THRESHOLD or final_test_trades < config.MIN_TRADES_FOR_METRICS:
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)
@@ -223,10 +230,6 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 annualization_factor=config.ANNUALIZATION_FACTOR
             )
             
-            # Determine final stats for saving
-            final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
-            final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
-
             strat_data = final_strat.to_dict()
             strat_data['test_sortino'] = float(final_test_sortino)
             strat_data['test_return'] = float(final_test_ret)
@@ -407,11 +410,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                         o_val_sort = conflict_data.get('val_sortino', 0)
                         o_te_sort = conflict_data.get('test_sortino', 0)
                         
-                        # Calculate Averages
-                        n_avg = (n_tr_sort + n_val_sort + n_te_sort) / 3.0
-                        o_avg = (o_tr_sort + o_val_sort + o_te_sort) / 3.0
+                        # Calculate Minimums
+                        n_min = min(n_tr_sort, n_val_sort, n_te_sort)
+                        o_min = min(o_tr_sort, o_val_sort, o_te_sort)
                         
-                        if n_avg > o_avg:
+                        if n_min > o_min:
                             print(f"      🔄 Replacing Correlated Strategy ({max_corr:.2f}): {conflict_data['name']} -> {name}")
                             
                             # Remove Conflict

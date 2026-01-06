@@ -269,7 +269,7 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
 
     print(f"\n📋 {title} ({len(candidates)} strategies)")
     # Headers
-    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Avg S':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
+    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Min S':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
     print(header)
     print("-" * len(header))
     
@@ -306,7 +306,7 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
             te_r = m.get('robust_return', 0) * 100
             te_s = m.get('sortino_oos', 0)
 
-        avg_s = get_avg_sortino(c)
+        avg_s = get_min_sortino(c)
 
         row = f"{name[:50]:<50} | {horizon:<3} | {te_tr:<4} | {t_s:5.2f} | {v_s:5.2f} | {te_s:5.2f} | {avg_s:5.2f} | {t_r:5.2f}% | {v_r:5.2f}% | {te_r:5.2f}%"
         print(row)

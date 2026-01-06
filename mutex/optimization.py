@@ -150,15 +150,15 @@ def optimize_mutex_portfolio(candidates, backtester):
             if valid_combo:
                 # Calculate Global Metrics
                 total_profit = sum(r['profit'] for r in set_results.values())
-                avg_sortino = sum(r['sortino'] for r in set_results.values()) / 3.0
+                min_sortino = min(r['sortino'] for r in set_results.values())
                 
-                # Filter: Must have decent avg Sortino
-                if avg_sortino > 1.0:
+                # Filter: Must have decent min Sortino
+                if min_sortino > 1.0:
                     if total_profit > best_total_profit:
                         best_total_profit = total_profit
                         best_combo = [top_candidates[i] for i in idxs]
                         best_stats = set_results
-                        best_stats['avg_sortino'] = avg_sortino
+                        best_stats['min_sortino'] = min_sortino
                         best_stats['total_profit'] = total_profit
 
     print(f"✅ Mutex Optimization Complete.")
@@ -166,7 +166,7 @@ def optimize_mutex_portfolio(candidates, backtester):
     if best_combo:
         print(f"  Best Portfolio: {len(best_combo)} Strategies")
         print(f"  Total Profit:   ${best_stats['total_profit']:,.2f}")
-        print(f"  Avg Sortino:    {best_stats['avg_sortino']:.2f}")
+        print(f"  Min Sortino:    {best_stats['min_sortino']:.2f}")
         print(f"  Breakdown:")
         print(f"    Train: ${best_stats['Train']['profit']:,.0f} (Sort: {best_stats['Train']['sortino']:.2f})")
         print(f"    Val:   ${best_stats['Val']['profit']:,.0f} (Sort: {best_stats['Val']['sortino']:.2f})")

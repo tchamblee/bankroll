@@ -31,13 +31,15 @@ def mutate_strategy_parameters(strat):
         # 2. Mutate Windows (Small shift)
         if hasattr(gene, 'window'):
             if random.random() < 0.3: # 30% chance to shift window
-                shift = random.choice([-1, 1])
-                # Find current index in valid windows?
-                # Or just +/- 1 index in standard windows list?
-                # For now, just simplistic +/- 10%
                 new_win = int(gene.window * (1 + random.uniform(-0.1, 0.1)))
                 gene.window = max(5, new_win)
-                
+
+    # 3. Mutate Stops & Targets (Exploration of new ranges)
+    if random.random() < 0.3:
+        mutant.stop_loss_pct = random.choice(config.STOP_LOSS_OPTIONS)
+    if random.random() < 0.3:
+        mutant.take_profit_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
+            
     return mutant
 
 def refine_horizon(horizon, backtester):
