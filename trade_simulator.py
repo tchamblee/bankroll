@@ -14,9 +14,10 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                        account_size: float, sl_mult: float, 
                        tp_mult: float, time_limit_bars: int, cooldown_bars: int,
                        slippage_factor: float,
-                       vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float) -> Tuple[np.ndarray, int]:
+                       vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float,
+                       limit_dist_atr: np.ndarray) -> Tuple[np.ndarray, int]:
     """
-    JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers and Cooldown.
+    JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers, Cooldown, and Limit Orders.
     """
     n = len(signals)
     
@@ -34,6 +35,10 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     
     # Barrier Exit Prices
     barrier_exit_prices = np.zeros(n, dtype=np.float64)
+    
+    # Limit Fill Tracking (0=Market, 1=Limit)
+    # Used for Cost Calculation
+    entry_fill_type = 0 
     
     # Iterate all bars
     for i in range(n):
@@ -92,27 +97,71 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         if force_close:
             realized_signals[i] = 0.0
             position = 0.0
+            entry_fill_type = 0
         elif position == 0.0:
             # New Entry Logic
             sig = realized_signals[i]
             if sig != 0.0 and cooldown == 0:
-                # Calculate Size
-                size = 1.0
-                if vol_targeting:
-                    eff_sl = sl_mult if sl_mult > 0 else 1.0
-                    eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
-                    calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
-                    size = min(max(calc_size, min_lots), max_lots)
+                # --- LIMIT ORDER LOGIC ---
+                limit_dist = limit_dist_atr[i]
+                filled = True
+                fill_price = prices[i] # Default Market (Open)
+                fill_type = 0 # Market
                 
-                position = np.sign(sig) * size
-                entry_price = prices[i]
-                entry_atr = atr_vec[i]
-                entry_idx = i
+                if limit_dist > 0:
+                    # Limit Order Attempt
+                    current_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                    dist_price = limit_dist * current_atr
+                    
+                    if sig > 0:
+                        # Buy Limit at Open - Dist
+                        target_price = prices[i] - dist_price
+                        # Check Low
+                        if lows[i] <= target_price:
+                            fill_price = target_price
+                            fill_type = 1 # Limit
+                        else:
+                            filled = False
+                            
+                    elif sig < 0:
+                        # Sell Limit at Open + Dist
+                        target_price = prices[i] + dist_price
+                        # Check High
+                        if highs[i] >= target_price:
+                            fill_price = target_price
+                            fill_type = 1 # Limit
+                        else:
+                            filled = False
+                
+                if filled:
+                    # Calculate Size
+                    size = 1.0
+                    if vol_targeting:
+                        eff_sl = sl_mult if sl_mult > 0 else 1.0
+                        eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                        calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
+                        size = min(max(calc_size, min_lots), max_lots)
+                    
+                    position = np.sign(sig) * size
+                    entry_price = fill_price
+                    entry_atr = atr_vec[i]
+                    entry_idx = i
+                    entry_fill_type = fill_type
+                else:
+                    # Missed Limit Order
+                    realized_signals[i] = 0.0
+                    position = 0.0
+                    
         else:
             # Position Active: Check for Reversal
             sig = realized_signals[i]
             if sig != 0.0 and np.sign(sig) != np.sign(position):
-                # Reversal - Calc New Size
+                # Reversal Logic
+                # Currently treating reversals as Market Orders for exit of old + Market/Limit for new?
+                # For simplicity: Reversals are Market Orders (Simulating "Get me out and flip now")
+                # UNLESS we want to support Limit Reversals? Too complex for v1.
+                # Let's enforce Market Fill on Reversal for safety.
+                
                 size = 1.0
                 if vol_targeting:
                     eff_sl = sl_mult if sl_mult > 0 else 1.0
@@ -124,10 +173,9 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                 entry_price = prices[i]
                 entry_atr = atr_vec[i]
                 entry_idx = i
+                entry_fill_type = 0 # Market Reversal
             else:
-                # Hold - ensure signal matches held position (size and all)
-                # But realized_signals originally only has -1/1/0.
-                # We need to overwrite it with the actual held position size.
+                # Hold
                 pass
             
         realized_signals[i] = position
@@ -140,34 +188,81 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         curr_pos = realized_signals[i]
         current_price = prices[i]
         
+        # Determine Execution Price for PnL
+        # If we entered this bar (prev_pos == 0 and curr_pos != 0), use entry_price (which might be limit)
+        # If we exited this bar (prev_pos != 0 and curr_pos != prev_pos), check exit price
+        
+        exec_price = current_price # Default
+        
+        # Override price if Barrier Exit
         if barrier_exit_prices[i] != 0.0:
-            current_price = barrier_exit_prices[i]
+            exec_price = barrier_exit_prices[i]
             
+        # PnL Logic
         if i > 0:
-            price_change = current_price - prices[i-1]
+            # If holding, mark to market with Open[i]
+            # But if we just entered at Limit, we need to correct the 'open' price to 'limit' price?
+            # Standard Mark-to-Market: PnL = (Price[i] - Price[i-1]) * Position
+            # This assumes we entered at Price[i-1]. 
+            # If we enter at T, we pay cost.
+            
+            # Gross PnL from holding prev_pos
+            price_change = exec_price - prices[i-1]
             gross_pnl = prev_pos * lot_size * price_change
+            
+            # Transaction Cost
             pos_change = abs(curr_pos - prev_pos)
             
-            cost = utrade.calculate_cost(
-                pos_change, current_price, atr_vec[i], lot_size, 
-                spread_pct, comm_pct, min_comm, slippage_factor, 
-                config.COMMISSION_THRESHOLD
-            )
+            cost = 0.0
+            if pos_change > 0:
+                # Determine Effective Spread for this trade
+                # If entering (prev=0 -> curr!=0) and it was a Limit Fill (fill_type=1) -> Spread = 0
+                # But here we iterate linearly. We need to know if *this specific transaction* was limit.
+                
+                # Simplified: If we are entering a new position (prev=0)
+                # We can check limit_dist_atr[i]. If > 0 and we filled, spread=0.
+                
+                # However, loop variables don't track "Did we just fill limit?".
+                # But we have entry_price! 
+                # If we just entered, the PnL math handles the price diff.
+                # Cost is purely Spread + Comm.
+                
+                # If Entering:
+                is_limit_entry = False
+                if prev_pos == 0 and curr_pos != 0:
+                    # Check if entry price differs from Open (Market)
+                    # OR check limit_dist_atr
+                    if limit_dist_atr[i] > 0:
+                         is_limit_entry = True
+                
+                eff_spread = 0.0 if is_limit_entry else spread_pct
+                
+                cost = utrade.calculate_cost(
+                    pos_change, exec_price, atr_vec[i], lot_size, 
+                    eff_spread, comm_pct, min_comm, slippage_factor, 
+                    config.COMMISSION_THRESHOLD
+                )
+                if prev_pos == 0: trade_count += 1
             
             net_pnl = gross_pnl - cost
             net_returns[i] = net_pnl / account_size
-            if pos_change > 0: trade_count += 1
-        else:
-            pos_change = abs(curr_pos - 0.0)
             
-            cost = utrade.calculate_cost(
-                pos_change, prices[i], atr_vec[i], lot_size, 
-                spread_pct, comm_pct, min_comm, slippage_factor, 
-                config.COMMISSION_THRESHOLD
-            )
+        else:
+            # First bar
+            pos_change = abs(curr_pos - 0.0)
+            cost = 0.0
+            if pos_change > 0:
+                is_limit_entry = (limit_dist_atr[i] > 0)
+                eff_spread = 0.0 if is_limit_entry else spread_pct
+                
+                cost = utrade.calculate_cost(
+                    pos_change, prices[i], atr_vec[i], lot_size, 
+                    eff_spread, comm_pct, min_comm, slippage_factor, 
+                    config.COMMISSION_THRESHOLD
+                )
+                trade_count += 1
             
             net_returns[i] = -cost / account_size
-            if pos_change > 0: trade_count += 1
                 
         prev_pos = curr_pos
 
@@ -230,7 +325,8 @@ class TradeSimulator:
                  atr: Optional[np.ndarray] = None,
                  cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS,
                  vol_targeting: bool = True,
-                 target_risk_pct: float = config.RISK_PER_TRADE_PERCENT) -> Tuple[List[Trade], np.ndarray]:
+                 target_risk_pct: float = config.RISK_PER_TRADE_PERCENT,
+                 limit_dist_atr: Optional[np.ndarray] = None) -> Tuple[List[Trade], np.ndarray]:
         """
         Simulates trading a signal vector with barriers.
         Detailed version returning Trade objects for visualization.
@@ -245,6 +341,7 @@ class TradeSimulator:
         h_vec = highs if highs is not None else self.prices
         l_vec = lows if lows is not None else self.prices
         atr_vec = atr if atr is not None else np.zeros(self.n_bars)
+        limit_vec = limit_dist_atr if limit_dist_atr is not None else np.zeros(self.n_bars)
         
         # State
         current_equity = self.account_size
@@ -333,13 +430,43 @@ class TradeSimulator:
             
             # --- POSITION SIZING LOGIC ---
             target_size = 0.0
+            
+            # Limit Execution Logic
+            # If target_pos != 0 and position == 0, check Limit
+            fill_price = price # Default to Market (Open)
+            is_limit_fill = False
+            limit_dist = limit_vec[i]
+            
+            if target_pos != 0 and position == 0:
+                if limit_dist > 0:
+                    # Attempt Limit
+                    current_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
+                    dist_price = limit_dist * current_atr
+                    
+                    if target_pos > 0:
+                        # Buy Limit
+                        limit_p = price - dist_price
+                        if l_vec[i] <= limit_p:
+                            fill_price = limit_p
+                            is_limit_fill = True
+                        else:
+                            # Missed
+                            target_pos = 0
+                    elif target_pos < 0:
+                        # Sell Limit
+                        limit_p = price + dist_price
+                        if h_vec[i] >= limit_p:
+                            fill_price = limit_p
+                            is_limit_fill = True
+                        else:
+                            # Missed
+                            target_pos = 0
+            
             if target_pos != 0:
                 if position == 0:
                      # New Entry - Calculate Size
                      if vol_targeting and use_atr:
                          # Risk Parity Sizing
-                         # Risk = Size * LotSize * (SL_Mult * ATR)
-                         # Size = Risk / (LotSize * SL_Mult * ATR)
                          eff_sl = sl_mult if sl_mult > 0 else 1.0
                          eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
                          target_risk_dollars = self.account_size * target_risk_pct
@@ -359,7 +486,10 @@ class TradeSimulator:
             if target_pos != position:
                 # change is now difference in signed lots
                 change = target_pos - position
-                exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else price
+                
+                # Use calculated fill_price for entry, or exit price
+                # If we are exiting (target=0), use barrier_exit or current market price
+                exec_price = barrier_exit_price if (exit_signal and barrier_exit_price != 0) else fill_price
                 
                 # Adjustment for difference between Open Price (booked in step_pnl) and Exec Price
                 # Only applies to the position we are holding (and potentially closing)
@@ -371,9 +501,15 @@ class TradeSimulator:
                 # Use lots traded (abs(change))
                 current_atr = atr_vec[i] if use_atr else (exec_price * 0.001)
                 
+                # Spread is 0 if this is a limit entry
+                # Check: Is this an entry? (position==0 -> target!=0) AND is it limit fill?
+                eff_spread = self.spread_pct
+                if position == 0 and target_pos != 0 and is_limit_fill:
+                    eff_spread = 0.0
+                
                 cost = utrade.calculate_cost(
                     abs(change), exec_price, current_atr, self.lot_size, 
-                    self.spread_pct, self.comm_pct, self.min_comm, 
+                    eff_spread, self.comm_pct, self.min_comm, 
                     config.SLIPPAGE_ATR_FACTOR, config.COMMISSION_THRESHOLD
                 )
                 
@@ -397,7 +533,7 @@ class TradeSimulator:
                         entry_price=exec_price,
                         direction=direction,
                         size=size,
-                        events=[{'idx': i, 'action': 'ENTRY', 'price': exec_price, 'size': size}]
+                        events=[{'idx': i, 'action': 'ENTRY', 'price': exec_price, 'size': size, 'limit': is_limit_fill}]
                     )
                     trade_start_idx = i
                     entry_price = exec_price
@@ -416,7 +552,8 @@ class TradeSimulator:
                       atr: Optional[np.ndarray] = None,
                       cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS,
                       vol_targeting: bool = True,
-                      target_risk_pct: float = config.RISK_PER_TRADE_PERCENT) -> Tuple[np.ndarray, int]:
+                      target_risk_pct: float = config.RISK_PER_TRADE_PERCENT,
+                      limit_dist_atr: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
         """
@@ -436,6 +573,12 @@ class TradeSimulator:
             atr_vec = atr.astype(np.float64)
             
         target_risk_dollars = self.account_size * target_risk_pct
+        
+        # Prepare Limit Distance Vector
+        if limit_dist_atr is None:
+            limit_dist_vec = np.zeros(len(signals), dtype=np.float64)
+        else:
+            limit_dist_vec = limit_dist_atr.astype(np.float64)
         
         return _jit_simulate_fast(
             signals.astype(np.float64),
@@ -458,5 +601,6 @@ class TradeSimulator:
             vol_targeting,
             target_risk_dollars,
             float(config.MIN_LOTS),
-            float(config.MAX_LOTS)
+            float(config.MAX_LOTS),
+            limit_dist_vec
         )

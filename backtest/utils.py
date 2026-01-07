@@ -123,7 +123,11 @@ def refresh_strategies(strategies_data):
                 target_dict['train_return'] = float(t_stats['total_return'])
                 target_dict['val_return'] = float(v_stats['total_return'])
                 target_dict['test_return'] = float(te_stats['total_return'])
+                
+                target_dict['train_sortino'] = float(t_stats['sortino'])
+                target_dict['val_sortino'] = float(v_stats['sortino'])
                 target_dict['test_sortino'] = float(te_stats['sortino'])
+                
                 target_dict['test_trades'] = int(te_stats['trades'])
                 target_dict['train_trades'] = int(t_stats['trades'])
                 target_dict['val_trades'] = int(v_stats['trades'])

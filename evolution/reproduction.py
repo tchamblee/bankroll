@@ -19,9 +19,11 @@ def crossover_strategies(p1: Strategy, p2: Strategy) -> Strategy:
     if random.random() < 0.5:
         child.stop_loss_pct = p1.stop_loss_pct
         child.take_profit_pct = p1.take_profit_pct
+        child.limit_dist_atr = p1.limit_dist_atr
     else:
         child.stop_loss_pct = p2.stop_loss_pct
         child.take_profit_pct = p2.take_profit_pct
+        child.limit_dist_atr = p2.limit_dist_atr
 
     child.recalculate_concordance()
     return child
@@ -35,10 +37,15 @@ def mutate_strategy(strategy: Strategy, available_features: list):
         for g in target_genes: 
             g.mutate(available_features)
     
-    # Param Mutation (10% chance)
-    if random.random() < 0.10:
-        strategy.stop_loss_pct = random.choice(config.STOP_LOSS_OPTIONS)
-        strategy.take_profit_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
+    # Param Mutation (20% chance)
+    if random.random() < 0.20:
+        param_type = random.choice(['SL', 'TP', 'LIM'])
+        if param_type == 'SL':
+            strategy.stop_loss_pct = random.choice(config.STOP_LOSS_OPTIONS)
+        elif param_type == 'TP':
+            strategy.take_profit_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
+        elif param_type == 'LIM':
+            strategy.limit_dist_atr = random.choice(config.LIMIT_DIST_OPTIONS)
 
     strategy.cleanup()
     strategy.recalculate_concordance()

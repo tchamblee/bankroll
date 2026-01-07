@@ -76,6 +76,8 @@ DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
 STOP_LOSS_OPTIONS = [2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0]
 TAKE_PROFIT_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0]
+# Weighted towards Market Orders (0.0), but allowing Limit Orders up to 1.0 ATR
+LIMIT_DIST_OPTIONS = [0.0, 0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0]
 
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
 MIN_TRADES_FOR_METRICS = 50

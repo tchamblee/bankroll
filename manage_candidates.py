@@ -108,6 +108,71 @@ def prune_inbox():
     else:
         print("✅ No duplicates found in Inbox.")
 
+def cleanup_inbox(min_sortino=1.0):
+    inbox_path = config.DIRS['STRATEGY_INBOX']
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    with open(inbox_path, 'r') as f:
+        try:
+            strategies = json.load(f)
+        except:
+            print("Inbox is corrupted.")
+            return
+
+    if not strategies:
+        print("Inbox is empty.")
+        return
+
+    print(f"🧹 Cleaning Inbox (Removing strategies with Return <= 0 or Sortino < {min_sortino})...")
+    
+    kept_strategies = []
+    removed_count = 0
+    
+    for s in strategies:
+        # Check Returns (Must be positive across board if data exists)
+        # Using flat keys which are now reliable after fix
+        t_r = s.get('train_return', 0)
+        v_r = s.get('val_return', 0)
+        te_r = s.get('test_return', 0)
+        
+        t_s = s.get('train_sortino', 0)
+        v_s = s.get('val_sortino', 0)
+        te_s = s.get('test_sortino', 0)
+        
+        # If stats dicts exist, they might be more accurate if refresh just happened
+        if 'train_stats' in s: t_r = s['train_stats'].get('ret', t_r)
+        if 'val_stats' in s: v_r = s['val_stats'].get('ret', v_r)
+        if 'test_stats' in s: te_r = s['test_stats'].get('ret', te_r)
+
+        # Logic: If any dataset has Negative Return, it's a loser.
+        # Logic: If any dataset has Sortino < min_sortino, it's weak.
+        # Exception: Test set might be 0 if not evaluated? No, refresh ensures eval.
+        
+        is_failing = False
+        reasons = []
+        
+        if t_r <= 0: is_failing = True; reasons.append(f"Train Ret {t_r*100:.1f}%")
+        if v_r <= 0: is_failing = True; reasons.append(f"Val Ret {v_r*100:.1f}%")
+        if te_r <= 0: is_failing = True; reasons.append(f"Test Ret {te_r*100:.1f}%")
+        
+        if t_s < min_sortino: is_failing = True; reasons.append(f"Train Sort {t_s:.2f}")
+        if v_s < min_sortino: is_failing = True; reasons.append(f"Val Sort {v_s:.2f}")
+        
+        if is_failing:
+            removed_count += 1
+            # print(f"   ❌ Removing {s.get('name')}: {', '.join(reasons)}")
+        else:
+            kept_strategies.append(s)
+
+    if removed_count > 0:
+        with open(inbox_path, 'w') as f:
+            json.dump(kept_strategies, f, indent=4)
+        print(f"✅ Removed {removed_count} failing strategies. {len(kept_strategies)} remain.")
+    else:
+        print("✅ Inbox is clean. No failing strategies found.")
+
 def list_inbox():
     inbox_path = config.DIRS['STRATEGY_INBOX']
     if not os.path.exists(inbox_path):
@@ -207,6 +272,7 @@ def main():
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
     subparsers.add_parser('prune', help='Remove candidates from inbox')
+    subparsers.add_parser('cleanup', help='Remove losing strategies from inbox (Ret <= 0)')
     subparsers.add_parser('help', help='Show this help message')
     
     args = parser.parse_args()
@@ -229,6 +295,8 @@ def main():
         clear_inbox()
     elif args.command == 'prune':
         prune_inbox()
+    elif args.command == 'cleanup':
+        cleanup_inbox()
     elif args.command == 'help':
         parser.print_help()
     else:

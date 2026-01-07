@@ -7,7 +7,8 @@ class Strategy:
     """
     Represents a Bidirectional Trading Strategy with Regime Filtering.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None, stop_loss_pct=None, take_profit_pct=None, horizon=None):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None, 
+                 stop_loss_pct=None, take_profit_pct=None, horizon=None, limit_dist_atr=0.0):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
@@ -15,6 +16,7 @@ class Strategy:
         self.stop_loss_pct = stop_loss_pct if stop_loss_pct is not None else config.DEFAULT_STOP_LOSS
         self.take_profit_pct = take_profit_pct if take_profit_pct is not None else config.DEFAULT_TAKE_PROFIT
         self.horizon = horizon if horizon is not None else 120 # Default
+        self.limit_dist_atr = limit_dist_atr if limit_dist_atr is not None else 0.0
         self.fitness = 0.0
         
         self.cleanup()
@@ -63,8 +65,8 @@ class Strategy:
         s_genes = sorted([str(g) for g in self.short_genes])
         
         # Combine structural elements
-        # Format: "L:[...]|S:[...]|SL:x|TP:y|H:z"
-        structure = f"L:{l_genes}|S:{s_genes}|SL:{self.stop_loss_pct}|TP:{self.take_profit_pct}|H:{self.horizon}"
+        # Format: "L:[...]|S:[...]|SL:x|TP:y|H:z|LIM:w"
+        structure = f"L:{l_genes}|S:{s_genes}|SL:{self.stop_loss_pct}|TP:{self.take_profit_pct}|H:{self.horizon}|LIM:{self.limit_dist_atr}"
         
         # Return MD5 hash for compactness (or just the string itself if fine)
         # Using string is safer for debugging collisions.
@@ -111,7 +113,8 @@ class Strategy:
             'min_concordance': self.min_concordance,
             'stop_loss_pct': self.stop_loss_pct,
             'take_profit_pct': self.take_profit_pct,
-            'horizon': self.horizon
+            'horizon': self.horizon,
+            'limit_dist_atr': self.limit_dist_atr
         }
 
     @staticmethod
@@ -123,10 +126,11 @@ class Strategy:
             min_concordance=d.get('min_concordance', 1),
             stop_loss_pct=d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS),
             take_profit_pct=d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT),
-            horizon=d.get('horizon', 120)
+            horizon=d.get('horizon', 120),
+            limit_dist_atr=d.get('limit_dist_atr', 0.0)
         )
 
     def __repr__(self):
         l_str = f" & ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
         s_str = f" & ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}] H:{self.horizon} SL:{self.stop_loss_pct} TP:{self.take_profit_pct} | LONG:({l_str}) | SHORT:({s_str})"
+        return f"[{self.name}] H:{self.horizon} SL:{self.stop_loss_pct} TP:{self.take_profit_pct} LIM:{self.limit_dist_atr} | LONG:({l_str}) | SHORT:({s_str})"

@@ -195,6 +195,17 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                     res, ret_matrix = backtester.evaluate_population([best_var], set_type='test', return_series=True, time_limit=horizon)
                     final_test_r_vec = ret_matrix[:, 0]
                     
+                    # REFRESH METRICS from the verification run (Critical: optimize_stops might have changed performance)
+                    if not res.empty:
+                        best_res = res.iloc[0]
+                        final_test_ret = float(best_res['total_return'])
+                        final_test_sortino = float(best_res['sortino'])
+                        final_test_trades = int(best_res['trades'])
+                        
+                        # Log if drastic change occurred
+                        if final_test_sortino < 0 and best_stats['test']['sortino'] > 0:
+                            print(f"       ⚠️ Optimization Regression Detected! Test Sortino dropped from {best_stats['test']['sortino']:.2f} to {final_test_sortino:.2f}")
+
                     # Also need fresh Val return vector for DSR_Val?
                     # Ideally yes. But Val improvement is guaranteed by optimizer.
                     # Let's quickly fetch Val vector too to be accurate.

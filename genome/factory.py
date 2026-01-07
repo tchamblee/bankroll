@@ -314,6 +314,7 @@ class GenomeFactory:
 
         sl_pct = random.choice(config.STOP_LOSS_OPTIONS)
         tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
+        limit_dist = random.choice(config.LIMIT_DIST_OPTIONS)
 
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
@@ -321,5 +322,6 @@ class GenomeFactory:
             short_genes=short_genes,
             min_concordance=concordance,
             stop_loss_pct=sl_pct,
-            take_profit_pct=tp_pct
+            take_profit_pct=tp_pct,
+            limit_dist_atr=limit_dist
         )
