@@ -111,8 +111,16 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             # Track closest call for debugging/info
             # Prioritize Sortino failures in logging if Return was okay
             min_sort_here = min(train_sortino, val_sortino)
-            if min_sort_here > 1.0: # Only log if it was somewhat close
-                 best_rejected_details = f"TrainSort:{train_sortino:.2f}, ValSort:{val_sortino:.2f}"
+            
+            # Update best rejected if this one is "closer" to passing (higher min score)
+            if min_sort_here > best_rejected_min_ret:
+                best_rejected_min_ret = min_sort_here
+                best_rejected_name = s.name
+                
+                # Construct detailed reason
+                failure_reason = ", ".join(rejection_reason) if rejection_reason else "Unknown"
+                best_rejected_details = f"Failed: [{failure_reason}] | TrainSort:{train_sortino:.2f}, ValSort:{val_sortino:.2f}"
+            
             continue
         
         # --- SENSITIVITY ANALYSIS (Jitter Test) ---
@@ -222,6 +230,21 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
 
             # --- FINAL GATE: Test Performance Check ---
             if final_test_ret <= 0 or final_test_sortino < config.MIN_SORTINO_THRESHOLD or final_train_sortino < config.MIN_SORTINO_THRESHOLD or final_val_sortino < config.MIN_SORTINO_THRESHOLD or final_test_trades < config.MIN_TRADES_FOR_METRICS:
+                    # Logic to capture High-Quality strategies that failed ONLY on OOS/Test
+                    min_score_here = min(final_train_sortino, final_val_sortino)
+                    
+                    if min_score_here > best_rejected_min_ret:
+                         best_rejected_min_ret = min_score_here
+                         best_rejected_name = s.name
+                         
+                         fail_reasons = []
+                         if final_test_ret <= 0: fail_reasons.append(f"TestRet({final_test_ret*100:.2f}%)")
+                         if final_test_sortino < config.MIN_SORTINO_THRESHOLD: fail_reasons.append(f"TestSort({final_test_sortino:.2f})")
+                         if final_test_trades < config.MIN_TRADES_FOR_METRICS: fail_reasons.append(f"TestTrds({final_test_trades})")
+                         
+                         reason_str = ", ".join(fail_reasons)
+                         best_rejected_details = f"Failed Test: [{reason_str}] | TrainSort:{final_train_sortino:.2f}, ValSort:{final_val_sortino:.2f}, TestSort:{final_test_sortino:.2f}"
+                    
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)

@@ -88,6 +88,10 @@ class IBKRStreamer:
                 self.ib.reqMktData(contract, "", False, False)
                 if "TICK" in t_conf["name"] or "TRIN" in t_conf["name"]:
                     logger.info(f"   📊 Monitoring Market Breadth: {contract.localSymbol}")
+                elif t_conf["secType"] in ["FUT", "CONTFUT", "STK"]:
+                    # Subscribe to Trades for Volume aggregation
+                    self.ib.reqTickByTickData(contract, "AllLast", numberOfTicks=0, ignoreSize=False)
+                    logger.info(f"   ✅ Subscribed Trades (Vol): {contract.localSymbol}")
                 else:
                     logger.info(f"   ✅ Subscribed Updates: {contract.localSymbol}")
 
@@ -130,7 +134,27 @@ class IBKRStreamer:
                     if not df.empty:
                         df["day"] = df["ts_event"].apply(lambda x: x.strftime("%Y%m%d"))
                         for day_str, group in df.groupby("day"):
-                            prefix = cfg.RAW_DATA_PREFIX_TICKS if "TICKS" in self.name_to_mode[name] else cfg.RAW_DATA_PREFIX_BARS
+                            mode = self.name_to_mode[name]
+                            prefix = cfg.RAW_DATA_PREFIX_TICKS if "TICKS" in mode else cfg.RAW_DATA_PREFIX_BARS
+                            
+                            if "TICKS" not in mode:
+                                # Resample to 1-minute bars to match backfill expectations
+                                group = group.sort_values("ts_event")
+                                group.set_index("ts_event", inplace=True)
+                                
+                                # Aggregate: Price=Last, Volume=Sum(Size)
+                                # For Indexes/FX where size is nan, volume will be 0/nan
+                                resampled = group.resample("1min").agg({
+                                    'pricebid': 'last', 'priceask': 'last',
+                                    'sizebid': 'last', 'sizeask': 'last',
+                                    'last_price': 'last', 
+                                    'last_size': 'sum' # Sum trade sizes
+                                })
+                                resampled['volume'] = resampled['last_size']
+                                resampled['last_size'] = float("nan") # match backfill format
+                                group = resampled.dropna(subset=['last_price']) # Drop empty bars
+                                group.reset_index(inplace=True)
+
                             fn = os.path.join(DATA_DIR, f"{prefix}_{name}_{day_str}.parquet")
                             save_cols = [c for c in self.l1_cols] 
                             # Use global save_chunk
@@ -167,10 +191,30 @@ class IBKRStreamer:
                 ts = ticker.time
                 if not ts: ts = datetime.now(timezone.utc)
                 elif ts.tzinfo is None: ts = ts.replace(tzinfo=timezone.utc)
-                last_p = ticker.last if ticker.last and not pd.isna(ticker.last) else ticker.close
-                if last_p and not pd.isna(last_p):
-                     self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), last_p, float("nan"), float("nan")])
-                     updated = True
+                
+                # If we have TickByTick trades (FUT/STK), use them for Volume
+                if ticker.tickByTicks:
+                    for tick in ticker.tickByTicks:
+                        if isinstance(tick, (TickByTickAllLast,)):
+                            tick_ts = tick.time.replace(tzinfo=timezone.utc)
+                            self.buffers[name].append([tick_ts, float("nan"), float("nan"), float("nan"), float("nan"), tick.price, tick.size, float("nan")])
+                            updated = True
+                
+                # Fallback/Complementary: Snapshots (for IND/FX or Low Liquidity)
+                # Only use snapshot if we don't have TickByTick active for this symbol?
+                # Actually, duplicate updates are fine, they just overwrite 'last' in resampling. 
+                # But summing 'last_size' from snapshots is WRONG (it's size of last trade, not volume since last snapshot).
+                # So for FUT/STK (where we have Ticks), we should IGNORE snapshot 'last_size' to avoid double counting volume?
+                # No, 'last_size' in snapshot is just "size of last trade".
+                
+                is_trade_sub = conf["secType"] in ["FUT", "CONTFUT", "STK"]
+                
+                if not is_trade_sub:
+                    # For IND/FX, take snapshot last
+                    last_p = ticker.last if ticker.last and not pd.isna(ticker.last) else ticker.close
+                    if last_p and not pd.isna(last_p):
+                         self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), last_p, float("nan"), float("nan")])
+                         updated = True
 
         if updated:
             self.last_data_time = datetime.now(timezone.utc)

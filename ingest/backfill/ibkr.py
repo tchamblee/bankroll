@@ -213,6 +213,7 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
             if bars:
                 data = [{
                     "ts_event": b.date.replace(tzinfo=timezone.utc) if b.date.tzinfo is None else b.date,
+                    "open": b.open, "high": b.high, "low": b.low,
                     "pricebid": float("nan"), "priceask": float("nan"), "sizebid": float("nan"), "sizeask": float("nan"),
                     "last_price": b.close, "last_size": float("nan"), "volume": b.volume
                 } for b in bars]
@@ -222,7 +223,7 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
                          logger.warning(f"      [REPAIR] {name} {date_str}: Replaced {existing_len} rows with {len(data)} rows.")
                          df = pd.DataFrame(data).drop_duplicates(subset=["ts_event"])
                          df = df.sort_values(by="ts_event").reset_index(drop=True)
-                         save_chunk(df, filename)
+                         df.to_parquet(filename, index=False)
                     elif len(data) == existing_len:
                          logger.info(f"      [VERIFY OK] {name} {date_str}: Count matches ({existing_len}). Skipping write.")
                          return
