@@ -88,10 +88,6 @@ class IBKRStreamer:
                 self.ib.reqMktData(contract, "", False, False)
                 if "TICK" in t_conf["name"] or "TRIN" in t_conf["name"]:
                     logger.info(f"   📊 Monitoring Market Breadth: {contract.localSymbol}")
-                elif t_conf["secType"] in ["FUT", "CONTFUT", "STK"]:
-                    # Subscribe to Trades for Volume aggregation
-                    self.ib.reqTickByTickData(contract, "AllLast", numberOfTicks=0, ignoreSize=False)
-                    logger.info(f"   ✅ Subscribed Trades (Vol): {contract.localSymbol}")
                 else:
                     logger.info(f"   ✅ Subscribed Updates: {contract.localSymbol}")
 
@@ -184,10 +180,10 @@ class IBKRStreamer:
                         if ts.tzinfo is None: ts = ts.replace(tzinfo=timezone.utc)
                         
                         if isinstance(tick, TickByTickBidAsk):
-                            self.buffers[name].append([ts, tick.bidPrice, tick.askPrice, tick.bidSize, tick.askSize, float("nan"), float("nan"), float("nan")])
+                            self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), tick.bidPrice, tick.askPrice, tick.bidSize, tick.askSize, float("nan"), float("nan"), float("nan")])
                             updated = True
                         elif isinstance(tick, (TickByTickAllLast,)):
-                            self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), tick.price, tick.size, float("nan")])
+                            self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), tick.price, tick.size, float("nan")])
                             updated = True
 
             elif conf["mode"] == "BARS_TRADES_1MIN":
@@ -195,29 +191,14 @@ class IBKRStreamer:
                 if not ts: ts = datetime.now(timezone.utc)
                 elif ts.tzinfo is None: ts = ts.replace(tzinfo=timezone.utc)
                 
-                # If we have TickByTick trades (FUT/STK), use them for Volume
-                if ticker.tickByTicks:
-                    for tick in ticker.tickByTicks:
-                        if isinstance(tick, (TickByTickAllLast,)):
-                            tick_ts = tick.time.replace(tzinfo=timezone.utc)
-                            self.buffers[name].append([tick_ts, float("nan"), float("nan"), float("nan"), float("nan"), tick.price, tick.size, float("nan")])
-                            updated = True
+                # Snapshot processing
+                last_p = ticker.last if ticker.last and not pd.isna(ticker.last) else ticker.close
+                last_s = ticker.lastSize if ticker.lastSize and not pd.isna(ticker.lastSize) else float("nan")
                 
-                # Fallback/Complementary: Snapshots (for IND/FX or Low Liquidity)
-                # Only use snapshot if we don't have TickByTick active for this symbol?
-                # Actually, duplicate updates are fine, they just overwrite 'last' in resampling. 
-                # But summing 'last_size' from snapshots is WRONG (it's size of last trade, not volume since last snapshot).
-                # So for FUT/STK (where we have Ticks), we should IGNORE snapshot 'last_size' to avoid double counting volume?
-                # No, 'last_size' in snapshot is just "size of last trade".
-                
-                is_trade_sub = conf["secType"] in ["FUT", "CONTFUT", "STK"]
-                
-                if not is_trade_sub:
-                    # For IND/FX, take snapshot last
-                    last_p = ticker.last if ticker.last and not pd.isna(ticker.last) else ticker.close
-                    if last_p and not pd.isna(last_p):
-                         self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), last_p, float("nan"), float("nan")])
-                         updated = True
+                if last_p and not pd.isna(last_p):
+                     # Buffer columns: ["ts_event", "open", "high", "low", "pricebid", "priceask", "sizebid", "sizeask", "last_price", "last_size", "volume"]
+                     self.buffers[name].append([ts, float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), float("nan"), last_p, last_s, float("nan")])
+                     updated = True
 
         if updated:
             self.last_data_time = datetime.now(timezone.utc)
