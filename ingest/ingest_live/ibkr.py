@@ -18,7 +18,7 @@ class IBKRStreamer:
         self.buffers = {}
         self.contract_map = {}
         self.name_to_mode = {}
-        self.l1_cols = ["ts_event", "pricebid", "priceask", "sizebid", "sizeask", "last_price", "last_size", "volume"]
+        self.l1_cols = ["ts_event", "open", "high", "low", "pricebid", "priceask", "sizebid", "sizeask", "last_price", "last_size", "volume"]
 
     def on_error(self, reqId, errorCode, errorString, contract):
         logger.error(f"IB Error {errorCode}: {errorString} (ReqId: {reqId})")
@@ -145,12 +145,15 @@ class IBKRStreamer:
                                 # Aggregate: Price=Last, Volume=Sum(Size)
                                 # For Indexes/FX where size is nan, volume will be 0/nan
                                 resampled = group.resample("1min").agg({
-                                    'pricebid': 'last', 'priceask': 'last',
-                                    'sizebid': 'last', 'sizeask': 'last',
-                                    'last_price': 'last', 
+                                    'last_price': ['first', 'max', 'min', 'last'],
                                     'last_size': 'sum' # Sum trade sizes
                                 })
-                                resampled['volume'] = resampled['last_size']
+                                # Flatten columns
+                                resampled.columns = ['open', 'high', 'low', 'last_price', 'volume']
+                                resampled['pricebid'] = float("nan")
+                                resampled['priceask'] = float("nan")
+                                resampled['sizebid'] = float("nan")
+                                resampled['sizeask'] = float("nan")
                                 resampled['last_size'] = float("nan") # match backfill format
                                 group = resampled.dropna(subset=['last_price']) # Drop empty bars
                                 group.reset_index(inplace=True)
