@@ -56,7 +56,36 @@ class GenomeFactory:
 
         for f in self.features:
             if f in df.columns:
-                self.feature_stats[f] = {'mean': df[f].mean(), 'std': df[f].std()}
+                self.feature_stats[f] = {
+                    'mean': df[f].mean(), 
+                    'std': df[f].std(),
+                    'min': df[f].min(),
+                    'max': df[f].max()
+                }
+
+    def _get_valid_threshold(self, feature, desired_sigma):
+        """
+        Returns a threshold that is physically reachable for the feature.
+        Adjusts 'desired_sigma' if it exceeds the feature's Min/Max Z-scores.
+        """
+        stats = self.feature_stats.get(feature)
+        if not stats or stats['std'] == 0: return desired_sigma
+        
+        # Calculate raw value implied by sigma
+        raw_val = stats['mean'] + desired_sigma * stats['std']
+        
+        # Check Bounds with a safety margin
+        if raw_val < stats['min']:
+            # If desired is below min, clamp to Min + small buffer
+            # Return equivalent sigma
+            safe_raw = stats['min'] + 0.1 * stats['std']
+            return (safe_raw - stats['mean']) / stats['std']
+            
+        if raw_val > stats['max']:
+            safe_raw = stats['max'] - 0.1 * stats['std']
+            return (safe_raw - stats['mean']) / stats['std']
+            
+        return desired_sigma
 
     def _weighted_choice(self, pool):
         """
@@ -100,7 +129,9 @@ class GenomeFactory:
                 stats = self.feature_stats.get(regime, {'mean': 0, 'std': 1})
                 reg_thresh = stats['mean'] + random.choice([-0.5, 0.5]) * stats['std']
             
-            threshold = random.choice([2.0, 2.5, 3.0]) # High Sigma for Fade
+            raw_thresh = random.choice([2.0, 2.5, 3.0]) 
+            threshold = abs(self._get_valid_threshold(trigger, -raw_thresh if random.random() < 0.5 else raw_thresh)) # Ensure reachable magnitude
+            
             direction = random.choice(['long', 'short'])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             
@@ -111,7 +142,8 @@ class GenomeFactory:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
-            threshold = random.choice([-1.5, -1.25, 1.25, 1.5])
+            raw_thresh = random.choice([-1.5, -1.25, 1.25, 1.5])
+            threshold = self._get_valid_threshold(feature, raw_thresh)
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
         
@@ -119,7 +151,8 @@ class GenomeFactory:
         elif rand_val < 0.45:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
+            raw_thresh = random.choice([-1.5, -1.0, 1.0, 1.5])
+            threshold = self._get_valid_threshold(feature, raw_thresh)
             window = random.choice(VALID_ZSCORE_WINDOWS)
             slope = random.uniform(0.5, 2.0)
             return SoftZScoreGene(feature, operator, threshold, window, slope)
@@ -212,7 +245,9 @@ class GenomeFactory:
             adaptive_feature = f"zscore_{feature}_{z_window}"
             
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-1.5, -1.0, 1.0, 1.5]) # Relaxed Sigma
+            raw_thresh = random.choice([-1.5, -1.0, 1.0, 1.5]) # Relaxed Sigma
+            threshold = self._get_valid_threshold(feature, raw_thresh) # Check against underlying feature stats
+            
             window = random.choice(VALID_ZSCORE_WINDOWS) # Lookback for the event itself
             
             return EventGene(adaptive_feature, operator, threshold, window)
@@ -273,7 +308,8 @@ class GenomeFactory:
         feature = self._weighted_choice(self.features)
         operator = random.choice(['>', '<'])
         # Lower thresholds to encourage activity (1.5 sigma instead of 2.0)
-        threshold = random.choice([-1.5, 1.5, 2.0])
+        raw_thresh = random.choice([-1.5, 1.5, 2.0])
+        threshold = self._get_valid_threshold(feature, raw_thresh)
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 

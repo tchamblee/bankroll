@@ -290,6 +290,20 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     if not output:
         print(f"❌ No strategies passed the strict Train/Val/Test filters (Threshold: {config.MIN_RETURN_THRESHOLD*100:.2f}%).")
         if best_rejected_name:
+            # If the best rejected candidate failed at Train/Val, we might want to see its Test stats anyway
+            if "TestSort" not in best_rejected_details:
+                rejected_strat = next((s for s in top_candidates if s.name == best_rejected_name), None)
+                if rejected_strat:
+                    print(f"   🔎 Peeking at OOS Test performance for {best_rejected_name}...")
+                    try:
+                        t_res, _ = backtester.evaluate_population([rejected_strat], set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
+                        if not t_res.empty:
+                            t_sort = float(t_res.iloc[0]['sortino'])
+                            t_ret = float(t_res.iloc[0]['total_return'])
+                            best_rejected_details += f" | (Peeking Test: Sort:{t_sort:.2f}, Ret:{t_ret*100:.2f}%)"
+                    except Exception as e:
+                        best_rejected_details += f" | (Test Eval Failed: {e})"
+
             print(f"   👀 Closest Candidate: {best_rejected_name}")
             print(f"      Stats: {best_rejected_details}")
         else:

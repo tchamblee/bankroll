@@ -43,8 +43,6 @@ def update_hall_of_fame(hall_of_fame, backtester, candidates, gen, max_gens=100,
         if cand_hash in existing_hashes:
             continue
             
-        if cand.fitness < 0.1: continue # Ignore junk
-        
         n_trades = trades_batch[i]
         total_ret = np.sum(rets_batch[:, i])
             
