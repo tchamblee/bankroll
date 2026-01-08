@@ -60,6 +60,38 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         print("No strategies survived.")
         return
 
+    # --- AUTO-SPLIT Long/Short Variants ---
+    # Automatically test Long-Only and Short-Only versions of bidirectional strategies
+    # to rescue good logic from bad sides (e.g., Good Long + Bad Short).
+    original_count = len(top_candidates)
+    expanded_candidates = []
+    for s in top_candidates:
+        expanded_candidates.append(s)
+        
+        # Only split if it has BOTH sides active (and genes to split)
+        if s.long_genes and s.short_genes:
+            # Create Long-Only
+            l_strat = s.copy()
+            l_strat.name = f"{s.name}_Long"
+            l_strat.short_genes = []
+            l_strat.recalculate_concordance()
+            expanded_candidates.append(l_strat)
+            
+            # Create Short-Only
+            s_strat = s.copy()
+            s_strat.name = f"{s.name}_Short"
+            s_strat.long_genes = []
+            s_strat.recalculate_concordance()
+            expanded_candidates.append(s_strat)
+            
+            # Inherit parent's robust score for the map so they are treated as valid candidates
+            parent_score = val_fitness_map.get(s.name, 0.0)
+            val_fitness_map[l_strat.name] = parent_score
+            val_fitness_map[s_strat.name] = parent_score
+
+    top_candidates = expanded_candidates
+    print(f"    🧬 Expanded {original_count} candidates to {len(top_candidates)} (added Long/Short variants)")
+
     # 1. Evaluate on Development Sets (Train + Validation) ONLY
     val_res, val_returns = backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
     train_res = backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
