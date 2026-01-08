@@ -73,9 +73,7 @@ class EvaluationMixin:
             for j, strat in enumerate(chunk_pop):
                 final_sortino = sortino[j]
                 
-                if trades_count[j] < target_min_trades:
-                     final_sortino = -10.0
-                elif stability_ratio[j] > config.STABILITY_PENALTY_THRESHOLD and total_ret[j] > 0: 
+                if stability_ratio[j] > config.STABILITY_PENALTY_THRESHOLD and total_ret[j] > 0: 
                     final_sortino *= config.STABILITY_PENALTY_FACTOR
                 
                 strat.fitness = final_sortino
@@ -156,10 +154,7 @@ class EvaluationMixin:
             downside_std = np.maximum(downside_rms, config.EPSILON)
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
-            sortino = np.nan_to_num(sortino, nan=-10.0)
-            
-            low_trades_mask = trades_count < target_min_trades
-            sortino[low_trades_mask] = -10.0
+            sortino = np.nan_to_num(sortino, nan=0.0)
             
             unstable_mask = (stability_ratio > config.STABILITY_PENALTY_THRESHOLD) & (total_ret > 0)
             sortino[unstable_mask] *= config.STABILITY_PENALTY_FACTOR
@@ -223,12 +218,6 @@ class EvaluationMixin:
             downside_std = np.sqrt(np.mean(downside**2, axis=0)) + config.EPSILON
             
             sortino = (avg / downside_std) * np.sqrt(self.annualization_factor)
-            
-            slice_ratio = len(test_idx) / n_bars
-            min_trades_slice = max(config.CPCV_MIN_TRADES_SLICE, int(10 * slice_ratio))
-            
-            low_trades_mask = trades_count < min_trades_slice
-            sortino[low_trades_mask] = -1.0
             
             path_scores[:, i] = sortino
             
