@@ -52,6 +52,7 @@ def audit_genes():
         ConsecutiveGene('up', '>', 2),
         DeltaGene('feature_a', '>', 0.1, 5),
         MeanReversionGene('feature_a', 'regime_x', 2.0, 0.5, 'long', 10),
+        SeasonalityGene('>', 1.5),
         TimeGene('hour', '>', 12),
         HysteresisGene('feature_a', '>', 10),
         ProximityGene('feature_a', 'max', 0.1, 10),
@@ -129,6 +130,7 @@ def audit_genes():
         'delta_feature_a_5': np.random.randn(n),
         'slope_feature_a_10': np.random.randn(n),
         'slope_feature_b_10': np.random.randn(n),
+        'seasonal_deviation': np.random.randn(n),
         'consecutive_up': np.random.randint(0, 5, n),
         'consecutive_down': np.random.randint(0, 5, n),
         'time_hour': np.random.randint(0, 24, n)
