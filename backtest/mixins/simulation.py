@@ -32,9 +32,15 @@ class SimulationMixin:
         n_jobs = min(6, multiprocessing.cpu_count())
         batch_size = max(1, n_strats // (16 if n_strats > 100 else 4))
         
-        params_list = [{'sl': getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS), 
-                        'tp': getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
-                        'limit_dist': getattr(s, 'limit_dist_atr', 0.0)} for s in strategies]
+        params_list = [{
+            'sl': getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
+            'tp': getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
+            'limit_dist': getattr(s, 'limit_dist_atr', 0.0),
+            'sl_long': s.get_effective_sl('long') if hasattr(s, 'get_effective_sl') else getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
+            'sl_short': s.get_effective_sl('short') if hasattr(s, 'get_effective_sl') else getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
+            'tp_long': s.get_effective_tp('long') if hasattr(s, 'get_effective_tp') else getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
+            'tp_short': s.get_effective_tp('short') if hasattr(s, 'get_effective_tp') else getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
+        } for s in strategies]
         
         chunks_sig = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]
         chunks_params = [params_list[i:i + batch_size] for i in range(0, n_strats, batch_size)]

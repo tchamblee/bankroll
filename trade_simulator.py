@@ -7,15 +7,16 @@ import config
 from utils import trading as utrade
 
 @jit(nopython=True, nogil=True, cache=True)
-def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray, 
+def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                        highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                        hours: np.ndarray, weekdays: np.ndarray,
                        lot_size: float, spread_pct: float, comm_pct: float, min_comm: float,
-                       account_size: float, sl_mult: float, 
+                       account_size: float, sl_mult: float,
                        tp_mult: float, time_limit_bars: int, cooldown_bars: int,
                        slippage_factor: float,
                        vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float,
-                       limit_dist_atr: np.ndarray) -> Tuple[np.ndarray, int]:
+                       limit_dist_atr: np.ndarray,
+                       sl_long: float, sl_short: float, tp_long: float, tp_short: float) -> Tuple[np.ndarray, int]:
     """
     JIT-Compiled Event-Driven Simulation with Dynamic ATR Barriers, Cooldown, and Limit Orders.
     """
@@ -56,10 +57,11 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         if i > 0 and position != 0.0:
             h_prev = highs[i-1]
             l_prev = lows[i-1]
-            
+
             if position > 0:
+                # Use long-specific barriers
                 hit, exit_p, code = utrade.check_barrier_long(
-                    entry_price, entry_atr, l_prev, h_prev, sl_mult, tp_mult
+                    entry_price, entry_atr, l_prev, h_prev, sl_long, tp_long
                 )
                 if hit:
                     position = 0.0
@@ -69,8 +71,9 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                     if code == 1: is_sl_hit = True
 
             elif position < 0:
+                # Use short-specific barriers
                 hit, exit_p, code = utrade.check_barrier_short(
-                    entry_price, entry_atr, l_prev, h_prev, sl_mult, tp_mult
+                    entry_price, entry_atr, l_prev, h_prev, sl_short, tp_short
                 )
                 if hit:
                     position = 0.0
@@ -138,10 +141,14 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                             filled = False
                 
                 if filled:
-                    # Calculate Size
+                    # Calculate Size using direction-specific SL for vol targeting
                     size = 1.0
                     if vol_targeting:
-                        eff_sl = sl_mult if sl_mult > 0 else 1.0
+                        # Use appropriate SL based on trade direction
+                        if sig > 0:
+                            eff_sl = sl_long if sl_long > 0 else 1.0
+                        else:
+                            eff_sl = sl_short if sl_short > 0 else 1.0
                         eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
                         calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
                         size = min(max(calc_size, min_lots), max_lots)
@@ -167,10 +174,14 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                 # For simplicity: Reversals are Market Orders (Simulating "Get me out and flip now")
                 # UNLESS we want to support Limit Reversals? Too complex for v1.
                 # Let's enforce Market Fill on Reversal for safety.
-                
+
                 size = 1.0
                 if vol_targeting:
-                    eff_sl = sl_mult if sl_mult > 0 else 1.0
+                    # Use appropriate SL based on new trade direction
+                    if sig > 0:
+                        eff_sl = sl_long if sl_long > 0 else 1.0
+                    else:
+                        eff_sl = sl_short if sl_short > 0 else 1.0
                     eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
                     calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
                     size = min(max(calc_size, min_lots), max_lots)
@@ -566,33 +577,41 @@ class TradeSimulator:
                       cooldown_bars: int = config.STOP_LOSS_COOLDOWN_BARS,
                       vol_targeting: bool = True,
                       target_risk_pct: float = config.RISK_PER_TRADE_PERCENT,
-                      limit_dist_atr: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
+                      limit_dist_atr: Optional[np.ndarray] = None,
+                      sl_long: Optional[float] = None, sl_short: Optional[float] = None,
+                      tp_long: Optional[float] = None, tp_short: Optional[float] = None) -> Tuple[np.ndarray, int]:
         """
         High-Performance Simulation: Event-Driven.
         """
         limit_val = time_limit_bars if time_limit_bars is not None else 0
-        
+
         sl_mult = stop_loss_pct if stop_loss_pct is not None else 0.0
         tp_mult = take_profit_pct if take_profit_pct is not None else 0.0
-        
+
+        # Directional barriers (default to symmetric if not specified)
+        eff_sl_long = sl_long if sl_long is not None else sl_mult
+        eff_sl_short = sl_short if sl_short is not None else sl_mult
+        eff_tp_long = tp_long if tp_long is not None else tp_mult
+        eff_tp_short = tp_short if tp_short is not None else tp_mult
+
         h_arr = hours if hours is not None else self.hours
         w_arr = weekdays if weekdays is not None else self.weekdays
         high_vec = highs.astype(np.float64) if highs is not None else self.prices
         low_vec = lows.astype(np.float64) if lows is not None else self.prices
-        
+
         if atr is None:
-            atr_vec = self.prices * 0.001 
+            atr_vec = self.prices * 0.001
         else:
             atr_vec = atr.astype(np.float64)
-            
+
         target_risk_dollars = self.account_size * target_risk_pct
-        
+
         # Prepare Limit Distance Vector
         if limit_dist_atr is None:
             limit_dist_vec = np.zeros(len(signals), dtype=np.float64)
         else:
             limit_dist_vec = limit_dist_atr.astype(np.float64)
-        
+
         return _jit_simulate_fast(
             signals.astype(np.float64),
             self.prices,
@@ -615,5 +634,9 @@ class TradeSimulator:
             target_risk_dollars,
             float(config.MIN_LOTS),
             float(config.MAX_LOTS),
-            limit_dist_vec
+            limit_dist_vec,
+            eff_sl_long,
+            eff_sl_short,
+            eff_tp_long,
+            eff_tp_short
         )

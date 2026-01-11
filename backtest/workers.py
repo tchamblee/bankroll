@@ -46,14 +46,20 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
         tp = params_chunk[i].get('tp', config.DEFAULT_TAKE_PROFIT)
         sl = params_chunk[i].get('sl', config.DEFAULT_STOP_LOSS)
         limit_dist = params_chunk[i].get('limit_dist', 0.0)
-        
+
+        # Directional barriers (use symmetric if not provided)
+        sl_long = params_chunk[i].get('sl_long', sl)
+        sl_short = params_chunk[i].get('sl_short', sl)
+        tp_long = params_chunk[i].get('tp_long', tp)
+        tp_short = params_chunk[i].get('tp_short', tp)
+
         # Create Limit Distance Vector (Scalar -> Vector)
         # We only apply limit logic where signal != 0, but passing full vector is fine/fast.
         limit_vec = np.full(len(signals_chunk[:, i]), limit_dist, dtype=np.float64)
-        
+
         net_rets, t_count = simulator.simulate_fast(
-            signals_chunk[:, i], 
-            stop_loss_pct=sl, 
+            signals_chunk[:, i],
+            stop_loss_pct=sl,
             take_profit_pct=tp,
             time_limit_bars=time_limit,
             hours=hours,
@@ -63,7 +69,11 @@ def _worker_simulate(signals_chunk, params_chunk, prices, times, spread_bps, eff
             atr=atr,
             vol_targeting=True, # ENABLE VOL TARGETING FOR ALL STRATEGIES
             target_risk_pct=config.RISK_PER_TRADE_PERCENT,
-            limit_dist_atr=limit_vec
+            limit_dist_atr=limit_vec,
+            sl_long=sl_long,
+            sl_short=sl_short,
+            tp_long=tp_long,
+            tp_short=tp_short
         )
         net_returns[:, i] = net_rets
         trades_count[i] = t_count

@@ -386,6 +386,15 @@ class GenomeFactory:
         tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
         limit_dist = random.choice(config.LIMIT_DIST_OPTIONS)
 
+        # 50% chance of asymmetric barriers (directional SL/TP)
+        sl_long = sl_short = tp_long = tp_short = None
+        if random.random() < 0.5:
+            # Asymmetric: short-side typically has tighter SL (faster risk-off moves)
+            sl_long = random.choice(config.STOP_LOSS_OPTIONS)
+            sl_short = random.choice(config.STOP_LOSS_OPTIONS)
+            tp_long = random.choice(config.TAKE_PROFIT_OPTIONS)
+            tp_short = random.choice(config.TAKE_PROFIT_OPTIONS)
+
         return Strategy(
             name=f"Strat_{random.randint(1000,9999)}",
             long_genes=long_genes,
@@ -393,5 +402,9 @@ class GenomeFactory:
             min_concordance=concordance,
             stop_loss_pct=sl_pct,
             take_profit_pct=tp_pct,
-            limit_dist_atr=limit_dist
+            limit_dist_atr=limit_dist,
+            sl_long=sl_long,
+            sl_short=sl_short,
+            tp_long=tp_long,
+            tp_short=tp_short
         )

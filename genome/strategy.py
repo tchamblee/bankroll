@@ -7,8 +7,9 @@ class Strategy:
     """
     Represents a Bidirectional Trading Strategy with Regime Filtering.
     """
-    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None, 
-                 stop_loss_pct=None, take_profit_pct=None, horizon=None, limit_dist_atr=0.0):
+    def __init__(self, name="Strategy", long_genes=None, short_genes=None, min_concordance=None,
+                 stop_loss_pct=None, take_profit_pct=None, horizon=None, limit_dist_atr=0.0,
+                 sl_long=None, sl_short=None, tp_long=None, tp_short=None):
         self.name = name
         self.long_genes = long_genes if long_genes else []
         self.short_genes = short_genes if short_genes else []
@@ -18,7 +19,13 @@ class Strategy:
         self.horizon = horizon if horizon is not None else 120 # Default
         self.limit_dist_atr = limit_dist_atr if limit_dist_atr is not None else 0.0
         self.fitness = 0.0
-        
+
+        # Directional barriers (None = use symmetric stop_loss_pct/take_profit_pct)
+        self.sl_long = sl_long
+        self.sl_short = sl_short
+        self.tp_long = tp_long
+        self.tp_short = tp_short
+
         self.cleanup()
 
     def cleanup(self):
@@ -58,18 +65,41 @@ class Strategy:
         else:
             self.min_concordance = math.ceil(n * 0.51)
 
+    def get_effective_sl(self, direction):
+        """Returns the effective stop loss for the given direction ('long' or 'short')."""
+        if direction == 'long':
+            return self.sl_long if self.sl_long is not None else self.stop_loss_pct
+        else:
+            return self.sl_short if self.sl_short is not None else self.stop_loss_pct
+
+    def get_effective_tp(self, direction):
+        """Returns the effective take profit for the given direction ('long' or 'short')."""
+        if direction == 'long':
+            return self.tp_long if self.tp_long is not None else self.take_profit_pct
+        else:
+            return self.tp_short if self.tp_short is not None else self.take_profit_pct
+
+    def is_asymmetric(self):
+        """Returns True if strategy uses asymmetric barriers."""
+        return any(x is not None for x in [self.sl_long, self.sl_short, self.tp_long, self.tp_short])
+
     def get_hash(self):
         """Returns a unique hash representing the strategy logic (ignoring name)."""
         # Sort genes to ensure Order Agnostic hashing (Gene A + Gene B == Gene B + Gene A)
         l_genes = sorted([str(g) for g in self.long_genes])
         s_genes = sorted([str(g) for g in self.short_genes])
-        
+
         # Combine structural elements
-        # Format: "L:[...]|S:[...]|SL:x|TP:y|H:z|LIM:w"
-        structure = f"L:{l_genes}|S:{s_genes}|SL:{self.stop_loss_pct}|TP:{self.take_profit_pct}|H:{self.horizon}|LIM:{self.limit_dist_atr}"
-        
-        # Return MD5 hash for compactness (or just the string itself if fine)
-        # Using string is safer for debugging collisions.
+        # Include directional barriers if asymmetric
+        if self.is_asymmetric():
+            sl_str = f"SLL:{self.get_effective_sl('long')}|SLS:{self.get_effective_sl('short')}"
+            tp_str = f"TPL:{self.get_effective_tp('long')}|TPS:{self.get_effective_tp('short')}"
+        else:
+            sl_str = f"SL:{self.stop_loss_pct}"
+            tp_str = f"TP:{self.take_profit_pct}"
+
+        structure = f"L:{l_genes}|S:{s_genes}|{sl_str}|{tp_str}|H:{self.horizon}|LIM:{self.limit_dist_atr}"
+
         return structure
 
     def generate_signal(self, context: dict, cache: dict = None) -> np.array:
@@ -108,7 +138,7 @@ class Strategy:
         return net_signal
 
     def to_dict(self):
-        return {
+        d = {
             'name': self.name,
             'long_genes': [g.to_dict() for g in self.long_genes],
             'short_genes': [g.to_dict() for g in self.short_genes],
@@ -118,6 +148,16 @@ class Strategy:
             'horizon': self.horizon,
             'limit_dist_atr': self.limit_dist_atr
         }
+        # Only include directional barriers if asymmetric (keeps backwards compatibility)
+        if self.sl_long is not None:
+            d['sl_long'] = self.sl_long
+        if self.sl_short is not None:
+            d['sl_short'] = self.sl_short
+        if self.tp_long is not None:
+            d['tp_long'] = self.tp_long
+        if self.tp_short is not None:
+            d['tp_short'] = self.tp_short
+        return d
 
     @staticmethod
     def from_dict(d):
@@ -129,10 +169,18 @@ class Strategy:
             stop_loss_pct=d.get('stop_loss_pct', config.DEFAULT_STOP_LOSS),
             take_profit_pct=d.get('take_profit_pct', config.DEFAULT_TAKE_PROFIT),
             horizon=d.get('horizon', 120),
-            limit_dist_atr=d.get('limit_dist_atr', 0.0)
+            limit_dist_atr=d.get('limit_dist_atr', 0.0),
+            sl_long=d.get('sl_long'),
+            sl_short=d.get('sl_short'),
+            tp_long=d.get('tp_long'),
+            tp_short=d.get('tp_short')
         )
 
     def __repr__(self):
         l_str = f" & ".join([str(g) for g in self.long_genes]) if self.long_genes else "None"
         s_str = f" & ".join([str(g) for g in self.short_genes]) if self.short_genes else "None"
-        return f"[{self.name}] H:{self.horizon} SL:{self.stop_loss_pct} TP:{self.take_profit_pct} LIM:{self.limit_dist_atr} | LONG:({l_str}) | SHORT:({s_str})"
+        if self.is_asymmetric():
+            barrier_str = f"SL_L:{self.get_effective_sl('long')} SL_S:{self.get_effective_sl('short')} TP_L:{self.get_effective_tp('long')} TP_S:{self.get_effective_tp('short')}"
+        else:
+            barrier_str = f"SL:{self.stop_loss_pct} TP:{self.take_profit_pct}"
+        return f"[{self.name}] H:{self.horizon} {barrier_str} LIM:{self.limit_dist_atr} | LONG:({l_str}) | SHORT:({s_str})"

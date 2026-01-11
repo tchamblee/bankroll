@@ -138,27 +138,30 @@ Added `intraday_regime` and `session_bucket` features to `feature_engine/seasona
 ---
 
 ### 9. Add Asymmetric SL/TP by Direction
-- **Status:** DEFERRED
+- **Status:** FIXED (2026-01-11)
 - **Priority:** HIGH (Alpha)
 - **Estimated Impact:** Medium-High
-- **Reason:** Requires significant architectural changes across multiple files
 
 **Description:**
 EURUSD has structural skew - risk-off moves (USD strength) are faster/sharper than risk-on. Current symmetric SL/TP doesn't capture this.
 
-**Implementation Design:**
+**Fix Applied:**
 1. **Strategy class** (`genome/strategy.py`):
-   - Add `sl_long`, `sl_short`, `tp_long`, `tp_short` attributes
-   - Default to existing `stop_loss_pct`/`take_profit_pct` for backwards compatibility
-   - Update `to_dict()`, `from_dict()`, `get_hash()`, `__repr__()`
+   - Added `sl_long`, `sl_short`, `tp_long`, `tp_short` attributes
+   - Added `get_effective_sl()`, `get_effective_tp()`, `is_asymmetric()` helper methods
+   - Updated `to_dict()`, `from_dict()`, `get_hash()`, `__repr__()`
+   - Backwards compatible: None values fall back to symmetric barriers
 2. **GenomeFactory** (`genome/factory.py`):
-   - Add separate mutation for directional barriers
-   - Consider: 50% chance of symmetric (simpler), 50% chance of asymmetric
-3. **Simulation mixin** (`backtest/mixins/simulation.py`):
-   - Pass 4 barrier values instead of 2
-4. **Trade simulator** (`backtest/trade_simulator.py`):
-   - `calculate_barriers()` to accept direction-specific arrays
-   - Use `signal > 0` to select long barriers, `signal < 0` for short barriers
+   - 50% of new strategies created with asymmetric barriers
+3. **Evolution/reproduction.py**:
+   - Crossover inherits directional barriers from donor parent
+   - Mutation can modify individual directional barriers or toggle asymmetric mode
+4. **Simulation mixin** (`backtest/mixins/simulation.py`):
+   - Passes all 4 directional barrier values in params_list
+5. **Trade simulator** (`trade_simulator.py`):
+   - JIT function accepts directional barriers
+   - Uses `sl_long`/`tp_long` for long positions, `sl_short`/`tp_short` for short
+   - Vol targeting uses direction-specific SL for position sizing
 
 ---
 
@@ -273,7 +276,7 @@ Current `profile.py` only calculates yesterday's market profile. Prop traders us
 | 6 | LOW | Bug | Stability penalty asymmetry | FIXED |
 | 7 | LOW | Bug | Feature selection bias | FIXED |
 | 8 | HIGH | Alpha | Intraday regime feature | FIXED |
-| 9 | HIGH | Alpha | Asymmetric SL/TP | DEFERRED |
+| 9 | HIGH | Alpha | Asymmetric SL/TP | FIXED |
 | 10 | HIGH | Alpha | Train Sortino floor | FIXED |
 | 11 | MEDIUM | Alpha | Volatility-scaled barriers | DEFERRED |
 | 12 | MEDIUM | Alpha | News sentiment decay | FIXED |
