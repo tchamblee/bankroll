@@ -82,6 +82,11 @@ DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
 STOP_LOSS_OPTIONS = [2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0]
 TAKE_PROFIT_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0]
+
+# Volatility-Scaled Barriers: Tighten SL when vol spikes during a trade
+# If current_atr / entry_atr > VOL_SCALE_THRESHOLD, multiply SL by VOL_SCALE_TIGHTEN
+VOL_SCALE_THRESHOLD = 1.5  # Vol must spike 50%+ to trigger tightening
+VOL_SCALE_TIGHTEN = 0.8    # Tighten SL by 20% when triggered
 # Weighted towards Market Orders (0.0), but allowing Limit Orders up to 0.3 ATR
 # 0.0 appears 15 times (~75% chance). Small limits (0.05-0.2) are rare "mutations".
 LIMIT_DIST_OPTIONS = [0.0] * 15 + [0.05, 0.1, 0.15, 0.2, 0.3]

@@ -57,11 +57,13 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
         if i > 0 and position != 0.0:
             h_prev = highs[i-1]
             l_prev = lows[i-1]
+            current_atr = atr_vec[i-1]  # ATR at barrier check time
 
             if position > 0:
-                # Use long-specific barriers
+                # Use long-specific barriers with vol scaling
                 hit, exit_p, code = utrade.check_barrier_long(
-                    entry_price, entry_atr, l_prev, h_prev, sl_long, tp_long
+                    entry_price, entry_atr, l_prev, h_prev, sl_long, tp_long,
+                    current_atr, config.VOL_SCALE_THRESHOLD, config.VOL_SCALE_TIGHTEN
                 )
                 if hit:
                     position = 0.0
@@ -71,9 +73,10 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                     if code == 1: is_sl_hit = True
 
             elif position < 0:
-                # Use short-specific barriers
+                # Use short-specific barriers with vol scaling
                 hit, exit_p, code = utrade.check_barrier_short(
-                    entry_price, entry_atr, l_prev, h_prev, sl_short, tp_short
+                    entry_price, entry_atr, l_prev, h_prev, sl_short, tp_short,
+                    current_atr, config.VOL_SCALE_THRESHOLD, config.VOL_SCALE_TIGHTEN
                 )
                 if hit:
                     position = 0.0
@@ -411,20 +414,27 @@ class TradeSimulator:
                     # Barrier Checks (SL/TP)
                     h_prev = h_vec[i-1]
                     l_prev = l_vec[i-1]
-                    
+                    current_atr = atr_vec[i-1] if use_atr else 0.0
+
                     # Adapt to ATR vs Percentage
                     eff_atr = entry_atr if use_atr else entry_price
-                    
+
                     if position > 0:
-                        hit, exit_p, code = utrade.check_barrier_long(entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult)
+                        hit, exit_p, code = utrade.check_barrier_long(
+                            entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult,
+                            current_atr, config.VOL_SCALE_THRESHOLD, config.VOL_SCALE_TIGHTEN
+                        )
                         if hit:
                             exit_signal = True
                             barrier_exit_price = exit_p
                             exit_reason = "SL" if code == 1 else "TP"
                             if code == 1: is_sl = True
-                            
+
                     elif position < 0:
-                        hit, exit_p, code = utrade.check_barrier_short(entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult)
+                        hit, exit_p, code = utrade.check_barrier_short(
+                            entry_price, eff_atr, l_prev, h_prev, sl_mult, tp_mult,
+                            current_atr, config.VOL_SCALE_THRESHOLD, config.VOL_SCALE_TIGHTEN
+                        )
                         if hit:
                             exit_signal = True
                             barrier_exit_price = exit_p

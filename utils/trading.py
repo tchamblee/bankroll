@@ -24,47 +24,73 @@ def calculate_cost(pos_change: float, price: float, atr: float, lot_size: float,
     return spread_cost + comm + slippage
 
 @jit(nopython=True, nogil=True, cache=True)
-def check_barrier_long(entry_price: float, entry_atr: float, 
-                       low_prev: float, high_prev: float, 
-                       sl_mult: float, tp_mult: float):
+def check_barrier_long(entry_price: float, entry_atr: float,
+                       low_prev: float, high_prev: float,
+                       sl_mult: float, tp_mult: float,
+                       current_atr: float = 0.0,
+                       vol_scale_threshold: float = 1.5,
+                       vol_scale_tighten: float = 0.8):
     """
     Checks if Long position hit barriers.
     Returns: (hit: bool, exit_price: float, reason_code: int)
     Reason Code: 0=None, 1=SL, 2=TP
+
+    Volatility Scaling: If current_atr/entry_atr > vol_scale_threshold,
+    tighten SL by vol_scale_tighten factor to reduce risk when vol spikes.
     """
+    # Apply volatility scaling to SL if vol has spiked
+    effective_sl = sl_mult
+    if current_atr > 0 and entry_atr > 0:
+        vol_ratio = current_atr / entry_atr
+        if vol_ratio > vol_scale_threshold:
+            effective_sl = sl_mult * vol_scale_tighten
+
     # Stop Loss (Low Check)
-    if sl_mult > 0:
-        sl_price = entry_price - (entry_atr * sl_mult)
+    if effective_sl > 0:
+        sl_price = entry_price - (entry_atr * effective_sl)
         if low_prev <= sl_price:
             return True, sl_price, 1
-            
+
     # Take Profit (High Check)
     if tp_mult > 0:
         tp_price = entry_price + (entry_atr * tp_mult)
         if high_prev >= tp_price:
             return True, tp_price, 2
-            
+
     return False, 0.0, 0
 
 @jit(nopython=True, nogil=True, cache=True)
-def check_barrier_short(entry_price: float, entry_atr: float, 
-                        low_prev: float, high_prev: float, 
-                        sl_mult: float, tp_mult: float):
+def check_barrier_short(entry_price: float, entry_atr: float,
+                        low_prev: float, high_prev: float,
+                        sl_mult: float, tp_mult: float,
+                        current_atr: float = 0.0,
+                        vol_scale_threshold: float = 1.5,
+                        vol_scale_tighten: float = 0.8):
     """
     Checks if Short position hit barriers.
     Returns: (hit: bool, exit_price: float, reason_code: int)
     Reason Code: 0=None, 1=SL, 2=TP
+
+    Volatility Scaling: If current_atr/entry_atr > vol_scale_threshold,
+    tighten SL by vol_scale_tighten factor to reduce risk when vol spikes.
     """
+    # Apply volatility scaling to SL if vol has spiked
+    effective_sl = sl_mult
+    if current_atr > 0 and entry_atr > 0:
+        vol_ratio = current_atr / entry_atr
+        if vol_ratio > vol_scale_threshold:
+            effective_sl = sl_mult * vol_scale_tighten
+
     # Stop Loss (High Check)
-    if sl_mult > 0:
-        sl_price = entry_price + (entry_atr * sl_mult)
+    if effective_sl > 0:
+        sl_price = entry_price + (entry_atr * effective_sl)
         if high_prev >= sl_price:
             return True, sl_price, 1
-            
+
     # Take Profit (Low Check)
     if tp_mult > 0:
         tp_price = entry_price - (entry_atr * tp_mult)
         if low_prev <= tp_price:
             return True, tp_price, 2
-            
+
     return False, 0.0, 0

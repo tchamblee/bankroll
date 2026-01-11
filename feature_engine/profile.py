@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import datetime as dt
-from numba import jit
+from numba import jit, prange
 
 @jit(nopython=True)
 def _jit_value_area(hist, bin_edges, max_idx, total_vol, value_area_pct):
@@ -93,6 +93,243 @@ def calculate_profiles_fast(dates, prices, volumes, bins=200):
         })
         
     return results
+
+
+@jit(nopython=True)
+def _jit_developing_va(prices, volumes, n_bars, bins, value_area_pct):
+    """
+    Calculate developing value area at each bar within a day.
+    Returns arrays of developing VPOC, VAL, VAH.
+    """
+    dev_vpoc = np.zeros(n_bars, dtype=np.float64)
+    dev_val = np.zeros(n_bars, dtype=np.float64)
+    dev_vah = np.zeros(n_bars, dtype=np.float64)
+
+    if n_bars == 0:
+        return dev_vpoc, dev_val, dev_vah
+
+    # For first bar, use its price as all values
+    dev_vpoc[0] = prices[0]
+    dev_val[0] = prices[0]
+    dev_vah[0] = prices[0]
+
+    if n_bars == 1:
+        return dev_vpoc, dev_val, dev_vah
+
+    # Iteratively build histogram
+    for i in range(1, n_bars):
+        # Get cumulative prices and volumes up to bar i
+        p_slice = prices[:i+1]
+        v_slice = volumes[:i+1]
+
+        low_p = p_slice.min()
+        high_p = p_slice.max()
+
+        if low_p == high_p:
+            dev_vpoc[i] = low_p
+            dev_val[i] = low_p
+            dev_vah[i] = high_p
+            continue
+
+        # Build histogram manually (np.histogram not available in numba)
+        bin_width = (high_p - low_p) / bins
+        hist = np.zeros(bins, dtype=np.float64)
+
+        for j in range(len(p_slice)):
+            bin_idx = int((p_slice[j] - low_p) / bin_width)
+            if bin_idx >= bins:
+                bin_idx = bins - 1
+            hist[bin_idx] += v_slice[j]
+
+        # Find VPOC (max volume bin)
+        max_idx = 0
+        max_vol = hist[0]
+        for k in range(1, bins):
+            if hist[k] > max_vol:
+                max_vol = hist[k]
+                max_idx = k
+
+        # Value Area expansion
+        total_vol = hist.sum()
+        target_vol = total_vol * value_area_pct
+        current_vol = hist[max_idx]
+
+        low_idx = max_idx
+        high_idx = max_idx
+
+        while current_vol < target_vol:
+            can_go_lower = low_idx > 0
+            can_go_higher = high_idx < bins - 1
+
+            if not can_go_lower and not can_go_higher:
+                break
+
+            vol_lower = hist[low_idx - 1] if can_go_lower else -1.0
+            vol_higher = hist[high_idx + 1] if can_go_higher else -1.0
+
+            if vol_higher > vol_lower:
+                high_idx += 1
+                current_vol += vol_higher
+            else:
+                low_idx -= 1
+                current_vol += vol_lower
+
+        # Calculate prices from bin indices
+        dev_vpoc[i] = low_p + (max_idx + 0.5) * bin_width
+        dev_val[i] = low_p + (low_idx + 0.5) * bin_width
+        dev_vah[i] = low_p + (high_idx + 0.5) * bin_width
+
+    return dev_vpoc, dev_val, dev_vah
+
+
+def calculate_developing_profiles(dates, prices, volumes, bins=50):
+    """
+    Calculate developing value area for each bar within each day.
+    Returns arrays aligned with input data.
+    """
+    n_total = len(dates)
+    dev_vpoc = np.zeros(n_total, dtype=np.float64)
+    dev_val = np.zeros(n_total, dtype=np.float64)
+    dev_vah = np.zeros(n_total, dtype=np.float64)
+
+    # Find day boundaries
+    unique_dates, indices = np.unique(dates, return_index=True)
+    starts = indices
+    ends = np.roll(indices, -1)
+    ends[-1] = n_total
+
+    for i in range(len(unique_dates)):
+        start = starts[i]
+        end = ends[i]
+
+        p_slice = prices[start:end].astype(np.float64)
+        v_slice = volumes[start:end].astype(np.float64)
+        n_bars = end - start
+
+        if n_bars == 0:
+            continue
+
+        d_vpoc, d_val, d_vah = _jit_developing_va(
+            p_slice, v_slice, n_bars, bins, 0.70
+        )
+
+        dev_vpoc[start:end] = d_vpoc
+        dev_val[start:end] = d_val
+        dev_vah[start:end] = d_vah
+
+    return dev_vpoc, dev_val, dev_vah
+
+
+def calculate_composite_profiles(dates, prices, volumes, lookback_days=5, bins=100):
+    """
+    Calculate composite profile over multiple days using rolling window.
+    Returns VPOC, VAL, VAH for composite profile.
+    """
+    n_total = len(dates)
+    comp_vpoc = np.full(n_total, np.nan, dtype=np.float64)
+    comp_val = np.full(n_total, np.nan, dtype=np.float64)
+    comp_vah = np.full(n_total, np.nan, dtype=np.float64)
+
+    # Get unique dates and their boundaries
+    unique_dates, indices = np.unique(dates, return_index=True)
+    starts = indices
+    ends = np.roll(indices, -1)
+    ends[-1] = n_total
+
+    n_days = len(unique_dates)
+
+    # Build daily histograms first (we'll aggregate them)
+    # Store daily price ranges and histograms
+    daily_low = np.zeros(n_days)
+    daily_high = np.zeros(n_days)
+    daily_hists = []
+
+    for i in range(n_days):
+        start = starts[i]
+        end = ends[i]
+        p_slice = prices[start:end]
+        v_slice = volumes[start:end]
+
+        if len(p_slice) == 0:
+            daily_low[i] = np.nan
+            daily_high[i] = np.nan
+            daily_hists.append(None)
+            continue
+
+        daily_low[i] = p_slice.min()
+        daily_high[i] = p_slice.max()
+
+        if daily_low[i] == daily_high[i]:
+            daily_hists.append(None)
+        else:
+            hist, bin_edges = np.histogram(
+                p_slice, bins=bins, weights=v_slice,
+                range=(daily_low[i], daily_high[i])
+            )
+            daily_hists.append((hist, bin_edges))
+
+    # For each day, calculate composite from past N days
+    for day_idx in range(lookback_days, n_days):
+        # Get price range over lookback period
+        lookback_slice = slice(day_idx - lookback_days, day_idx)
+        valid_lows = daily_low[lookback_slice]
+        valid_highs = daily_high[lookback_slice]
+
+        # Skip if any day has no data
+        if np.any(np.isnan(valid_lows)) or np.any(np.isnan(valid_highs)):
+            continue
+
+        composite_low = valid_lows.min()
+        composite_high = valid_highs.max()
+
+        if composite_low == composite_high:
+            continue
+
+        # Aggregate histograms onto common price grid
+        composite_hist = np.zeros(bins, dtype=np.float64)
+        bin_width = (composite_high - composite_low) / bins
+
+        for past_day in range(day_idx - lookback_days, day_idx):
+            if daily_hists[past_day] is None:
+                continue
+
+            hist, bin_edges = daily_hists[past_day]
+
+            # Map each bin from daily histogram to composite grid
+            for b in range(len(hist)):
+                if hist[b] == 0:
+                    continue
+                bin_center = (bin_edges[b] + bin_edges[b+1]) / 2
+                comp_bin = int((bin_center - composite_low) / bin_width)
+                if comp_bin >= bins:
+                    comp_bin = bins - 1
+                if comp_bin < 0:
+                    comp_bin = 0
+                composite_hist[comp_bin] += hist[b]
+
+        # Calculate value area from composite histogram
+        if composite_hist.sum() == 0:
+            continue
+
+        max_idx = np.argmax(composite_hist)
+        total_vol = composite_hist.sum()
+
+        # Create bin edges for composite
+        comp_edges = np.linspace(composite_low, composite_high, bins + 1)
+
+        vpoc, val, vah = _jit_value_area(
+            composite_hist, comp_edges, max_idx, total_vol, 0.70
+        )
+
+        # Apply to all bars in current day
+        start = starts[day_idx]
+        end = ends[day_idx]
+        comp_vpoc[start:end] = vpoc
+        comp_val[start:end] = val
+        comp_vah[start:end] = vah
+
+    return comp_vpoc, comp_val, comp_vah
+
 
 def add_market_profile_features(df):
     """
@@ -197,7 +434,69 @@ def add_market_profile_features(df):
     # Relative Volume at Price (How "thick" is the market here?)
     # This is hard without full profile, but we can use dist_to_vpoc as a proxy for "Magnetism"
     # Closer to VPOC = Higher expected volume/friction.
-    
+
+    # --- Developing Value Area Features ---
+    print("  Calculating Developing Value Area...")
+    dev_vpoc, dev_val, dev_vah = calculate_developing_profiles(dates, prices, volumes, bins=50)
+    merged['dev_vpoc'] = dev_vpoc
+    merged['dev_val'] = dev_val
+    merged['dev_vah'] = dev_vah
+
+    # Developing VA width (normalized by price)
+    merged['dev_va_width'] = (merged['dev_vah'] - merged['dev_val']) / merged['close']
+
+    # Price position relative to developing profile
+    merged['price_vs_dev_vpoc'] = (merged['close'] - merged['dev_vpoc']) / merged['dev_vpoc']
+
+    # Binary: inside developing value area
+    merged['in_dev_value'] = np.where(
+        (merged['close'] >= merged['dev_val']) & (merged['close'] <= merged['dev_vah']),
+        1.0, 0.0
+    )
+
+    # --- Composite Profile Features (Weekly = 5 days, Monthly = 20 days) ---
+    print("  Calculating Weekly Composite Profile...")
+    weekly_vpoc, weekly_val, weekly_vah = calculate_composite_profiles(
+        dates, prices, volumes, lookback_days=5, bins=100
+    )
+    merged['weekly_vpoc'] = weekly_vpoc
+    merged['weekly_val'] = weekly_val
+    merged['weekly_vah'] = weekly_vah
+
+    # Fill NaN with forward fill then price fallback
+    for col in ['weekly_vpoc', 'weekly_val', 'weekly_vah']:
+        merged[col] = merged[col].ffill()
+        mask = merged[col].isna()
+        merged.loc[mask, col] = merged.loc[mask, 'close']
+
+    # Weekly composite features
+    merged['weekly_in_value'] = np.where(
+        (merged['close'] >= merged['weekly_val']) & (merged['close'] <= merged['weekly_vah']),
+        1.0, 0.0
+    )
+    merged['dist_to_weekly_vpoc'] = (merged['close'] - merged['weekly_vpoc']) / merged['weekly_vpoc']
+
+    print("  Calculating Monthly Composite Profile...")
+    monthly_vpoc, monthly_val, monthly_vah = calculate_composite_profiles(
+        dates, prices, volumes, lookback_days=20, bins=100
+    )
+    merged['monthly_vpoc'] = monthly_vpoc
+    merged['monthly_val'] = monthly_val
+    merged['monthly_vah'] = monthly_vah
+
+    # Fill NaN with forward fill then price fallback
+    for col in ['monthly_vpoc', 'monthly_val', 'monthly_vah']:
+        merged[col] = merged[col].ffill()
+        mask = merged[col].isna()
+        merged.loc[mask, col] = merged.loc[mask, 'close']
+
+    # Monthly composite features
+    merged['monthly_in_value'] = np.where(
+        (merged['close'] >= merged['monthly_val']) & (merged['close'] <= merged['monthly_vah']),
+        1.0, 0.0
+    )
+    merged['dist_to_monthly_vpoc'] = (merged['close'] - merged['monthly_vpoc']) / merged['monthly_vpoc']
+
     merged = merged.drop(columns=['date_temp', 'date'])
-    
+
     return merged
