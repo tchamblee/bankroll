@@ -124,6 +124,14 @@ ELITE_PERCENTAGE = 0.3
 MUTATION_RATE = 0.40
 IMMIGRATION_PERCENTAGE = 0.20
 
+# --- OPTIMIZER SETTINGS ---
+OPTIMIZE_SL_OPTIONS = [1.0, 1.5, 2.0, 2.5, 3.0]
+OPTIMIZE_TP_OPTIONS = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+OPTIMIZE_JITTER_PCT = 0.05  # 5% parameter jitter for robustness testing
+OPTIMIZE_MIN_IMPROVEMENT = 0.05  # 5% relative improvement required to beat parent
+OPTIMIZE_USE_WALK_FORWARD = False  # Use walk-forward validation instead of train/val split
+OPTIMIZE_STOPS_MIN_SORTINO = 1.0  # Minimum sortino threshold for stop optimization
+
 # --- TIME FILTERS ---
 # London Open (08:00 UTC) to NY Close (17:00 EST -> ~22:00 UTC)
 TRADING_START_HOUR = 8

@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import copy
+import random
 import numpy as np
 import pandas as pd
 import config
@@ -10,7 +11,7 @@ from backtest.utils import find_strategy_in_files
 from genome import Strategy
 
 class StopLossOptimizer:
-    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True):
+    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True, seed=None):
         self.target_name = target_name
         self.source_file = source_file
         self.horizon = horizon
@@ -18,7 +19,19 @@ class StopLossOptimizer:
         self.parent_strategy = None
         self.variants = []
         self.verbose = verbose
-        
+
+        # Set random seed for reproducibility
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+        else:
+            # Default: deterministic seed based on strategy name
+            default_seed = hash(target_name) % (2**32)
+            random.seed(default_seed)
+            np.random.seed(default_seed)
+            if verbose:
+                print(f"Using default seed {default_seed} (based on strategy name)")
+
         if backtester:
             self.backtester = backtester
             self.data = backtester.raw_data
@@ -56,43 +69,148 @@ class StopLossOptimizer:
             print(f"✅ Loaded Parent: {self.parent_strategy.name}")
             print(f"   Current SL: {self.parent_strategy.stop_loss_pct} | TP: {self.parent_strategy.take_profit_pct}")
 
-    def generate_grid(self, sl_range, tp_range):
+    def generate_grid(self, sl_range, tp_range, min_rr_ratio=None, directional=False):
         """
         Generates variants for a grid of SL and TP values.
         sl_range: (start, stop, step)
         tp_range: (start, stop, step)
+        min_rr_ratio: Minimum TP/SL ratio (e.g., 1.0 means TP >= SL). None to allow all.
+        directional: If True, set directional stops (sl_long, sl_short, tp_long, tp_short)
+                     instead of symmetric stops.
         """
-        if self.verbose: print("\n🕸️  Generating Grid Variants...")
-        
+        if self.verbose:
+            mode = "Directional" if directional else "Symmetric"
+            print(f"\n🕸️  Generating {mode} Grid Variants...")
+
         if not self.parent_strategy:
             self.load_parent()
 
         self.variants = []
-        
+
         sl_values = np.arange(sl_range[0], sl_range[1] + sl_range[2], sl_range[2])
         tp_values = np.arange(tp_range[0], tp_range[1] + tp_range[2], tp_range[2])
-        
+
+        total_possible = len(sl_values) * len(tp_values)
+        if self.verbose and total_possible > 500:
+            print(f"   ⚠️  Large grid: {total_possible} combinations. This may take a while...")
+
         count = 0
+        skipped = 0
         for sl in sl_values:
             for tp in tp_values:
-                # Basic sanity: TP should generally be > SL (or at least close)
-                # But we'll allow all combinations to see what happens, maybe scalping works with TP < SL (though risky)
-                
+                # Filter by R:R ratio if specified
+                if min_rr_ratio is not None and sl > 0:
+                    rr_ratio = tp / sl
+                    if rr_ratio < min_rr_ratio:
+                        skipped += 1
+                        continue
+
                 # Create variant
                 variant = copy.deepcopy(self.parent_strategy)
                 # Round to 2 decimal places to avoid float ugliness
                 sl_r = round(sl, 2)
                 tp_r = round(tp, 2)
-                
+
                 variant.name = f"{self.target_name}_SL{sl_r}_TP{tp_r}"
-                variant.stop_loss_pct = sl_r
-                variant.take_profit_pct = tp_r
-                variant.horizon = self.horizon # Ensure horizon is set
-                
+                variant.horizon = self.horizon
+
+                if directional:
+                    # Set directional stops (allows asymmetric long/short later)
+                    variant.sl_long = sl_r
+                    variant.sl_short = sl_r
+                    variant.tp_long = tp_r
+                    variant.tp_short = tp_r
+                    # Keep symmetric as fallback
+                    variant.stop_loss_pct = sl_r
+                    variant.take_profit_pct = tp_r
+                else:
+                    # Standard symmetric stops
+                    variant.stop_loss_pct = sl_r
+                    variant.take_profit_pct = tp_r
+
                 self.variants.append(variant)
                 count += 1
-                
-        if self.verbose: print(f"   Generated {count} variants.")
+
+        if self.verbose:
+            msg = f"   Generated {count} variants."
+            if skipped > 0:
+                msg += f" (Skipped {skipped} with R:R < {min_rr_ratio})"
+            print(msg)
+
+    def get_best_variant(self):
+        """
+        Programmatically find and return the best stop variant.
+        Returns (best_strategy, stats_dict) or (None, None) if no improvement found.
+        """
+        if not self.variants:
+            if self.verbose:
+                print("No variants to evaluate.")
+            return None, None
+
+        if not self.parent_strategy:
+            self.load_parent()
+
+        population = [self.parent_strategy] + self.variants
+        for s in population:
+            s.horizon = self.horizon
+
+        # Evaluate on train/val/test
+        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
+
+        def get_stats(df, s_id):
+            row = df[df['id'] == s_id].iloc[0]
+            return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
+
+        parent_train = get_stats(train_df, self.parent_strategy.name)
+        parent_val = get_stats(val_df, self.parent_strategy.name)
+        parent_min_sort = min(parent_train['sortino'], parent_val['sortino'])
+
+        # Get configurable thresholds
+        min_sortino_threshold = getattr(config, 'OPTIMIZE_STOPS_MIN_SORTINO', 1.0)
+        min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
+        improvement_threshold = abs(parent_min_sort) * min_improvement if parent_min_sort != 0 else 0.1
+
+        best_candidate = None
+        best_fitness = parent_min_sort
+
+        for variant in self.variants:
+            if variant.name not in train_df['id'].values:
+                continue
+
+            v_train = get_stats(train_df, variant.name)
+            v_val = get_stats(val_df, variant.name)
+
+            # Must be profitable
+            if v_train['ret'] <= 0 or v_val['ret'] <= 0:
+                continue
+
+            # Must meet robustness threshold
+            if v_train['sortino'] <= min_sortino_threshold or v_val['sortino'] <= min_sortino_threshold:
+                continue
+
+            v_fitness = min(v_train['sortino'], v_val['sortino'])
+
+            # Must beat parent by threshold
+            if v_fitness > (parent_min_sort + improvement_threshold) and v_fitness > best_fitness:
+                best_fitness = v_fitness
+                best_candidate = variant
+
+        if best_candidate:
+            # Get final stats including test
+            best_stats = {
+                'train': get_stats(train_df, best_candidate.name),
+                'val': get_stats(val_df, best_candidate.name),
+                'test': get_stats(test_df, best_candidate.name)
+            }
+            if self.verbose:
+                print(f"   🏆 Best: {best_candidate.name} (Fit: {best_fitness:.2f} vs Parent {parent_min_sort:.2f})")
+            return best_candidate, best_stats
+
+        if self.verbose:
+            print("   No variant beat parent by required threshold.")
+        return None, None
 
     def evaluate_and_report(self):
         if not self.variants:
@@ -129,8 +247,9 @@ class StopLossOptimizer:
             'val': get_stats(val_df, self.parent_strategy.name),
             'test': get_stats(test_df, self.parent_strategy.name)
         }
-        
-        parent_min_sort = min(parent_stats['train']['sortino'], parent_stats['val']['sortino'], parent_stats['test']['sortino'])
+
+        # Parent baseline uses train/val only (no data leakage)
+        parent_min_sort = min(parent_stats['train']['sortino'], parent_stats['val']['sortino'])
         
         print(f"\n🏛️  PARENT ({self.parent_strategy.name}) [SL:{self.parent_strategy.stop_loss_pct} TP:{self.parent_strategy.take_profit_pct}]:")
         print(f"   MIN  : Sort {parent_min_sort:5.2f}")
@@ -140,21 +259,40 @@ class StopLossOptimizer:
         print("-" * 120)
 
         better_variants = []
-        
+
+        # Get configurable thresholds
+        min_sortino_threshold = getattr(config, 'OPTIMIZE_STOPS_MIN_SORTINO', 1.0)
+        min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
+        improvement_threshold = abs(parent_min_sort) * min_improvement if parent_min_sort != 0 else 0.1
+
         for i, variant in enumerate(self.variants):
             v_train = get_stats(train_df, variant.name)
             v_val = get_stats(val_df, variant.name)
             v_test = get_stats(test_df, variant.name)
-            
-            # Filtering Logic
+
+            # Filtering Logic (NO DATA LEAKAGE - test is informational only)
             # 1. Must be profitable in Train/Val (Sanity)
             if v_train['ret'] <= 0 or v_val['ret'] <= 0:
                 continue
-                
-            # 2. Comparison to Parent
-            # We want to see significant improvements or at least similar performance with better risk profile
-            # Let's be permissive and rank them later.
-            
+
+            # 2. Must meet robustness threshold on Train/Val only
+            is_robust = (v_train['sortino'] > min_sortino_threshold and
+                        v_val['sortino'] > min_sortino_threshold)
+
+            if not is_robust:
+                continue
+
+            # Selection metric: min(train, val) - test is NOT used for selection
+            min_sort_in_sample = min(v_train['sortino'], v_val['sortino'])
+
+            # 3. Must beat parent by minimum improvement threshold (avoid noise)
+            if min_sort_in_sample <= (parent_min_sort + improvement_threshold):
+                continue
+
+            # Note test performance for informational display
+            test_ok = v_test['sortino'] > 0 and v_test['ret'] > 0
+            note = "✅ OOS+" if test_ok else "⚠️ OOS-"
+
             res = {
                 'name': variant.name,
                 'sl': variant.stop_loss_pct,
@@ -163,27 +301,23 @@ class StopLossOptimizer:
                 'train': v_train,
                 'val': v_val,
                 'test': v_test,
-                'min_sort': min(v_train['sortino'], v_val['sortino'], v_test['sortino']),
-                'note': ""
+                'min_sort': min_sort_in_sample,  # Only train/val
+                'note': note
             }
-            
-            # Check for robustness
-            is_robust = (v_train['sortino'] > 1.0 and v_val['sortino'] > 1.0 and v_test['sortino'] > 0)
-            
-            if is_robust:
-                better_variants.append(res)
+
+            better_variants.append(res)
 
         # Sort by Minimum Sortino
         better_variants.sort(key=lambda x: x['min_sort'], reverse=True)
         
-        print(f"\n🏆 Top {min(20, len(better_variants))} Variants (Sorted by Min Sortino):")
-        print(f"{ 'SL':<5} | { 'TP':<5} | { 'Min Sort':<10} | { 'Trn Sort':<9} | { 'Val Sort':<9} | { 'Test Sort':<9} | { 'Test Ret':<9} | {'Trds':<4} | {'Name'}")
-        print("-" * 130)
-        
+        print(f"\n🏆 Top {min(20, len(better_variants))} Variants (Sorted by In-Sample Min Sortino):")
+        print(f"{'SL':<5} | {'TP':<5} | {'Min':<6} | {'Train':<6} | {'Val':<6} | {'Test':<6} | {'Test Ret':<9} | {'OOS':<6} | {'Name'}")
+        print("-" * 100)
+
         for v in better_variants[:20]:
             is_best = (v['min_sort'] > parent_min_sort)
-            marker = "⭐" if is_best else ""
-            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['min_sort']:10.2f} | {v['train']['sortino']:9.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['test']['trades']:<4} {marker} | {v['name']}")
+            marker = "⭐" if is_best else "  "
+            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['min_sort']:6.2f} | {v['train']['sortino']:6.2f} | {v['val']['sortino']:6.2f} | {v['test']['sortino']:6.2f} | {v['test']['ret']*100:8.2f}% | {v['note']:<6} {marker}| {v['name']}")
 
         # Save Best
         if better_variants:
@@ -228,6 +362,10 @@ if __name__ == "__main__":
     parser.add_argument("--tp-end", type=float, default=10.0, help="End of TP range")
     parser.add_argument("--tp-step", type=float, default=0.5, help="Step size for TP")
 
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
+    parser.add_argument("--min-rr", type=float, default=None, help="Minimum R:R ratio (TP/SL). E.g., 1.5 means TP must be >= 1.5x SL")
+    parser.add_argument("--directional", action="store_true", help="Set directional stops (sl_long, sl_short, tp_long, tp_short)")
+
     args = parser.parse_args()
     
     target_dict = None
@@ -252,15 +390,18 @@ if __name__ == "__main__":
         exit(1)
         
     optimizer = StopLossOptimizer(
-        args.name, 
-        source_file=file_path, 
-        horizon=horizon, 
-        strategy_dict=target_dict
+        args.name,
+        source_file=file_path,
+        horizon=horizon,
+        strategy_dict=target_dict,
+        seed=args.seed
     )
     
     optimizer.load_parent()
     optimizer.generate_grid(
         sl_range=(args.sl_start, args.sl_end, args.sl_step),
-        tp_range=(args.tp_start, args.tp_end, args.tp_step)
+        tp_range=(args.tp_start, args.tp_end, args.tp_step),
+        min_rr_ratio=args.min_rr,
+        directional=args.directional
     )
     optimizer.evaluate_and_report()

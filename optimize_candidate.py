@@ -12,7 +12,7 @@ from backtest.utils import find_strategy_in_files
 from genome import Strategy, GenomeFactory
 
 class StrategyOptimizer:
-    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True):
+    def __init__(self, target_name, source_file=None, horizon=180, strategy_dict=None, backtester=None, data=None, verbose=True, seed=None):
         self.target_name = target_name
         self.source_file = source_file
         self.horizon = horizon
@@ -20,7 +20,19 @@ class StrategyOptimizer:
         self.parent_strategy = None
         self.variants = []
         self.verbose = verbose
-        
+
+        # Set random seed for reproducibility
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+        else:
+            # Default: deterministic seed based on strategy name
+            default_seed = hash(target_name) % (2**32)
+            random.seed(default_seed)
+            np.random.seed(default_seed)
+            if verbose:
+                print(f"Using default seed {default_seed} (based on strategy name)")
+
         # Initialize Backtester if not provided
         if backtester:
             self.backtester = backtester
@@ -87,45 +99,67 @@ class StrategyOptimizer:
                 variant.recalculate_concordance()
                 self.variants.append(variant)
 
-        # 2. Relaxation - Lower Concordance
+        # 2a. Relaxation - Lower Concordance (more permissive signals)
         if self.parent_strategy.min_concordance > 1:
             variant = copy.deepcopy(self.parent_strategy)
             variant.name = f"{self.target_name}_Relaxed"
             variant.min_concordance -= 1
             self.variants.append(variant)
 
+        # 2b. Strictness - Higher Concordance (more selective signals)
+        max_concordance = max(len(self.parent_strategy.long_genes), len(self.parent_strategy.short_genes))
+        if self.parent_strategy.min_concordance < max_concordance:
+            variant = copy.deepcopy(self.parent_strategy)
+            variant.name = f"{self.target_name}_Strict"
+            variant.min_concordance += 1
+            self.variants.append(variant)
+
         # 3. Jitter (Parameter Noise) - Test Robustness / Fine Tuning
+        jitter_pct = getattr(config, 'OPTIMIZE_JITTER_PCT', 0.05)
         for i in range(n_jitter):
             variant = copy.deepcopy(self.parent_strategy)
             variant.name = f"{self.target_name}_Jitter_{i}"
-            
+
             # Jitter every gene slightly
             for g in variant.long_genes + variant.short_genes:
                 # Jitter Threshold
                 if hasattr(g, 'threshold'):
-                    # ± 5% change
-                    g.threshold *= random.uniform(0.95, 1.05)
-                
+                    g.threshold *= random.uniform(1 - jitter_pct, 1 + jitter_pct)
+
                 # Jitter Window
                 if hasattr(g, 'window') and isinstance(g.window, int):
-                    # ± 5% change, min 2
-                    g.window = max(2, int(g.window * random.uniform(0.95, 1.05)))
-                    
+                    g.window = max(2, int(g.window * random.uniform(1 - jitter_pct, 1 + jitter_pct)))
+
             self.variants.append(variant)
 
         # 4. Mutation - Swap logic
         for i in range(n_mutants):
             variant = copy.deepcopy(self.parent_strategy)
             variant.name = f"{self.target_name}_Mutant_{i}"
-            
+
             # Mutate 1 random gene
             genes = variant.long_genes + variant.short_genes
             if genes:
                 target_gene = random.choice(genes)
                 target_gene.mutate(self.factory.features)
-                
+
             variant.recalculate_concordance()
             self.variants.append(variant)
+
+        # 5. Expansion - Add 1 random gene (test if more complexity helps)
+        # Only expand if we're below the max gene count
+        current_genes = len(self.parent_strategy.long_genes) + len(self.parent_strategy.short_genes)
+        if current_genes < config.GENE_COUNT_MAX * 2:  # *2 because long+short
+            for i in range(5):
+                variant = copy.deepcopy(self.parent_strategy)
+                variant.name = f"{self.target_name}_Expand_{i}"
+                new_gene = self.factory.create_random_gene()
+                if random.random() < 0.5:
+                    variant.long_genes.append(new_gene)
+                else:
+                    variant.short_genes.append(new_gene)
+                variant.recalculate_concordance()
+                self.variants.append(variant)
 
         if self.verbose: print(f"   Generated {len(self.variants)} variants.")
 
@@ -135,9 +169,9 @@ class StrategyOptimizer:
         Returns the best (SL, TP) tuple based on Train+Val performance.
         """
         if self.verbose: print(f"   ⚙️ Optimizing Stops for {strategy.name}...")
-        
-        sl_options = [1.0, 1.5, 2.0, 2.5, 3.0]
-        tp_options = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+
+        sl_options = getattr(config, 'OPTIMIZE_SL_OPTIONS', [1.0, 1.5, 2.0, 2.5, 3.0])
+        tp_options = getattr(config, 'OPTIMIZE_TP_OPTIONS', [2.0, 3.0, 4.0, 5.0, 6.0, 8.0])
         
         best_score = -999.0
         best_params = (strategy.stop_loss_pct, strategy.take_profit_pct)
@@ -190,51 +224,101 @@ class StrategyOptimizer:
         if self.verbose: print(f"      Best Stops Found: SL={best_params[0]}, TP={best_params[1]} (Fit: {best_score:.2f})")
         return best_params
 
-    def get_best_variant(self):
+    def get_best_variant(self, use_walk_forward=None):
         """
         Programmatically find and return the best variant.
         CRITICAL UPDATE: Selection is based on TRAIN + VALIDATION performance only.
         Test set is used ONLY as a final gatekeeper, not a selection criterion.
+
+        Args:
+            use_walk_forward: If True, use walk-forward cross-validation for more robust selection.
+                              If None, uses config.OPTIMIZE_USE_WALK_FORWARD setting.
         """
         if not self.variants:
             self.generate_variants()
-            
+
+        if use_walk_forward is None:
+            use_walk_forward = getattr(config, 'OPTIMIZE_USE_WALK_FORWARD', False)
+
         population = [self.parent_strategy] + self.variants
         for s in population:
             s.horizon = self.horizon
 
-        # 1. Evaluate In-Sample (Train + Val)
-        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
-        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
-        
         def get_stats(df, s_id):
             row = df[df['id'] == s_id].iloc[0]
             return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
 
-        parent_train = get_stats(train_df, self.parent_strategy.name)
-        parent_val = get_stats(val_df, self.parent_strategy.name)
-        
-        # Parent Baseline
-        parent_fitness = min(parent_train['sortino'], parent_val['sortino'])
-        
+        def get_wfv_stats(df, s_id):
+            row = df[df['id'] == s_id].iloc[0]
+            return {'sortino': row['sortino'], 'min_sortino': row['min_sortino'], 'avg_trades': row['avg_trades']}
+
+        # Complexity penalty: prefer simpler strategies (fewer genes)
+        def calc_fitness_standard(sortino_train, sortino_val, n_genes):
+            raw_fitness = min(sortino_train, sortino_val)
+            penalty = n_genes * config.COMPLEXITY_PENALTY_PER_GENE
+            return raw_fitness - penalty
+
+        def calc_fitness_wfv(wfv_sortino, n_genes):
+            # WFV sortino already includes robustness (avg - 0.5*std)
+            penalty = n_genes * config.COMPLEXITY_PENALTY_PER_GENE
+            return wfv_sortino - penalty
+
+        if use_walk_forward:
+            # Walk-Forward Validation mode
+            if self.verbose:
+                print("   Using Walk-Forward Validation for selection...")
+            wfv_df = self.backtester.evaluate_walk_forward(population, time_limit=self.horizon)
+
+            parent_wfv = get_wfv_stats(wfv_df, self.parent_strategy.name)
+            parent_n_genes = len(self.parent_strategy.long_genes) + len(self.parent_strategy.short_genes)
+            parent_fitness = calc_fitness_wfv(parent_wfv['sortino'], parent_n_genes)
+
+            # For test gate later, we still need train/val stats
+            train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+            val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        else:
+            # Standard Train + Val mode
+            train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+            val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+
+            parent_train = get_stats(train_df, self.parent_strategy.name)
+            parent_val = get_stats(val_df, self.parent_strategy.name)
+            parent_n_genes = len(self.parent_strategy.long_genes) + len(self.parent_strategy.short_genes)
+            parent_fitness = calc_fitness_standard(parent_train['sortino'], parent_val['sortino'], parent_n_genes)
+
         best_candidate = None
         best_fitness = parent_fitness
 
         for variant in self.variants:
-            if variant.name not in train_df['id'].values: continue
-            
-            v_train = get_stats(train_df, variant.name)
-            v_val = get_stats(val_df, variant.name)
-            
-            # Selection Metric: Robust Sortino (Min of Train/Val)
-            v_fitness = min(v_train['sortino'], v_val['sortino'])
-            
+            v_n_genes = len(variant.long_genes) + len(variant.short_genes)
+
+            if use_walk_forward:
+                if variant.name not in wfv_df['id'].values:
+                    continue
+                v_wfv = get_wfv_stats(wfv_df, variant.name)
+                v_fitness = calc_fitness_wfv(v_wfv['sortino'], v_n_genes)
+
+                # For profitability check, use train/val
+                if variant.name not in train_df['id'].values:
+                    continue
+                v_train = get_stats(train_df, variant.name)
+                v_val = get_stats(val_df, variant.name)
+                is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
+            else:
+                if variant.name not in train_df['id'].values:
+                    continue
+                v_train = get_stats(train_df, variant.name)
+                v_val = get_stats(val_df, variant.name)
+                v_fitness = calc_fitness_standard(v_train['sortino'], v_val['sortino'], v_n_genes)
+                is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
+
             # Constraints:
-            # 1. Must be profitable on both
-            # 2. Must beat parent fitness
-            is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
-            improved = v_fitness > parent_fitness
-            
+            # 1. Must be profitable on both train and val
+            # 2. Must beat parent fitness by minimum threshold (avoid noise)
+            min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
+            improvement_threshold = abs(parent_fitness) * min_improvement if parent_fitness != 0 else 0.1
+            improved = v_fitness > (parent_fitness + improvement_threshold)
+
             if is_profitable and improved:
                 if v_fitness > best_fitness:
                     best_fitness = v_fitness
@@ -269,23 +353,29 @@ class StrategyOptimizer:
                 test_maintained = c_test['sortino'] > p_test['sortino']
             
             if test_profitable and test_maintained:
-                best_stats = {
-                    'train': get_stats(train_df, best_candidate.name),
-                    'val': get_stats(val_df, best_candidate.name),
-                    'test': c_test
-                }
-                
                 # Check if we should optimize stops for this winner
-                # (Optional: Recursively improve the winner)
                 best_sl, best_tp = self.optimize_stops(best_candidate)
                 if (best_sl, best_tp) != (best_candidate.stop_loss_pct, best_candidate.take_profit_pct):
                     best_candidate.stop_loss_pct = best_sl
                     best_candidate.take_profit_pct = best_tp
-                    # Re-eval one last time? 
-                    # For simplicity, we assume grid search result holds. 
-                    # But metrics in best_stats would be slightly stale.
-                    # It's fine for now, the caller usually re-evaluates.
-                
+
+                # Re-evaluate with final stops to get accurate stats
+                final_eval = self.backtester.evaluate_population(
+                    [best_candidate], set_type='train', time_limit=self.horizon
+                )
+                final_val = self.backtester.evaluate_population(
+                    [best_candidate], set_type='validation', time_limit=self.horizon
+                )
+                final_test = self.backtester.evaluate_population(
+                    [best_candidate], set_type='test', time_limit=self.horizon
+                )
+
+                best_stats = {
+                    'train': get_stats(final_eval, best_candidate.name),
+                    'val': get_stats(final_val, best_candidate.name),
+                    'test': get_stats(final_test, best_candidate.name)
+                }
+
                 return best_candidate, best_stats
             else:
                 if self.verbose: print(f"   ❌ Candidate failed Test Gate. Ret: {c_test['ret']:.4f}, Sort: {c_test['sortino']:.2f} (Parent: {p_test['sortino']:.2f})")
@@ -338,32 +428,41 @@ class StrategyOptimizer:
 
         better_variants = []
         for res in results_data[1:]:
-            # Criteria: 
-            # 1. Must be >= Parent in ALL sets (Train, Val, Test) - "Do No Harm"
-            # 2. Must be Profitable (Non-Negative) in ALL sets - "No Losers"
-            
-            # Non-Inferiority
+            # Criteria (NO DATA LEAKAGE - test is informational only):
+            # 1. Must be >= Parent on Train AND Val (in-sample selection)
+            # 2. Must be Profitable (Non-Negative) on Train AND Val
+            # Test performance is reported but NOT used for selection
+
+            # Non-Inferiority (in-sample only)
             train_ok = res['train']['sortino'] >= parent['train']['sortino']
             val_ok = res['val']['sortino'] >= parent['val']['sortino']
-            test_ok = res['test']['sortino'] >= parent['test']['sortino']
-            
-            # Profitability
+
+            # Profitability (in-sample only)
             train_pos = res['train']['sortino'] >= 0 and res['train']['ret'] >= 0
             val_pos = res['val']['sortino'] >= 0 and res['val']['ret'] >= 0
-            test_pos = res['test']['sortino'] >= 0 and res['test']['ret'] >= 0
-            
-            if train_ok and val_ok and test_ok and train_pos and val_pos and test_pos:
-                res['note'] = "💎 Universal"
-                res['min_sort'] = min(res['train']['sortino'], res['val']['sortino'], res['test']['sortino'])
+
+            if train_ok and val_ok and train_pos and val_pos:
+                # Note test performance for information (not selection)
+                test_ok = res['test']['sortino'] >= parent['test']['sortino']
+                test_pos = res['test']['ret'] >= 0
+                if test_ok and test_pos:
+                    res['note'] = "✅ In-Sample + OOS"
+                else:
+                    res['note'] = "⚠️ In-Sample Only"
+                # Apply complexity penalty for sorting (prefer simpler strategies)
+                n_genes = len(res['strat'].long_genes) + len(res['strat'].short_genes)
+                penalty = n_genes * config.COMPLEXITY_PENALTY_PER_GENE
+                res['min_sort'] = min(res['train']['sortino'], res['val']['sortino']) - penalty
+                res['n_genes'] = n_genes
                 better_variants.append(res)
         
         better_variants.sort(key=lambda x: x['min_sort'], reverse=True)
         
-        print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Min Sortino):")
-        print(f"{'Name':<30} | {'Diff':<6} | {'Min Sort':<10} | {'Train Sort':<10} | {'Val Sort':<9} | {'Test Sort':<9} | {'Test Ret':<9} | {'Note'}")
-        print("-" * 115)
+        print(f"\n🏆 Top {min(10, len(better_variants))} Variants (Sorted by Adjusted Sortino):")
+        print(f"{'Name':<30} | {'Genes':<5} | {'Adj Sort':<8} | {'Train':<8} | {'Val':<8} | {'Test':<8} | {'Test Ret':<9} | {'Note'}")
+        print("-" * 110)
         for v in better_variants[:10]:
-            print(f"{v['name']:<30} | {v['diff']:<6} | {v['min_sort']:10.2f} | {v['train']['sortino']:10.2f} | {v['val']['sortino']:9.2f} | {v['test']['sortino']:9.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
+            print(f"{v['name']:<30} | {v['n_genes']:<5} | {v['min_sort']:8.2f} | {v['train']['sortino']:8.2f} | {v['val']['sortino']:8.2f} | {v['test']['sortino']:8.2f} | {v['test']['ret']*100:8.2f}% | {v['note']}")
 
         # Save
         if better_variants:
@@ -396,7 +495,9 @@ if __name__ == "__main__":
     parser.add_argument("name", type=str, help="Name of the strategy (e.g., Child_3604)")
     parser.add_argument("--file", type=str, default=None, help="Path to strategy file (Optional, auto-detected if omitted)")
     parser.add_argument("--horizon", type=int, default=None, help="Time horizon (Optional, auto-detected if omitted)")
-    
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (default: hash of strategy name)")
+    parser.add_argument("--walk-forward", action="store_true", help="Use walk-forward validation for more robust selection")
+
     args = parser.parse_args()
     
     target_dict = None
@@ -423,8 +524,18 @@ if __name__ == "__main__":
         print(f"❌ Error: Could not infer horizon for '{args.name}'. Please provide --horizon.")
         exit(1)
     
-    optimizer = StrategyOptimizer(args.name, source_file=file_path, horizon=horizon, strategy_dict=target_dict)
+    optimizer = StrategyOptimizer(args.name, source_file=file_path, horizon=horizon, strategy_dict=target_dict, seed=args.seed)
     optimizer.load_parent()
     optimizer.generate_variants(n_jitter=20, n_mutants=20)
-    optimizer.evaluate_and_report()
+
+    if args.walk_forward:
+        print("\n🔄 Using Walk-Forward Validation for selection...")
+        best, stats = optimizer.get_best_variant(use_walk_forward=True)
+        if best:
+            print(f"\n✅ Best Variant: {best.name}")
+            print(f"   Train: {stats['train']['sortino']:.2f} | Val: {stats['val']['sortino']:.2f} | Test: {stats['test']['sortino']:.2f}")
+        else:
+            print("\n❌ No variant passed all gates.")
+    else:
+        optimizer.evaluate_and_report()
 
