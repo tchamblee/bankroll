@@ -37,7 +37,8 @@ class GenomeFactory:
         # Categorize Features for Gated Logic
         self.regime_keywords = ['hurst', 'volatility', 'efficiency', 'entropy', 'skew', 'trend_strength', 
                                'yang_zhang', 'lambda', 'force', 'fdi',
-                               'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol', 'premium']
+                               'Vol_Ratio', 'news', 'panic', 'crisis', 'epu', 'total_vol', 'premium',
+                               'fisher_info', 'market_action', 'lagrangian', 'hamiltonian', 'potential_energy']
         
         self.update_pools()
 
