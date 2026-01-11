@@ -25,7 +25,7 @@ def analyze_horizon(df, horizon, top_n=20, use_survivors=False):
     # Using default TP/SL from config to match training conditions
     print(f"   Generating Target Labels (TP={config.DEFAULT_TAKE_PROFIT}xATR, SL={config.DEFAULT_STOP_LOSS}xATR)...")
     df = df.copy()
-    df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS)
+    df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_mult=config.DEFAULT_TAKE_PROFIT, sl_mult=config.DEFAULT_STOP_LOSS)
     
     # 2. Identify Candidates
     exclude_cols = ['time_start', 'time_end', 'ts_event', 'open', 'high', 'low', 'close', 
