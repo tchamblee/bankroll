@@ -139,6 +139,13 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                 parse_feature_dependencies(gene.regime_feature)
             elif gene.type == 'event':
                  if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
+            elif gene.type == 'hysteresis':
+                 if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
+            elif gene.type == 'squeeze':
+                 if hasattr(gene, 'feature_short'): parse_feature_dependencies(gene.feature_short)
+                 if hasattr(gene, 'feature_long'): parse_feature_dependencies(gene.feature_long)
+            elif gene.type == 'extrema':
+                 if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
     # print("") # Newline
     
     # LRU-style Cache for Input Data (OrderedDict for O(1) access)

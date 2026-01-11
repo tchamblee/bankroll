@@ -37,6 +37,9 @@ class CrossGene:
                 res = (diff < 0) & (prev_diff >= 0)
             else:
                 res = np.zeros(len(s1), dtype=bool)
+            
+            # Enforce start validity
+            res[0] = False
                 
         if cache is not None: cache[key] = res
         return res

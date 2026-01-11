@@ -2,12 +2,40 @@ import subprocess
 import time
 import sys
 import os
+import glob
+import config
 from datetime import datetime
 
 def train_forever():
     run_count = 0
     print("♾️  Starting Alpha Factory Training Loop (train_forever.py)")
     print("Press Ctrl+C to stop.\n")
+
+    # --- INITIAL CLEANUP: Delete artifacts ONCE to force fresh Feature Generation & Selection on first run ---
+    try:
+        # 1. Delete Feature Matrix
+        matrix_path = config.DIRS['FEATURE_MATRIX']
+        if os.path.exists(matrix_path):
+            print(f"🧹 Deleting {matrix_path} to force regeneration...")
+            os.remove(matrix_path)
+        
+        # 2. Delete Verified Marker
+        marker_path = matrix_path + ".verified"
+        if os.path.exists(marker_path):
+            os.remove(marker_path)
+
+        # 3. Delete Survivor/Purge Files
+        survivor_pattern = os.path.join(config.DIRS['FEATURES_DIR'], "survivors_*.json")
+        for f in glob.glob(survivor_pattern):
+            print(f"🧹 Deleting {f}...")
+            os.remove(f)
+            
+        purge_marker = config.PURGE_MARKER_FILE
+        if os.path.exists(purge_marker):
+            os.remove(purge_marker)
+            
+    except Exception as e:
+        print(f"⚠️ Warning during cleanup: {e}")
 
     while True:
         run_count += 1

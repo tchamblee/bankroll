@@ -10,20 +10,28 @@ def _process_ticker(ticker, raw_dir, clean_dir):
         out_name = f"CLEAN_{ticker}.parquet"
         out_path = os.path.join(clean_dir, out_name)
         
-        # Skip if already exists
-        if os.path.exists(out_path):
-            print(f"  ⏭️ {ticker}: Cleaned data already exists. Skipping.")
-            return
-
+        # Find Source Files first to check timestamps
         if ticker == config.PRIMARY_TICKER:
             pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
         else:
             pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")
             
         files = glob.glob(pattern)
-        
         if not files: return
-        
+
+        # Check for existing and freshness
+        if os.path.exists(out_path):
+            clean_mtime = os.path.getmtime(out_path)
+            
+            # Get max mtime of source files
+            src_mtime = max([os.path.getmtime(f) for f in files])
+            
+            if clean_mtime > src_mtime:
+                print(f"  ⏭️ {ticker}: Cleaned data is up to date. Skipping.")
+                return
+            else:
+                print(f"  🔄 {ticker}: Source data detected as newer. Re-cleaning...")
+
         # Load All
         df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
         df = df.sort_values("ts_event").reset_index(drop=True)
