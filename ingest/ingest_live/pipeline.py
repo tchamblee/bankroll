@@ -49,7 +49,11 @@ async def main_loop():
 
     # Cleanup GDELT
     if not gdelt_task.done():
-        logger.info("⏳ Waiting for GDELT task to finish...")
+        logger.info("Waiting for GDELT task to finish...")
         gdelt_task.cancel()
-        try: await gdelt_task
-        except: pass
+        try:
+            await gdelt_task
+        except asyncio.CancelledError:
+            pass  # Expected when we cancel the task
+        except Exception as e:
+            logger.warning(f"Error during GDELT cleanup: {e}")

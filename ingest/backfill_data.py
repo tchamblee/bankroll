@@ -27,11 +27,15 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, help="Number of days to backfill (overrides config)")
     args = parser.parse_args()
 
+    exit_code = 0
     try:
         asyncio.run(main(symbols=args.symbols, days=args.days))
     except KeyboardInterrupt:
         bf_cfg.STOP_REQUESTED = True
-        logging.getLogger("Backfill").info("👋 Keyboard Interrupt received. Exiting.")
-        # Give tasks a moment to see the flag if they are polling
-        # But since we are in main exception handler, main loop is likely dying.
-        # We rely on the threads checking this flag.
+        logging.getLogger("Backfill").info("Keyboard Interrupt received. Exiting.")
+        exit_code = 130
+    except Exception as e:
+        logging.getLogger("Backfill").error(f"Backfill failed: {e}")
+        exit_code = 1
+
+    sys.exit(exit_code)

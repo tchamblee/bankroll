@@ -38,10 +38,11 @@ class IBKRStreamer:
         except Exception as e:
             logger.error(f"🔥 IBKR Error: {e}", exc_info=True)
         finally:
-            try: 
+            try:
                 self.ib.disconnect()
-                logger.info("🔌 IBKR Disconnected")
-            except: pass
+                logger.info("IBKR Disconnected")
+            except Exception as e:
+                logger.warning(f"Error during IBKR disconnect: {e}")
 
     async def ingest_stream(self, stop_event: asyncio.Event):
         logger.info("🔌 Setting up Market Data Subscriptions...")
@@ -155,10 +156,10 @@ class IBKRStreamer:
                                 group.reset_index(inplace=True)
 
                             fn = os.path.join(DATA_DIR, f"{prefix}_{name}_{day_str}.parquet")
-                            save_cols = [c for c in self.l1_cols] 
+                            save_cols = [c for c in self.l1_cols]
                             # Use global save_chunk
                             await loop.run_in_executor(None, save_chunk, group[save_cols], fn)
-                            print(f"\r💾 Saved {name} Chunk to {fn} ({len(group)} rows)...", end="")
+                            logger.info(f"Saved {name} chunk to {fn} ({len(group)} rows)")
 
             if should_flush_time:
                 last_flush_check = now_utc

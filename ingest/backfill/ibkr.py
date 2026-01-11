@@ -169,7 +169,8 @@ def _save_buffer_to_parquet(buffer, filename):
                 combined_df = combined_df.drop_duplicates(subset=["ts_event", "pricebid", "priceask", "last_price"])
                 combined_df = combined_df.sort_values(by="ts_event")
                 combined_df.to_parquet(filename, index=False)
-            except:
+            except Exception as e:
+                logger.warning(f"Could not merge with existing file, overwriting: {e}")
                 df.sort_values(by="ts_event").to_parquet(filename, index=False)
         else:
             df.sort_values(by="ts_event").to_parquet(filename, index=False)
@@ -183,7 +184,8 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
     if os.path.exists(filename):
         try:
             existing_len = len(pd.read_parquet(filename))
-        except: pass
+        except Exception as e:
+            logger.warning(f"Could not read existing file {filename}: {e}")
 
     logger.info(f"   [BARS] Fetching {name} for {date_str}...")
     

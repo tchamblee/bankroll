@@ -20,10 +20,15 @@ if sys.platform == "win32":
 from ingest_live.pipeline import main_loop
 
 if __name__ == "__main__":
+    exit_code = 0
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
         cfg.STOP_REQUESTED = True
-        logging.getLogger("ingest_live").info("👋 Keyboard Interrupt received. Exiting.")
-        # We can't do much else here since main_loop is already cancelled by asyncio.run logic
-        # But setting the flag helps if threads are checking it.
+        logging.getLogger("ingest_live").info("Keyboard Interrupt received. Exiting.")
+        exit_code = 130
+    except Exception as e:
+        logging.getLogger("ingest_live").error(f"Live ingestion failed: {e}")
+        exit_code = 1
+
+    sys.exit(exit_code)

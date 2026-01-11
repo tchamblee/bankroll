@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import argparse
 import sys
 import nest_asyncio
 from datetime import datetime, timedelta, timezone
@@ -94,15 +93,8 @@ async def main(symbols=None, days=None):
             await asyncio.sleep(0.5)
 
     except Exception as e:
-        logger.error(f"Fatal Error: {e}")
+        logger.error(f"Fatal Error: {e}", exc_info=True)
+        raise
     finally:
         ib.disconnect()
         logger.info("DONE.")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Backfill Data Pipeline")
-    parser.add_argument("--symbols", nargs="+", help=f"Specific symbols to backfill (e.g. VIX {cfg.PRIMARY_TICKER})")
-    parser.add_argument("--days", type=int, help="Number of days to backfill (overrides config)")
-    args = parser.parse_args()
-    
-    asyncio.run(main(symbols=args.symbols, days=args.days))
