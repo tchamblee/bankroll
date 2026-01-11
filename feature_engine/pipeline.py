@@ -2,6 +2,7 @@ import config
 from .core import FeatureEngine
 from .seasonality import add_seasonality_features
 from .calendar import add_calendar_features
+from .econ_surprise import add_econ_surprise_features
 from .fred import add_fred_features_v2 as add_fred_features
 from .cot import add_cot_features
 from .experimental import add_experimental_features
@@ -113,6 +114,10 @@ def run_pipeline(engine, data_cache=None):
     # 12. Economic Calendar (Event Risk)
     if engine.bars is not None:
         engine.bars = add_calendar_features(engine.bars)
+
+    # 12b. Economic Surprise Features
+    if engine.bars is not None:
+        engine.bars = add_econ_surprise_features(engine.bars)
 
     # 13. FRED
     if engine.bars is not None:

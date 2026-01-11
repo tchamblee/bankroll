@@ -207,8 +207,11 @@ def add_intermarket_features(primary_df, correlator_dfs):
         spread_mean = df['spread_tnx_bund'].rolling(400).mean()
         spread_std = df['spread_tnx_bund'].rolling(400).std()
         df['spread_tnx_bund_z_400'] = (df['spread_tnx_bund'] - spread_mean) / spread_std.replace(0, 1)
-        # New Feature: Spread Momentum
-        df['spread_tnx_bund_slope_100'] = df['spread_tnx_bund'].diff(100)
+        # Spread Momentum (Velocity) - Multiple Windows
+        df['spread_tnx_bund_delta_50'] = df['spread_tnx_bund'].diff(50)
+        df['spread_tnx_bund_delta_100'] = df['spread_tnx_bund'].diff(100)
+        # Spread Acceleration (second derivative)
+        df['spread_tnx_bund_accel_50'] = df['spread_tnx_bund_delta_50'].diff(50)
 
     # US2Y (US 2Y) - SCHATZ (EU 2Y)
     if 'price_us2y' in df.columns and 'price_schatz' in df.columns:
@@ -217,19 +220,32 @@ def add_intermarket_features(primary_df, correlator_dfs):
         spread_mean = df['spread_us2y_schatz'].rolling(400).mean()
         spread_std = df['spread_us2y_schatz'].rolling(400).std()
         df['spread_us2y_schatz_z_400'] = (df['spread_us2y_schatz'] - spread_mean) / spread_std.replace(0, 1)
+        # Spread Momentum (Velocity) - Multiple Windows
+        df['spread_us2y_schatz_delta_50'] = df['spread_us2y_schatz'].diff(50)
+        df['spread_us2y_schatz_delta_100'] = df['spread_us2y_schatz'].diff(100)
+        # Spread Acceleration (second derivative)
+        df['spread_us2y_schatz_accel_50'] = df['spread_us2y_schatz_delta_50'].diff(50)
 
     # --- DOMESTIC YIELD CURVES ---
     # US Curve: TNX (10Y) - US2Y (2Y)
     if 'price_tnx' in df.columns and 'price_us2y' in df.columns:
         df['curve_us_10y_2y'] = df['price_tnx'] - df['price_us2y']
         df['curve_us_10y_2y_z_400'] = (df['curve_us_10y_2y'] - df['curve_us_10y_2y'].rolling(400).mean()) / df['curve_us_10y_2y'].rolling(400).std().replace(0, 1)
-        # New Feature: Curve Slope (Steepening/Flattening Momentum)
-        df['curve_us_10y_2y_slope_100'] = df['curve_us_10y_2y'].diff(100)
+        # Curve Momentum (Velocity) - Steepening/Flattening
+        df['curve_us_10y_2y_delta_50'] = df['curve_us_10y_2y'].diff(50)
+        df['curve_us_10y_2y_delta_100'] = df['curve_us_10y_2y'].diff(100)
+        # Curve Acceleration (second derivative)
+        df['curve_us_10y_2y_accel_50'] = df['curve_us_10y_2y_delta_50'].diff(50)
 
     # EU Curve: BUND (10Y) - SCHATZ (2Y)
     if 'price_bund' in df.columns and 'price_schatz' in df.columns:
         df['curve_eu_10y_2y'] = df['price_bund'] - df['price_schatz']
         df['curve_eu_10y_2y_z_400'] = (df['curve_eu_10y_2y'] - df['curve_eu_10y_2y'].rolling(400).mean()) / df['curve_eu_10y_2y'].rolling(400).std().replace(0, 1)
+        # Curve Momentum (Velocity) - Steepening/Flattening
+        df['curve_eu_10y_2y_delta_50'] = df['curve_eu_10y_2y'].diff(50)
+        df['curve_eu_10y_2y_delta_100'] = df['curve_eu_10y_2y'].diff(100)
+        # Curve Acceleration (second derivative)
+        df['curve_eu_10y_2y_accel_50'] = df['curve_eu_10y_2y_delta_50'].diff(50)
 
     # --- BTP/BUND SPREAD (Eurozone Fragility) ---
     # BTP (Italian 10Y) - BUND (German 10Y) = Peripheral risk premium
@@ -242,8 +258,11 @@ def add_intermarket_features(primary_df, correlator_dfs):
         spread_std = df['spread_btp_bund'].rolling(400).std()
         df['spread_btp_bund_z_400'] = (df['spread_btp_bund'] - spread_mean) / spread_std.replace(0, 1)
 
-        # Spread Momentum
-        df['spread_btp_bund_slope_100'] = df['spread_btp_bund'].diff(100)
+        # Spread Momentum (Velocity) - Multiple Windows
+        df['spread_btp_bund_delta_50'] = df['spread_btp_bund'].diff(50)
+        df['spread_btp_bund_delta_100'] = df['spread_btp_bund'].diff(100)
+        # Spread Acceleration (second derivative)
+        df['spread_btp_bund_accel_50'] = df['spread_btp_bund_delta_50'].diff(50)
 
         # Hurst Exponent of Spread (Market Structure)
         # H > 0.5: Trend-persistent (directional move in progress)
@@ -282,5 +301,12 @@ def add_intermarket_features(primary_df, correlator_dfs):
         # Risk-off: ES down (-1) and ZN up (+1) = -1 - 1 = -2
         # Mixed: 0
         df['risk_on_momentum'] = es_momentum - zn_momentum
+
+    # 5. Cross-Atlantic Curve Differential
+    # If US curve is steepening faster than EU curve -> USD strength (higher US term premium)
+    # If EU curve is steepening faster -> EUR strength
+    if 'curve_us_10y_2y_delta_50' in df.columns and 'curve_eu_10y_2y_delta_50' in df.columns:
+        df['curve_diff_us_eu_delta_50'] = df['curve_us_10y_2y_delta_50'] - df['curve_eu_10y_2y_delta_50']
+        df['curve_diff_us_eu_delta_100'] = df['curve_us_10y_2y_delta_100'] - df['curve_eu_10y_2y_delta_100']
 
     return df
