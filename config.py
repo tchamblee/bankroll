@@ -167,6 +167,14 @@ TARGETS = [
         "mode": "BARS_TRADES_1MIN",
     },
     {
+        "name": "BTP",
+        "symbol": "BTP",
+        "secType": "CONTFUT",
+        "currency": "EUR",
+        "exchange": "EUREX",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
         "name": "USDCHF",
         "symbol": "USD",
         "secType": "CASH",

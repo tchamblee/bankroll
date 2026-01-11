@@ -43,6 +43,7 @@ def run_pipeline(engine, data_cache=None):
         # Spread Components (for explicit spread calc in intermarket.py)
         '_tnx': get_df('tnx'),
         '_bund': get_df('bund'),
+        '_btp': get_df('btp'),
         '_us2y': get_df('us2y'),
         '_schatz': get_df('schatz'),
         '_vix': get_df('vix')
@@ -149,6 +150,7 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         'tnx': "CLEAN_TNX.parquet",
         'usdchf': "CLEAN_USDCHF.parquet",
         'bund': "CLEAN_BUND.parquet",
+        'btp': "CLEAN_BTP.parquet",
         'us2y': "CLEAN_US2Y.parquet",
         'schatz': "CLEAN_SCHATZ.parquet",
         'es': "CLEAN_ES.parquet",

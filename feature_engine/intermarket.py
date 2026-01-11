@@ -3,6 +3,61 @@ import numpy as np
 import config
 from .loader import load_ticker_data
 
+
+def rolling_hurst(series, window):
+    """
+    Calculate rolling Hurst Exponent using the R/S (Rescaled Range) method.
+
+    H > 0.5: Trend-persistent (momentum)
+    H < 0.5: Mean-reverting (anti-persistent)
+    H = 0.5: Random walk
+
+    Args:
+        series: Price or spread series
+        window: Rolling window size (recommend 100-200 for stability)
+
+    Returns:
+        Series of Hurst exponent values
+    """
+    def calc_hurst(x):
+        if len(x) < 20 or np.std(x) < 1e-10:
+            return np.nan
+
+        # Use returns for stationarity
+        returns = np.diff(x)
+        n = len(returns)
+
+        if n < 10:
+            return np.nan
+
+        # Calculate R/S for multiple sub-periods
+        # Simplified: use full window R/S
+        mean_ret = np.mean(returns)
+        std_ret = np.std(returns)
+
+        if std_ret < 1e-10:
+            return np.nan
+
+        # Cumulative deviation from mean
+        cum_dev = np.cumsum(returns - mean_ret)
+
+        # Range
+        R = np.max(cum_dev) - np.min(cum_dev)
+
+        # Rescaled range
+        RS = R / std_ret
+
+        # Hurst exponent: H = log(R/S) / log(n)
+        if RS <= 0:
+            return np.nan
+
+        H = np.log(RS) / np.log(n)
+
+        # Clamp to reasonable range [0, 1]
+        return np.clip(H, 0.0, 1.0)
+
+    return series.rolling(window).apply(calc_hurst, raw=True)
+
 def add_intermarket_features(primary_df, correlator_dfs):
     """
     Adds robust Intermarket relationships using ES (Equities), ZN (Rates), and 6E (FX).
@@ -175,6 +230,35 @@ def add_intermarket_features(primary_df, correlator_dfs):
     if 'price_bund' in df.columns and 'price_schatz' in df.columns:
         df['curve_eu_10y_2y'] = df['price_bund'] - df['price_schatz']
         df['curve_eu_10y_2y_z_400'] = (df['curve_eu_10y_2y'] - df['curve_eu_10y_2y'].rolling(400).mean()) / df['curve_eu_10y_2y'].rolling(400).std().replace(0, 1)
+
+    # --- BTP/BUND SPREAD (Eurozone Fragility) ---
+    # BTP (Italian 10Y) - BUND (German 10Y) = Peripheral risk premium
+    # Widening spread = Eurozone stress, narrowing = calm
+    if 'price_btp' in df.columns and 'price_bund' in df.columns:
+        df['spread_btp_bund'] = df['price_btp'] - df['price_bund']
+
+        # Z-Score of Spread (Regime)
+        spread_mean = df['spread_btp_bund'].rolling(400).mean()
+        spread_std = df['spread_btp_bund'].rolling(400).std()
+        df['spread_btp_bund_z_400'] = (df['spread_btp_bund'] - spread_mean) / spread_std.replace(0, 1)
+
+        # Spread Momentum
+        df['spread_btp_bund_slope_100'] = df['spread_btp_bund'].diff(100)
+
+        # Hurst Exponent of Spread (Market Structure)
+        # H > 0.5: Trend-persistent (directional move in progress)
+        # H < 0.5: Mean-reverting (choppy, uncertain)
+        # H ~ 0.5: Random walk
+        # Regime changes in H often precede price moves
+        df['spread_btp_bund_hurst_100'] = rolling_hurst(df['spread_btp_bund'], 100)
+        df['spread_btp_bund_hurst_200'] = rolling_hurst(df['spread_btp_bund'], 200)
+
+        # Hurst Change (Acceleration of regime shift)
+        df['spread_btp_bund_hurst_delta_50'] = df['spread_btp_bund_hurst_100'].diff(50)
+
+        # Fill NaNs from rolling calculations
+        hurst_cols = ['spread_btp_bund_hurst_100', 'spread_btp_bund_hurst_200', 'spread_btp_bund_hurst_delta_50']
+        df[hurst_cols] = df[hurst_cols].fillna(0.5)  # Default to random walk
 
     # 3. Vol-of-Vol (Second Derivative of Fear)
     if 'price_vix' in df.columns:
