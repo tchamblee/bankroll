@@ -24,7 +24,9 @@ SERIES_MAP = {
     'T10YIE': 'inflation_breakeven', # Daily - 10-Year Breakeven Inflation Rate
     'VIXCLS': 'vix',              # Daily - CBOE Volatility Index
     'VXVCLS': 'vix3m',            # Daily - CBOE 3-Month Volatility Index
-    'NFCI': 'financial_conditions' # Weekly - Chicago Fed National Financial Conditions Index
+    'NFCI': 'financial_conditions', # Weekly - Chicago Fed National Financial Conditions Index
+    'DFF': 'fed_funds_rate',      # Daily - Federal Funds Effective Rate
+    'ECBDFR': 'ecb_deposit_rate', # Daily - ECB Deposit Facility Rate
 }
 
 def fetch_series(series_id, start_date=None):
@@ -110,13 +112,18 @@ def ingest_fred_data(lookback_days=365*5):
     cols_needed = ['fed_assets_bil', 'tga_balance', 'reverse_repo']
     if all(c in merged_df.columns for c in cols_needed):
         merged_df['net_liquidity_bil'] = (
-            merged_df['fed_assets_bil'] - 
-            merged_df['tga_balance'] - 
+            merged_df['fed_assets_bil'] -
+            merged_df['tga_balance'] -
             merged_df['reverse_repo']
         )
         logger.info("Calculated Net Liquidity")
     else:
         logger.warning(f"Could not calculate Net Liquidity. Missing columns. Present: {merged_df.columns}")
+
+    # Calculate USD-EUR Rate Differential (proxy for cross-currency basis)
+    if 'fed_funds_rate' in merged_df.columns and 'ecb_deposit_rate' in merged_df.columns:
+        merged_df['usd_eur_rate_diff'] = merged_df['fed_funds_rate'] - merged_df['ecb_deposit_rate']
+        logger.info("Calculated USD-EUR Rate Differential")
 
     # Reset Index for saving
     merged_df = merged_df.reset_index().rename(columns={'index': 'date'})

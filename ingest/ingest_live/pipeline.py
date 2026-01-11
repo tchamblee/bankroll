@@ -4,6 +4,7 @@ import nest_asyncio
 import config as cfg
 from ingest_fred import ingest_fred_data
 from ingest_cot import process_cot_data
+from ingest_treasury_auctions import ingest_treasury_auctions
 from .config import logger, DATA_DIR, GDELT_ROOT, RECONNECT_DELAY
 from .ibkr import IBKRStreamer
 from .gdelt_worker import gdelt_monitor
@@ -20,13 +21,14 @@ async def main_loop():
     # Start GDELT Monitor as separate task (Lives across IBKR reconnects)
     gdelt_task = asyncio.create_task(gdelt_monitor(stop_event))
 
-    # Initial FRED & COT Fetch
-    logger.info("Fetching FRED & COT Data...")
+    # Initial FRED, COT & Treasury Auction Fetch
+    logger.info("Fetching FRED, COT & Treasury Auction Data...")
     try:
         loop = asyncio.get_running_loop()
         # Run these in executor to avoid blocking the loop start
         await loop.run_in_executor(None, ingest_fred_data, 365*2)
         await loop.run_in_executor(None, process_cot_data)
+        await loop.run_in_executor(None, ingest_treasury_auctions, 2)  # Last 2 years
     except Exception as e:
         logger.error(f"Macro/Fundamental Ingest Failed: {e}")
 

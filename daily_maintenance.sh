@@ -30,8 +30,14 @@ fi
 # 2. Backfill Gaps (Ensure Data Lake is Complete)
 log "2. Backfilling Data Lake Gaps..."
 # This script scans local files, finds time gaps, and fetches from IBKR
+# Also fetches FRED, COT, and Treasury Auction data
 # It ensures the Lake is the "Source of Truth"
 python3 -m ingest.backfill.pipeline >> "$LOG_FILE" 2>&1
+
+# 2b. Economic Calendar (Requires Chrome with --remote-debugging-port=9222)
+# This is optional and requires Chrome to be running on Windows side
+# To run manually: python ingest/ingest_econ_calendar/run_backfill.py --days 7
+log "2b. Skipping Economic Calendar (requires Chrome CDP - run manually if needed)"
 
 # 3. Clean Data Lake (Optimization)
 log "3. Cleaning/Deduplicating Data Lake..."

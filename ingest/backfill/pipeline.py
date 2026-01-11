@@ -7,6 +7,7 @@ from ib_insync import IB
 import config as cfg
 from ingest_fred import ingest_fred_data
 from ingest_cot import process_cot_data
+from ingest_treasury_auctions import ingest_treasury_auctions
 from .config import logger, TEST_PROBE, DAYS_TO_BACKFILL
 from .gdelt import download_gdelt_gkg, download_gdelt_v2_day
 from .ibkr import process_symbol_for_day
@@ -20,13 +21,14 @@ async def main(symbols=None, days=None):
         await ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=103)
         logger.info(f"CONNECTED. Test Probe: {TEST_PROBE}")
         
-        # 0. Fetch FRED & COT Macro Data (Skip if targeting specific symbols to save time)
+        # 0. Fetch FRED, COT & Treasury Auction Data (Skip if targeting specific symbols to save time)
         if not symbols:
-            logger.info("Fetching FRED & COT Macro Data...")
+            logger.info("Fetching FRED, COT & Treasury Auction Data...")
             try:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, ingest_fred_data, 365*5)
                 await loop.run_in_executor(None, process_cot_data)
+                await loop.run_in_executor(None, ingest_treasury_auctions, 5)  # Last 5 years
             except Exception as e:
                 logger.error(f"Macro Ingest Failed: {e}")
         

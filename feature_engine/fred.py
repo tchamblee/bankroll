@@ -100,6 +100,13 @@ def precompute_fred_derived(fred_df):
         df['nfci_level'] = df['financial_conditions'] # Already Z-score like (0 = Avg)
         df['nfci_delta_4w'] = df['financial_conditions'].diff(20) # Approx 1 month (20 trading days)
 
+    # 6. USD-EUR Rate Differential (Cross-Currency Basis Proxy)
+    if 'usd_eur_rate_diff' in df.columns:
+        # Z-score of rate differential - high values = USD rates much higher than EUR
+        df['rate_diff_zscore_60d'] = (df['usd_eur_rate_diff'] - df['usd_eur_rate_diff'].rolling(60).mean()) / df['usd_eur_rate_diff'].rolling(60).std().replace(0, np.nan)
+        # Change in rate differential (policy divergence signal)
+        df['rate_diff_delta_20d'] = df['usd_eur_rate_diff'].diff(20)
+
     return df
 
 def add_fred_features_v2(bars_df, fred_path=None):
@@ -134,9 +141,10 @@ def add_fred_features_v2(bars_df, fred_path=None):
     # Merge
     # Select only feature columns + merge key
     # Purged redundant/low signal: net_liquidity_bil, net_liq_trend_20d, inflation_breakeven, vix_term_structure
-    cols_to_use = ['merge_date', 'net_liq_zscore_60d', 
+    cols_to_use = ['merge_date', 'net_liq_zscore_60d',
                    'credit_spread', 'credit_stress_zscore_60d', 'inflation_expectations_trend',
-                   'vix_zscore_60d', 'vix_trend_10d', 'nfci_level', 'nfci_delta_4w']
+                   'vix_zscore_60d', 'vix_trend_10d', 'nfci_level', 'nfci_delta_4w',
+                   'usd_eur_rate_diff', 'rate_diff_zscore_60d', 'rate_diff_delta_20d']
     cols_present = [c for c in cols_to_use if c in fred_df.columns]
     
     merged = pd.merge(bars_df, fred_df[cols_present], left_on='_date_only', right_on='merge_date', how='left')
