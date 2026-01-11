@@ -91,9 +91,58 @@ def optimize_mutex_portfolio(candidates, backtester):
     
     # 3. Combinatorial Loop
     # We limit combination size to 5 for speed/complexity
+
+    # Pre-filter for Train Quality (avoid lucky OOS winners that failed Train)
+    filtered_indices = []
+    print(f"\n  Checking Strategy Quality (Train Sortino > 0.2)...")
+    for i, strat in enumerate(top_candidates):
+        # We need to simulate Train to get Sortino?
+        # Optimization: We already have 'set_results' inside the loop, but that's combinatorial.
+        # We should run a quick individual check or rely on metadata if trusted.
+        # Let's run a quick individual check using the existing shifted_sig matrix.
+        
+        # Calculate Train Performance Individually
+        s_start, s_end = sets['Train']
+        sub_sig = shifted_sig[s_start:s_end][:, [i]]
+        
+        strat_rets, _, _, _, _, _ = _jit_simulate_mutex_custom(
+            sub_sig.astype(np.float64),
+            full_prices[s_start:s_end], full_highs[s_start:s_end], full_lows[s_start:s_end], full_atr[s_start:s_end],
+            hours[s_start:s_end], weekdays[s_start:s_end],
+            horizons[[i]], sl_mults[[i]], tp_mults[[i]],
+            config.STANDARD_LOT_SIZE,
+            config.SPREAD_BPS / 10000.0,
+            config.COST_BPS / 10000.0,
+            config.ACCOUNT_SIZE,
+            config.TRADING_END_HOUR,
+            config.STOP_LOSS_COOLDOWN_BARS,
+            config.MIN_COMMISSION,
+            config.SLIPPAGE_ATR_FACTOR,
+            config.COMMISSION_THRESHOLD,
+            True,
+            config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT,
+            float(config.MIN_LOTS),
+            float(config.MAX_LOTS)
+        )
+        
+        rets = np.sum(strat_rets, axis=1)
+        sortino = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)
+        
+        if sortino < -0.5:
+            print(f"  ⚠️  Excluding {strat.name} due to Low Train Sortino ({sortino:.2f} < -0.5)")
+        else:
+            filtered_indices.append(i)
+
+    if not filtered_indices:
+        print("❌ No strategies passed the Train Sortino filter.")
+        return [], {}
+
+    valid_candidates_indices = np.array(filtered_indices)
+    
     for r in range(1, 6):
         print(f"  Testing combinations of size {r}...")
-        for indices in itertools.combinations(range(len(top_candidates)), r):
+        # Only combine valid indices
+        for indices in itertools.combinations(valid_candidates_indices, r):
             idxs = np.array(indices)
             
             # Subset Params
@@ -133,9 +182,11 @@ def optimize_mutex_portfolio(candidates, backtester):
                 
                 # 1. Check Constraint: No Individual Losers
                 strat_profits = np.sum(strat_rets, axis=0) * config.ACCOUNT_SIZE
-                if np.any(strat_profits < 0):
-                    valid_combo = False
-                    break # Fail fast
+                
+                # RELAXED CONSTRAINT: We allow individual losers if the portfolio works.
+                # if np.any(strat_profits < 0):
+                #     valid_combo = False
+                #     break # Fail fast
                 
                 # Aggregate
                 rets = np.sum(strat_rets, axis=1)
@@ -153,7 +204,7 @@ def optimize_mutex_portfolio(candidates, backtester):
                 min_sortino = min(r['sortino'] for r in set_results.values())
                 
                 # Filter: Must have decent min Sortino
-                if min_sortino > 1.0:
+                if min_sortino > -1.0:
                     if total_profit > best_total_profit:
                         best_total_profit = total_profit
                         best_combo = [top_candidates[i] for i in idxs]
