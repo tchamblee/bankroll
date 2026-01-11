@@ -62,22 +62,24 @@ def run_mutex_backtest():
         target_risk_dollars = config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT
         
         strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
-            oos_sig.astype(np.float64), 
-            prices, highs, lows, atr, hours, weekdays, 
-            horizons, sl_mults, tp_mults, 
-            config.STANDARD_LOT_SIZE, 
-            config.SPREAD_BPS / 10000.0, 
-            config.COST_BPS / 10000.0, 
-            config.ACCOUNT_SIZE, 
-            config.TRADING_END_HOUR, 
+            oos_sig.astype(np.float64),
+            prices, highs, lows, atr, hours, weekdays,
+            horizons, sl_mults, tp_mults,
+            config.STANDARD_LOT_SIZE,
+            config.SPREAD_BPS / 10000.0,
+            config.COST_BPS / 10000.0,
+            config.ACCOUNT_SIZE,
+            config.TRADING_END_HOUR,
             config.STOP_LOSS_COOLDOWN_BARS,
             config.MIN_COMMISSION,
             config.SLIPPAGE_ATR_FACTOR,
             config.COMMISSION_THRESHOLD,
-            True, # Vol Targeting Enabled
+            True,  # Vol Targeting Enabled
             target_risk_dollars,
             float(config.MIN_LOTS),
-            float(config.MAX_LOTS)
+            float(config.MAX_LOTS),
+            config.VOL_SCALE_THRESHOLD,
+            config.VOL_SCALE_TIGHTEN
         )
         
         

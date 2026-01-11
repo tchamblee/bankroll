@@ -1,15 +1,17 @@
 import numpy as np
 from numba import jit
+from utils.trading import check_barrier_long, check_barrier_short, calculate_cost
 
 @jit(nopython=True, nogil=True, cache=True)
-def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray, 
+def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                                highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                                hours: np.ndarray, weekdays: np.ndarray,
                                horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
-                               lot_size: float, spread_pct: float, comm_pct: float, 
+                               lot_size: float, spread_pct: float, comm_pct: float,
                                account_size: float, end_hour: int, cooldown_bars: int,
                                min_comm: float, slippage_factor: float, commission_threshold: float,
-                               vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float):
+                               vol_targeting: bool, target_risk_dollars: float, min_lots: float, max_lots: float,
+                               vol_scale_threshold: float = 1.5, vol_scale_tighten: float = 0.8):
     """
     Simulates a portfolio of strategies running concurrently on one account.
     Each strategy manages its own position logic (Horizon, SL, TP).
@@ -71,25 +73,32 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                 if (i - entry_indices[s]) >= horizons[s]:
                     exit_signal = True
                 
-                # Check SL/TP against PREVIOUS bar volatility
+                # Check SL/TP against PREVIOUS bar using centralized barrier functions
+                # Includes volatility scaling for consistency with other simulators
                 if not exit_signal:
                     e_price = entry_prices[s]
-                    sl_dist = entry_atrs[s] * sl_mults[s]
-                    tp_dist = entry_atrs[s] * tp_mults[s]
-                    
+                    e_atr = entry_atrs[s]
+                    curr_atr = atr_vec[i-1] if i > 0 else e_atr
+
                     # Use i-1 for High/Low checks
                     if curr_pos > 0:
-                        if lows[i-1] <= (e_price - sl_dist):
+                        hit, _, code = check_barrier_long(
+                            e_price, e_atr, lows[i-1], highs[i-1],
+                            sl_mults[s], tp_mults[s], curr_atr,
+                            vol_scale_threshold, vol_scale_tighten
+                        )
+                        if hit:
                             exit_signal = True
-                            is_sl_hit = True
-                        elif tp_mults[s] > 0 and highs[i-1] >= (e_price + tp_dist):
-                            exit_signal = True
+                            is_sl_hit = (code == 1)
                     else:
-                        if highs[i-1] >= (e_price + sl_dist):
+                        hit, _, code = check_barrier_short(
+                            e_price, e_atr, lows[i-1], highs[i-1],
+                            sl_mults[s], tp_mults[s], curr_atr,
+                            vol_scale_threshold, vol_scale_tighten
+                        )
+                        if hit:
                             exit_signal = True
-                            is_sl_hit = True
-                        elif tp_mults[s] > 0 and lows[i-1] <= (e_price - tp_dist):
-                            exit_signal = True
+                            is_sl_hit = (code == 1)
 
                 if force_close:
                     exit_signal = True
@@ -145,17 +154,16 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                         if curr_pos > 0: exec_price = e_price + tp_dist
                         else: exec_price = e_price - tp_dist
 
-            # Calculate Costs for this bar's activity
-            # change is difference in Lots (Size)
+            # Calculate Costs for this bar's activity using centralized function
             change = abs(target_pos - curr_pos)
             total_cost = 0.0
-            
+
             if change > 0:
-                cost_spread = change * lot_size * exec_price * (0.5 * spread_pct)
-                raw_comm = change * lot_size * exec_price * comm_pct
-                comm = max(min_comm, raw_comm) if change > commission_threshold else 0.0 
-                slip = slippage_factor * atr_vec[i] * lot_size * change
-                total_cost = cost_spread + comm + slip
+                total_cost = calculate_cost(
+                    change, exec_price, atr_vec[i], lot_size,
+                    spread_pct, comm_pct, min_comm,
+                    slippage_factor, commission_threshold
+                )
                 
                 if target_pos != 0 and curr_pos == 0:
                      strat_trades[s] += 1

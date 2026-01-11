@@ -13,7 +13,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from ib_insync import IB, Forex, Index, ContFuture, Stock
+from ib_insync import IB, Forex
+from ingest.ibkr_utils import build_contract_from_config, qualify_contract
 import nest_asyncio
 
 import config as cfg
@@ -185,23 +186,14 @@ class PaperTradeApp:
                     continue
 
                 if t['mode'] == 'BARS_TRADES_1MIN':
-                    c = None
-                    if t['secType'] == 'IND':
-                        c = Index(t['symbol'], t['exchange'], t['currency'])
-                    elif t['secType'] == 'CONTFUT':
-                        c = ContFuture(t['symbol'], t['exchange'], t['currency'])
-                    elif t['secType'] == 'STK':
-                        c = Stock(t['symbol'], t['exchange'], t['currency'])
-                    elif t['secType'] == 'CASH':
-                        c = Forex(t['symbol'] + t['currency'])
-
-                    if c:
-                        try:
-                            await self.ib.qualifyContractsAsync(c)
+                    try:
+                        c = build_contract_from_config(t)
+                        c = await qualify_contract(self.ib, c, logger)
+                        if c:
                             self.ib.reqMktData(c, "", False, False)
                             self.contract_map[c.conId] = t
-                        except Exception as e:
-                            logger.warning(f"Failed to qualify/request {t['name']}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Failed to qualify/request {t['name']}: {e}")
 
             self.ib.pendingTickersEvent += self.on_pending_tickers
             logger.info("VIRTUAL PAPER TRADING ACTIVE (NO BROKER ORDERS)")

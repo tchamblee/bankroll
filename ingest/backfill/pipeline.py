@@ -3,13 +3,14 @@ import logging
 import sys
 import nest_asyncio
 from datetime import datetime, timedelta, timezone
-from ib_insync import IB, Forex, Index, ContFuture, Stock
+from ib_insync import IB
 import config as cfg
 from ingest_fred import ingest_fred_data
 from ingest_cot import process_cot_data
 from .config import logger, TEST_PROBE, DAYS_TO_BACKFILL
 from .gdelt import download_gdelt_gkg, download_gdelt_v2_day
 from .ibkr import process_symbol_for_day
+from ingest.ibkr_utils import build_and_qualify
 
 nest_asyncio.apply()
 
@@ -41,23 +42,10 @@ async def main(symbols=None, days=None):
                 return
 
         for t_conf in targets_to_process:
-            contract = None
-            if t_conf["secType"] == "CASH": 
-                contract = Forex(t_conf["symbol"] + t_conf["currency"], exchange=t_conf["exchange"])
-            elif t_conf["secType"] == "IND": 
-                contract = Index(t_conf["symbol"], t_conf["exchange"], t_conf["currency"])
-            elif t_conf["secType"] == "CONTFUT":
-                contract = ContFuture(t_conf["symbol"], t_conf["exchange"], t_conf["currency"])
-            elif t_conf["secType"] == "STK": 
-                contract = Stock(t_conf["symbol"], t_conf["exchange"], t_conf["currency"])
-            
-            qual = await ib.qualifyContractsAsync(contract)
-            if not qual:
-                logger.error(f"Could not qualify {t_conf['name']}")
+            contract, _ = await build_and_qualify(ib, t_conf, logger)
+            if contract is None:
                 continue
-            
-            final_contract = qual[0]
-            qualified_contracts.append((t_conf, final_contract))
+            qualified_contracts.append((t_conf, contract))
             logger.info(f"   Verified: {t_conf['name']}")
 
         # 2. Iterate Days (Recent -> Oldest)

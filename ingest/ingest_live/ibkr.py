@@ -5,10 +5,11 @@ import os
 import logging
 from pathlib import Path
 import pandas as pd
-from ib_insync import IB, Forex, Index, Future, ContFuture, Stock, Contract, TickByTickBidAsk, TickByTickAllLast
+from ib_insync import IB, Contract, TickByTickBidAsk, TickByTickAllLast
 import config as cfg
 from utils import save_chunk
 from .config import logger, DATA_DIR, CHUNK_SIZE, DATA_TIMEOUT, RECONNECT_DELAY, FLUSH_INTERVAL_SEC
+from ingest.ibkr_utils import build_contract_from_config, qualify_contract, resolve_contfut
 
 class IBKRStreamer:
     def __init__(self):
@@ -51,30 +52,18 @@ class IBKRStreamer:
         self.buffers = {t["name"]: [] for t in cfg.TARGETS}
 
         for t_conf in cfg.TARGETS:
-            contract = None
-            if t_conf["secType"] == "CASH":
-                contract = Forex(t_conf["symbol"] + t_conf["currency"], exchange=t_conf["exchange"])
-            elif t_conf["secType"] == "IND":
-                contract = Index(t_conf["symbol"], t_conf["exchange"], t_conf["currency"])
-            elif t_conf["secType"] == "FUT":
-                contract = Future(symbol=t_conf["symbol"], lastTradeDateOrContractMonth=t_conf["lastTradeDate"], exchange=t_conf["exchange"], currency=t_conf["currency"])
-            elif t_conf["secType"] == "CONTFUT":
-                contract = ContFuture(symbol=t_conf["symbol"], exchange=t_conf["exchange"], currency=t_conf["currency"])
-            elif t_conf["secType"] == "STK":
-                contract = Stock(t_conf["symbol"], t_conf["exchange"], t_conf["currency"])
-            else:
+            try:
+                contract = build_contract_from_config(t_conf)
+            except ValueError as e:
+                logger.error(f"Failed to build contract for {t_conf['name']}: {e}")
                 continue
 
-            qual = await self.ib.qualifyContractsAsync(contract)
-            if not qual:
-                logger.error(f"Could not qualify {t_conf['name']}")
+            contract = await qualify_contract(self.ib, contract, logger)
+            if contract is None:
                 continue
-            
-            contract = qual[0]
+
             if t_conf["secType"] == "CONTFUT":
-                specific_contract = Contract(conId=contract.conId)
-                await self.ib.qualifyContractsAsync(specific_contract)
-                contract = specific_contract
+                contract = await resolve_contfut(self.ib, contract, logger)
 
             self.contract_map[contract.conId] = t_conf
 

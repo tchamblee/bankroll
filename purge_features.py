@@ -324,19 +324,19 @@ if __name__ == "__main__":
         if not os.path.exists(p):
             all_exist = False
             break
-    
+
     if all_exist and not force_purge:
-        print(f"⏩ Survivor lists for all horizons ({config.PREDICTION_HORIZONS}) already exist. Skipping.")
+        print(f"Survivor lists for all horizons ({config.PREDICTION_HORIZONS}) already exist. Skipping.")
         print(f"   (Use '--force' to override)")
         # Ensure marker exists so validation can proceed
         with open(marker_path, 'w') as f:
             f.write("Cached")
-        exit(0)
+        sys.exit(0)
 
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
-        print("❌ Feature Matrix not found. Run generate_features.py first.")
-        exit(1)
+        print("Feature Matrix not found. Run generate_features.py first.")
+        sys.exit(1)
         
     base_df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
 
@@ -394,8 +394,8 @@ if __name__ == "__main__":
         
         # Optimization: In-place update (avoid full copy)
         # We reuse train_df and just overwrite the target column
-        # Using default TP=1.5% SL=0.5% (Config alignment)
-        train_df['target_return'] = triple_barrier_labels(train_df, lookahead=horizon, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS)
+        # Using ATR multipliers from config (TP=4.0*ATR, SL=2.0*ATR)
+        train_df['target_return'] = triple_barrier_labels(train_df, lookahead=horizon, tp_mult=config.DEFAULT_TAKE_PROFIT, sl_mult=config.DEFAULT_STOP_LOSS)
         
         # Run the Purge (Silent Mode)
         survivors, kill_list = purge_features(train_df, horizon, silent=True)
@@ -478,4 +478,5 @@ if __name__ == "__main__":
     # Signal completion
     with open(marker_path, 'w') as f:
         f.write("Updated")
-    print(f"✅ Purge Complete. Marker saved to {marker_path}")
+    print(f"Purge Complete. Marker saved to {marker_path}")
+    sys.exit(0)

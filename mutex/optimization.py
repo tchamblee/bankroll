@@ -122,7 +122,9 @@ def optimize_mutex_portfolio(candidates, backtester):
             True,
             config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT,
             float(config.MIN_LOTS),
-            float(config.MAX_LOTS)
+            float(config.MAX_LOTS),
+            config.VOL_SCALE_THRESHOLD,
+            config.VOL_SCALE_TIGHTEN
         )
         
         rets = np.sum(strat_rets, axis=1)
@@ -177,7 +179,9 @@ def optimize_mutex_portfolio(candidates, backtester):
                     True, # Vol Targeting
                     config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT,
                     float(config.MIN_LOTS),
-                    float(config.MAX_LOTS)
+                    float(config.MAX_LOTS),
+                    config.VOL_SCALE_THRESHOLD,
+                    config.VOL_SCALE_TIGHTEN
                 )
                 
                 # 1. Check Constraint: No Individual Losers
