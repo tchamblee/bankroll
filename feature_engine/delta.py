@@ -8,7 +8,7 @@ def add_delta_features(df, lookback=10):
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret',
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size',
-               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf', 'residual_spy',
+               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
                'IBIT_Lag2_Return', 'us_curve', 'bund']
 
     def is_valid_feature(c):

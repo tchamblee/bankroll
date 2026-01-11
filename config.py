@@ -191,14 +191,6 @@ TARGETS = [
         "mode": "BARS_TRADES_1MIN",
     },
     {
-        "name": "SPY",
-        "symbol": "SPY",
-        "secType": "STK",
-        "currency": "USD",
-        "exchange": "SMART",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
         "name": "IBIT",
         "symbol": "IBIT",
         "secType": "STK",

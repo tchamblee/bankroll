@@ -36,6 +36,7 @@ def run_pipeline(engine, data_cache=None):
         '_zn': get_df('zn'),
         '_6e': get_df('6e'),
         '_tick_nyse': get_df('tick_nyse'),
+        '_trin_nyse': get_df('trin_nyse'),
         # Majors (The Matrix)
         '_gbpusd': get_df('gbpusd'),
         '_usdjpy': get_df('usdjpy'),
