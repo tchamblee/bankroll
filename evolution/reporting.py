@@ -124,6 +124,9 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         train_sortino = float(t_stats.get('sortino', 0))
         val_sortino = float(v_stats.get('sortino', 0))
         
+        train_trades = int(t_stats.get('trades', 0))
+        val_trades = int(v_stats.get('trades', 0))
+        
         passed_gate = True
         rejection_reason = []
 
@@ -138,6 +141,12 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             passed_gate = False
             if train_ret <= 0: rejection_reason.append(f"Train_Ret({train_ret*100:.2f}%)")
             if val_ret <= 0: rejection_reason.append(f"Val_Ret({val_ret*100:.2f}%)")
+
+        # 3. Min Trades Filter
+        elif train_trades < config.MIN_TRADES_FOR_METRICS or val_trades < config.MIN_TRADES_FOR_METRICS:
+            passed_gate = False
+            if train_trades < config.MIN_TRADES_FOR_METRICS: rejection_reason.append(f"Train_Trds({train_trades})")
+            if val_trades < config.MIN_TRADES_FOR_METRICS: rejection_reason.append(f"Val_Trds({val_trades})")
 
         if not passed_gate:
             # Track closest call for debugging/info
