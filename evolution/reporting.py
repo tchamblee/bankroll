@@ -169,9 +169,17 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             clones = []
             for _ in range(3):
                 clone = Strategy(name=f"{s.name}_jit", long_genes=[g.copy() for g in s.long_genes], short_genes=[g.copy() for g in s.short_genes], min_concordance=s.min_concordance)
+                # Inherit all barrier parameters
+                clone.stop_loss_pct = s.stop_loss_pct
+                clone.take_profit_pct = s.take_profit_pct
+                clone.limit_dist_atr = s.limit_dist_atr
+                clone.sl_long = s.sl_long
+                clone.sl_short = s.sl_short
+                clone.tp_long = s.tp_long
+                clone.tp_short = s.tp_short
                 for g in clone.long_genes + clone.short_genes:
                     if hasattr(g, 'threshold'): g.threshold *= random.uniform(0.95, 1.05)
-                    if hasattr(g, 'window') and isinstance(g.window, int): 
+                    if hasattr(g, 'window') and isinstance(g.window, int):
                         g.window = max(2, int(g.window * random.uniform(0.95, 1.05)))
                 clones.append(clone)
             

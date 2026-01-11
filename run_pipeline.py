@@ -67,10 +67,10 @@ def main():
             print(f"⚠️ Survivors file not found for Horizon {horizon}. Skipping.")
     
     # 5. Analysis & Visualization
-    run_step("report_top_strategies.py", "Strategy Selection & Reporting")
-    run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
-    run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
-    run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")
+    # run_step("report_top_strategies.py", "Strategy Selection & Reporting")
+    # run_step("run_mutex_strategy.py", "Mutex Portfolio Backtest")
+    # run_step("visualize_strategy_performance.py", "Strategy Account Performance Visualization")
+    # run_step("generate_trade_atlas.py", "Consolidated Trade Atlas Generation")
     
     print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY 🎉")
 

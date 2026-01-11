@@ -119,7 +119,7 @@ class EvolutionaryAlphaFactory:
             self.total_strategies_evaluated += len(self.population)
 
             # 1. Evaluate using Rolling Walk-Forward Validation
-            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=4, time_limit=horizon, min_trades=current_min_trades)
+            wfv_results = self.backtester.evaluate_walk_forward(self.population, folds=config.WFV_FOLDS, time_limit=horizon, min_trades=current_min_trades)
             wfv_scores = wfv_results['sortino'].values
             
             avg_wfv = np.mean(wfv_scores)
@@ -201,9 +201,15 @@ class EvolutionaryAlphaFactory:
                 child = Strategy(name=f"Mutant_{random.randint(1000,9999)}")
                 child.long_genes = [g.copy() for g in parent.long_genes]
                 child.short_genes = [g.copy() for g in parent.short_genes]
+                # Inherit all barrier parameters (symmetric + directional)
                 child.stop_loss_pct = parent.stop_loss_pct
                 child.take_profit_pct = parent.take_profit_pct
-                
+                child.limit_dist_atr = parent.limit_dist_atr
+                child.sl_long = parent.sl_long
+                child.sl_short = parent.sl_short
+                child.tp_long = parent.tp_long
+                child.tp_short = parent.tp_short
+
                 mutate_strategy(child, self.factory.features)
                 new_population.append(child)
             
