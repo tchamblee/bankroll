@@ -8,6 +8,7 @@ from .experimental import add_experimental_features
 from .physics import add_interaction_features
 from .profile import add_market_profile_features
 from .dsp import add_dsp_features
+from .information_geometry import add_information_geometry_features
 
 def run_pipeline(engine, data_cache=None):
     """
@@ -93,6 +94,10 @@ def run_pipeline(engine, data_cache=None):
     # 9d. DSP Features (Fisher, Hilbert)
     if engine.bars is not None:
         engine.bars = add_dsp_features(engine.bars, windows=[20, 50, 100])
+        
+    # 9e. Information Geometry Features (Fisher Info Velocity)
+    if engine.bars is not None:
+        engine.bars = add_information_geometry_features(engine.bars, windows=[50, 100, 200])
     
     # 10. Deltas
     engine.add_delta_features(lookback=25)

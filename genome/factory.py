@@ -14,7 +14,8 @@ from .constants import (
 from .genes import (
     ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
     EfficiencyGene, DivergenceGene, EventGene, CrossGene, PersistenceGene,
-    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, HysteresisGene, gene_from_dict
+    ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, HysteresisGene, 
+    ProximityGene, ValidityGene, gene_from_dict
 )
 from .strategy import Strategy
 
@@ -267,14 +268,34 @@ class GenomeFactory:
                 return self.create_random_gene()
 
         # 3% Hysteresis Gene (Path Dependency - "Is Price > Price when Feature was last here?")
-        elif rand_val < 0.98:
+        elif rand_val < 0.96:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return HysteresisGene(feature, operator, window)
 
+        # 2% Proximity Gene (Structure - "Near Max/Min")
+        elif rand_val < 0.98:
+            feature = self._weighted_choice(pool)
+            mode = random.choice(['max', 'min'])
+            stats = self.feature_stats.get(feature, {'std': 1})
+            threshold = 0.1 * stats['std'] # Within 0.1 sigma
+            window = random.choice(VALID_ZSCORE_WINDOWS)
+            return ProximityGene(feature, mode, threshold, window)
+
+        # 2% Validity Gene (Density - "Was True 90% of time")
+        elif rand_val < 1.00: # Capture last slice
+            feature = self._weighted_choice(pool)
+            operator = random.choice(['>', '<'])
+            stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
+            threshold = stats['mean']
+            window = random.randint(10, 50)
+            percentage = random.choice([0.8, 0.9, 0.95])
+            return ValidityGene(feature, operator, threshold, window, percentage)
+
         # Remaining: Persistence, Extrema, Consecutive, Delta
         else:
+            # Fallback block now unreachable via rand_val, but kept for explicit calls or future rebalancing
             dice = random.random()
             if dice < 0.25:
                 bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]

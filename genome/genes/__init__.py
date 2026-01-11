@@ -16,4 +16,6 @@ from .mean_reversion import MeanReversionGene
 from .time import TimeGene
 from .seasonality import SeasonalityGene
 from .hysteresis import HysteresisGene
+from .proximity import ProximityGene
+from .validity import ValidityGene
 from .utils import gene_from_dict

@@ -8,7 +8,7 @@ from genome.genes import (
     ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
     EfficiencyGene, DivergenceGene, EventGene, CrossGene, PersistenceGene,
     ExtremaGene, ConsecutiveGene, DeltaGene, SeasonalityGene, MeanReversionGene, TimeGene,
-    HysteresisGene
+    HysteresisGene, ProximityGene, ValidityGene
 )
 from backtest.feature_computation import ensure_feature_context, precompute_base_features
 from genome.strategy import Strategy
@@ -53,7 +53,9 @@ def audit_genes():
         DeltaGene('feature_a', '>', 0.1, 5),
         MeanReversionGene('feature_a', 'regime_x', 2.0, 0.5, 'long', 10),
         TimeGene('hour', '>', 12),
-        HysteresisGene('feature_a', '>', 10)
+        HysteresisGene('feature_a', '>', 10),
+        ProximityGene('feature_a', 'max', 0.1, 10),
+        ValidityGene('feature_a', '>', 0.0, 10, 0.8)
     ]
     
     # Wrap in a dummy strategy

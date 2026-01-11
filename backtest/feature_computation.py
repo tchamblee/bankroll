@@ -146,6 +146,10 @@ def ensure_feature_context(population, temp_dir, existing_keys):
                  if hasattr(gene, 'feature_long'): parse_feature_dependencies(gene.feature_long)
             elif gene.type == 'extrema':
                  if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
+            elif gene.type == 'proximity':
+                 if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
+            elif gene.type == 'validity':
+                 if hasattr(gene, 'feature'): parse_feature_dependencies(gene.feature)
     # print("") # Newline
     
     # LRU-style Cache for Input Data (OrderedDict for O(1) access)
