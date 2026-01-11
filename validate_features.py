@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import sys
+import argparse
 from feature_engine import FeatureEngine
 import scipy.stats as stats
 import os
@@ -72,8 +73,12 @@ def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT, tp_pct=config
     return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Validate features using IC and RF importance')
+    parser.add_argument('--force', action='store_true', help='Force regeneration even if metrics exist')
+    args = parser.parse_args()
+
     marker_path = config.PURGE_MARKER_FILE
-    
+
     # Check if metrics already exist
     all_metrics_exist = True
     for horizon in config.PREDICTION_HORIZONS:
@@ -81,21 +86,23 @@ if __name__ == "__main__":
         if not os.path.exists(p):
             all_metrics_exist = False
             break
-            
-    if all_metrics_exist:
+
+    if all_metrics_exist and not args.force:
         # Check if Purge marker exists, consume it to clear the "pipe" even if we skip
         if os.path.exists(marker_path):
             os.remove(marker_path)
         print(f"⏩ Feature Metrics for all horizons already exist. Skipping validation.")
+        print(f"   (Use '--force' to override)")
         exit(0)
 
-    # Check if Purge is complete
-    if not os.path.exists(marker_path):
+    # Check if Purge is complete (skip check if forcing)
+    if not args.force and not os.path.exists(marker_path):
         print(f"❌ Purge marker not found at {marker_path}. Run purge_features.py first.")
         sys.exit(1)
-    
-    # Consume marker
-    os.remove(marker_path)
+
+    # Consume marker if it exists
+    if os.path.exists(marker_path):
+        os.remove(marker_path)
 
     print(f"Loading Feature Matrix from {config.DIRS['FEATURE_MATRIX']}...")
     if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
