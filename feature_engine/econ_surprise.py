@@ -139,12 +139,15 @@ def add_econ_surprise_features(bars_df, events_path=None):
     bars_df = bars_df.sort_values('time_end').copy()
 
     # Parse week string to datetime for merging
-    # Week format: "jul14.2025" -> Monday of that week
+    # Week format: "jul14.2025" -> use Wednesday of that week as approximate event time
+    # (most high-impact events are mid-week)
     def parse_week(week_str):
         try:
-            from datetime import datetime
-            # Parse "jul14.2025" format
+            from datetime import datetime, timedelta
+            # Parse "jul14.2025" format - this is the Monday
             dt = datetime.strptime(week_str, "%b%d.%Y")
+            # Use Wednesday (Monday + 2 days) as typical event day
+            dt = dt + timedelta(days=2)
             return pd.Timestamp(dt, tz='UTC')
         except:
             return pd.NaT

@@ -151,7 +151,10 @@ def parse_ff_datetime(date_str: str, time_str: str, ff_timezone: str = "America/
         # Try to parse month and day
         date_str = date_str.strip()
 
-        # Handle formats like "Jan 13" or "Jan13"
+        # Handle formats like "Mon Aug 4", "Aug 4", "Aug4"
+        # Skip day-of-week prefix if present (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+        date_str = re.sub(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+', '', date_str, flags=re.IGNORECASE)
+
         match = re.match(r'([A-Za-z]+)\s*(\d+)', date_str)
         if not match:
             return None
