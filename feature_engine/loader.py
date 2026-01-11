@@ -343,33 +343,54 @@ def process_gdelt_v2_file(f):
         print(f"Error processing V2 file {f}: {e}")
         return None
 
-def load_gdelt_v2_data(data_dir=None):
+def load_gdelt_v2_data(data_dir=None, force_rebuild=False):
     """
     Loads GDELT V2 GKG (15-min) data and aggregates it to Intraday resolution.
     Returns a DataFrame indexed by time_start (UTC).
+
+    Uses caching to avoid reprocessing 13k+ files on every run.
+    Set force_rebuild=True to ignore cache.
     """
     if data_dir is None:
         data_dir = config.DIRS.get("DATA_GDELT", "data/gdelt")
-        
+
+    # Check for cached processed data
+    cache_path = os.path.join(config.DIRS.get("PROCESSED_DIR", "processed_data"), "gdelt_v2_cache.parquet")
+
     v2_dir = os.path.join(data_dir, "v2_gkg")
-    
+
     # Check if dir exists, if not, try config.DIRS['DATA_GDELT']
     if not os.path.exists(v2_dir):
         alt_dir = os.path.join(config.DIRS.get("DATA_GDELT", "data/gdelt"), "v2_gkg")
         if os.path.exists(alt_dir):
             v2_dir = alt_dir
-    
+
     if not os.path.exists(v2_dir):
         print(f"No V2 GKG dir found at {v2_dir}")
         return None
-        
+
     files = glob.glob(os.path.join(v2_dir, "gdelt_v2_gkg_*.parquet"))
     files.sort() # Ensure time order
-    
+
     if not files:
         print(f"No GDELT V2 files found in {v2_dir}")
         return None
-        
+
+    # Check cache validity: cache exists, not forcing rebuild, and cache is newer than newest source file
+    if not force_rebuild and os.path.exists(cache_path):
+        cache_mtime = os.path.getmtime(cache_path)
+        newest_source_mtime = max(os.path.getmtime(f) for f in files)
+
+        if cache_mtime > newest_source_mtime:
+            print(f"Loading GDELT V2 from cache ({len(files)} source files, cache is up-to-date)...")
+            try:
+                cached_df = pd.read_parquet(cache_path)
+                cached_df.index = pd.to_datetime(cached_df.index, utc=True)
+                print(f"  Loaded {len(cached_df)} periods from cache.")
+                return cached_df
+            except Exception as e:
+                print(f"  Cache read failed: {e}. Rebuilding...")
+
     print(f"Loading {len(files)} GDELT V2 files (Intraday)...")
     
     # Process in chunks to be safe
@@ -442,9 +463,17 @@ def load_gdelt_v2_data(data_dir=None):
     
     # 6. Volume
     gdelt_intraday['total_vol'] = gdelt_intraday['news_vol_eur'] + gdelt_intraday['news_vol_usd']
-    
+
     # Enforce UTC Index
     gdelt_intraday.index = pd.to_datetime(gdelt_intraday.index, utc=True)
-    
+
+    # Save to cache for faster subsequent loads
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        gdelt_intraday.to_parquet(cache_path)
+        print(f"  Saved GDELT V2 cache to {cache_path}")
+    except Exception as e:
+        print(f"  Warning: Could not save cache: {e}")
+
     print(f"Processed GDELT V2 Intraday data: {len(gdelt_intraday)} periods.")
     return gdelt_intraday

@@ -181,4 +181,22 @@ def add_intermarket_features(primary_df, correlator_dfs):
         vix_ret = np.log(df['price_vix'] / df['price_vix'].shift(1))
         df['vol_of_vol_vix_100'] = vix_ret.rolling(100).std()
 
+    # 4. Cross-Asset Momentum Confirmation (Risk-On/Risk-Off Score)
+    # EURUSD long is higher-confidence when ES rallying AND ZN falling (risk-on)
+    # Risk-on = equities up, bonds down. Risk-off = opposite.
+    # +2 = strong risk-on, -2 = strong risk-off, 0 = mixed
+    if 'price_es' in df.columns and 'price_zn' in df.columns:
+        # Calculate returns over 50 bars (approx 1.5 hours at avg bar duration)
+        ret_50_es = np.log(df['price_es'] / df['price_es'].shift(50))
+        ret_50_zn = np.log(df['price_zn'] / df['price_zn'].shift(50))
+
+        # Sign of momentum: +1 if up, -1 if down, 0 if flat
+        es_momentum = np.sign(ret_50_es)
+        zn_momentum = np.sign(ret_50_zn)
+
+        # Risk-on: ES up (+1) and ZN down (-1) = +1 - (-1) = +2
+        # Risk-off: ES down (-1) and ZN up (+1) = -1 - 1 = -2
+        # Mixed: 0
+        df['risk_on_momentum'] = es_momentum - zn_momentum
+
     return df

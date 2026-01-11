@@ -15,17 +15,25 @@ def calculate_sortino_ratio(returns: np.ndarray, annualization_factor: int = con
     """
     Calculates Annualized Sortino Ratio using Downside Deviation (LPM_2).
     Clamps positive returns to zero (or target_return) for the deviation calculation.
+
+    Note on edge case: When downside deviation is zero (no negative returns),
+    EPSILON is added to prevent division by zero. This results in a very large
+    but finite Sortino rather than infinity. This is intentional to:
+    1. Maintain numerical stability for downstream ranking/sorting
+    2. Avoid inf propagation in portfolio optimization
+    3. Treat "no drawdowns yet" as "excellent but unproven" rather than "perfect"
     """
     if len(returns) < 2: return 0.0
-    
+
     avg_ret = np.mean(returns)
-    
+
     # Downside Deviation (LPM_2)
     # Using target_return (usually 0) as the hurdle
     downside = np.minimum(returns - target_return, 0.0)
     # Correct Sortino uses Root Mean Square (RMS) of downside, not Standard Deviation
+    # EPSILON prevents div-by-zero when all returns are positive (see docstring)
     downside_std = np.sqrt(np.mean(downside**2)) + config.EPSILON
-    
+
     return (avg_ret / downside_std) * np.sqrt(annualization_factor)
 
 def deflated_sharpe_ratio(

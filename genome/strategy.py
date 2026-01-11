@@ -100,10 +100,12 @@ class Strategy:
         
         go_long = l_votes >= l_thresh if self.long_genes else np.zeros(n_rows, dtype=bool)
         go_short = s_votes >= s_thresh if self.short_genes else np.zeros(n_rows, dtype=bool)
-        
+
+        # Net signal: +1 (long), -1 (short), 0 (flat)
+        # Actual position sizing is handled by vol_targeting in trade_simulator
         net_signal = go_long.astype(int) - go_short.astype(int)
-        
-        return net_signal * config.MAX_LOTS
+
+        return net_signal
 
     def to_dict(self):
         return {

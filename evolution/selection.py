@@ -45,11 +45,16 @@ def update_hall_of_fame(hall_of_fame, backtester, candidates, gen, max_gens=100,
             
         n_trades = trades_batch[i]
         total_ret = np.sum(rets_batch[:, i])
-            
-        # Relaxed HOF Entry for early generations
-        min_fitness = -10.0 if gen < phase_1 else 0.1
-        
-        if cand.fitness < min_fitness: 
+
+        # HOF Entry fitness thresholds (train Sortino)
+        # Early: Allow exploration. Mid: Require MIN_HOF_SORTINO. Late: Same floor.
+        # This prevents wasting resources on low-quality strategies that will fail final filter anyway.
+        if gen < phase_1:
+            min_fitness = -10.0  # Allow exploration
+        else:
+            min_fitness = getattr(config, 'MIN_HOF_SORTINO', 0.5)
+
+        if cand.fitness < min_fitness:
             continue
 
         if gen < phase_1:

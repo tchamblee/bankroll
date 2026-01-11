@@ -26,6 +26,7 @@ MUTEX_PORTFOLIO_FILE = os.path.join(DIRS['STRATEGIES_DIR'], "mutex_portfolio.jso
 PURGE_MARKER_FILE = os.path.join(DIRS['FEATURES_DIR'], "PURGE_COMPLETE")
 FRED_DATA_FILE = os.path.join(DIRS['DATA_DIR'], "fred_macro_daily.parquet")
 COT_DATA_FILE = os.path.join(DIRS['DATA_DIR'], "cot_weekly.parquet")
+COT_STALENESS_DAYS = 14  # Max age for COT data before considered stale (weekly data = 2 reports)
 
 # Templates for formatted strings (usage: config.SURVIVORS_FILE_TEMPLATE.format(horizon))
 SURVIVORS_FILE_TEMPLATE = os.path.join(DIRS['FEATURES_DIR'], "survivors_{}.json")
@@ -55,6 +56,7 @@ COST_BPS = 0.20
 SPREAD_BPS = 0.25
 MIN_RETURN_THRESHOLD = 0.001
 MIN_SORTINO_THRESHOLD = 0.9
+MIN_HOF_SORTINO = 0.5  # Early gate for HOF entry (defense-in-depth before final 0.9 filter)
 SLIPPAGE_ATR_FACTOR = 0.1
 
 # --- MATH CONSTANTS ---
@@ -66,8 +68,12 @@ VOLUME_THRESHOLD = 600_000_000
 AVG_BAR_MINS = 1.5 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
-# Approx 1342 bars/day (from Data Analysis 2026-01-03) * 252 days
-ANNUALIZATION_FACTOR = 338363
+# Empirically validated 2026-01-11: 234,461 bars / 160.9 trading days * 252 = 367,288
+# NOTE: Should be re-validated after data changes:
+#   df = pd.read_parquet('processed_data/feature_matrix.parquet')
+#   trading_days = (df['time_start'].max() - df['time_start'].min()).days * (252/365)
+#   ANNUALIZATION_FACTOR = int(len(df) / trading_days * 252)
+ANNUALIZATION_FACTOR = 367288
 
 ATR_FALLBACK_BPS = 10.0 # 0.1% of price
 MIN_ATR_BPS = 1.5 # 0.015% of price (~1.8 pips floor for EURUSD)

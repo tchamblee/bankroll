@@ -179,11 +179,13 @@ def add_cot_features(bars_df, cot_path=None, symbol=None):
     )
     
     # STALENESS CHECK:
-    # If the carry-forward is too long (e.g. > 30 days), the data is stale (e.g. ZN 2024 data for 2025 bars).
+    # If the carry-forward is too long, the data is stale (e.g. ZN 2024 data for 2025 bars).
+    # COT is weekly data, so 14 days max ensures we're using data from the last 2 reports.
     # We must set these to NaN so they can be dropped.
+    staleness_days = getattr(config, 'COT_STALENESS_DAYS', 14)
     if 'cot_report_date' in merged.columns:
         staleness = merged['time_start'] - merged['cot_report_date']
-        is_stale = staleness > pd.Timedelta(days=30)
+        is_stale = staleness > pd.Timedelta(days=staleness_days)
         
         if is_stale.any():
             # Identify COT columns (excluding keys)

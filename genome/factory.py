@@ -100,26 +100,36 @@ class GenomeFactory:
         The 'Long Tail' of weaker features is still accessible for diversity.
         """
         if not pool: return None
-        
+
         # random.triangular(low, high, mode)
-        # Mode 0 biases heavily towards the top of the list.
+        # Mode at 20% of list length provides gentle bias toward top features
+        # while maintaining exploration of the full feature pool.
         # Range [0, len(pool)] -> casting to int gives indices 0..len-1
-        idx = int(random.triangular(0, len(pool), 0))
-        
+        mode = len(pool) * 0.2
+        idx = int(random.triangular(0, len(pool), mode))
+
         # Safety clamp
         idx = min(idx, len(pool) - 1)
-        
+
         return pool[idx]
 
-    def create_gene_from_pool(self, pool):
+    def create_gene_from_pool(self, pool, for_direction=None):
+        """
+        Creates a gene from the specified pool.
+
+        Args:
+            pool: Feature pool to select from
+            for_direction: Optional 'long' or 'short' to ensure MeanReversionGene
+                           direction matches its placement in the strategy.
+        """
         if not pool: return self.create_random_gene() # Fallback
-        
+
         rand_val = random.random()
-        
+
         # 15% Mean Reversion Gene (New - Volatility Risk Premium Gated)
         if rand_val < 0.15:
             trigger = self._weighted_choice(self.trigger_pool) if self.trigger_pool else self._weighted_choice(pool)
-            
+
             # Find a Premium feature if possible
             prem_feats = [f for f in self.regime_pool if 'premium' in f]
             if prem_feats:
@@ -130,13 +140,15 @@ class GenomeFactory:
                 # Generic regime threshold
                 stats = self.feature_stats.get(regime, {'mean': 0, 'std': 1})
                 reg_thresh = stats['mean'] + random.choice([-0.5, 0.5]) * stats['std']
-            
-            raw_thresh = random.choice([2.0, 2.5, 3.0]) 
+
+            raw_thresh = random.choice([2.0, 2.5, 3.0])
             threshold = abs(self._get_valid_threshold(trigger, -raw_thresh if random.random() < 0.5 else raw_thresh)) # Ensure reachable magnitude
-            
-            direction = random.choice(['long', 'short'])
+
+            # Use specified direction if provided, otherwise random
+            # This ensures MeanReversionGene direction matches its gene list placement
+            direction = for_direction if for_direction else random.choice(['long', 'short'])
             window = random.choice(VALID_ZSCORE_WINDOWS)
-            
+
             return MeanReversionGene(trigger, regime, threshold, reg_thresh, direction, window)
 
         # 20% ZScore Gene (The "Super Gene" - Adaptive, Robust, Statistical)
@@ -337,31 +349,31 @@ class GenomeFactory:
 
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
-        # print("DEBUG: Creating strategy...") 
+        # print("DEBUG: Creating strategy...")
         num_genes = random.randint(max(2, num_genes_range[0]), max(2, num_genes_range[1])) # Ensure at least 2 for Setup+Trigger
-        
+
         long_genes = []
         short_genes = []
-        
+
         # --- ORGANIC GATING ENFORCEMENT ---
         # 1. The Setup (Regime Gene)
         # print("DEBUG: Creating Setup Gene")
-        long_genes.append(self.create_gene_from_pool(self.regime_pool))
-        short_genes.append(self.create_gene_from_pool(self.regime_pool))
-        
+        long_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='long'))
+        short_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='short'))
+
         # 2. The Trigger (Action Gene)
         # print("DEBUG: Creating Trigger Gene")
-        long_genes.append(self.create_gene_from_pool(self.trigger_pool))
-        short_genes.append(self.create_gene_from_pool(self.trigger_pool))
-        
+        long_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='long'))
+        short_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='short'))
+
         # 3. Filler (Random Mix)
         for _ in range(num_genes - 2):
             # print("DEBUG: Creating Filler Gene")
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
-            long_genes.append(self.create_gene_from_pool(pool))
-            
+            long_genes.append(self.create_gene_from_pool(pool, for_direction='long'))
+
             pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
-            short_genes.append(self.create_gene_from_pool(pool))
+            short_genes.append(self.create_gene_from_pool(pool, for_direction='short'))
         
         # Concordance: Majority Rule
         concordance = None

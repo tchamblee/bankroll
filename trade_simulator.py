@@ -35,7 +35,11 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
     
     # Barrier Exit Prices
     barrier_exit_prices = np.zeros(n, dtype=np.float64)
-    
+
+    # Entry Price Per Bar (for accurate limit order PnL calculation)
+    # Stores the actual entry price on the bar where entry occurred
+    entry_price_per_bar = np.zeros(n, dtype=np.float64)
+
     # Limit Fill Tracking (0=Market, 1=Limit)
     # Used for Cost Calculation
     entry_fill_type = 0 
@@ -141,12 +145,14 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                         eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
                         calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
                         size = min(max(calc_size, min_lots), max_lots)
-                    
+
                     position = np.sign(sig) * size
                     entry_price = fill_price
                     entry_atr = atr_vec[i]
                     entry_idx = i
                     entry_fill_type = fill_type
+                    # Record actual entry price for accurate PnL calculation
+                    entry_price_per_bar[i] = fill_price
                 else:
                     # Missed Limit Order
                     realized_signals[i] = 0.0
@@ -168,12 +174,14 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
                     eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
                     calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
                     size = min(max(calc_size, min_lots), max_lots)
-                    
+
                 position = np.sign(sig) * size
                 entry_price = prices[i]
                 entry_atr = atr_vec[i]
                 entry_idx = i
                 entry_fill_type = 0 # Market Reversal
+                # Record actual entry price for accurate PnL calculation
+                entry_price_per_bar[i] = prices[i]
             else:
                 # Hold
                 pass
@@ -200,14 +208,19 @@ def _jit_simulate_fast(signals: np.ndarray, prices: np.ndarray,
             
         # PnL Logic
         if i > 0:
-            # If holding, mark to market with Open[i]
-            # But if we just entered at Limit, we need to correct the 'open' price to 'limit' price?
-            # Standard Mark-to-Market: PnL = (Price[i] - Price[i-1]) * Position
-            # This assumes we entered at Price[i-1]. 
-            # If we enter at T, we pay cost.
-            
+            # Mark-to-Market PnL Calculation
+            # Standard: PnL = (Price[i] - Price[i-1]) * Position
+            # FIX: If we entered on bar i-1 (via limit or market), use actual entry price
+            # instead of prices[i-1] to correctly credit/debit the fill price difference.
+
+            # Determine the reference price for previous bar
+            prev_price = prices[i-1]
+            if entry_price_per_bar[i-1] != 0.0:
+                # We entered on bar i-1, use actual entry price
+                prev_price = entry_price_per_bar[i-1]
+
             # Gross PnL from holding prev_pos
-            price_change = exec_price - prices[i-1]
+            price_change = exec_price - prev_price
             gross_pnl = prev_pos * lot_size * price_change
             
             # Transaction Cost

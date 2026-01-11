@@ -59,9 +59,18 @@ def add_gdelt_features(df, gdelt_df):
             # Weighted Tone = Sum(Tone * Vol) / Sum(Vol)
             tone_vol = gdelt_rolled['news_tone_usd'] * gdelt_rolled['news_vol_usd']
             gdelt_rolled['news_sentiment_trend'] = tone_vol.rolling(window, min_periods=1).sum() / gdelt_rolled['vol_sum_96'].replace(0, 1)
-            
+
             # Sentiment Impact = Sentiment * RVOL (Magnitude * Intensity)
             gdelt_rolled['news_sentiment_impact'] = gdelt_rolled['news_sentiment_trend'] * gdelt_rolled['news_rvol_usd']
+
+            # 3. News Sentiment Decay Features
+            # News impact decays exponentially (half-life ~2-4 hours for FX)
+            # EWM with span converts half-life to decay factor: span = half_life / ln(2)
+            # For 15-min data: 2h = 8 periods, 4h = 16 periods, 8h = 32 periods
+            for hl_hours in [2, 4, 8]:
+                hl_periods = int(hl_hours * 4)  # 4 periods per hour (15-min)
+                span = hl_periods / np.log(2)
+                gdelt_rolled[f'news_impact_decay_{hl_hours}h'] = gdelt_rolled['news_sentiment_impact'].ewm(span=span, min_periods=1).mean()
 
         # Prepare for merge
         gdelt_reset = gdelt_rolled.reset_index().rename(columns={'index': 'time_start', 'date_utc': 'time_start'})
@@ -83,6 +92,11 @@ def add_gdelt_features(df, gdelt_df):
         merge_cols = ['time_start', 'news_rvol_usd']
         if 'news_sentiment_trend' in gdelt_reset.columns:
             merge_cols.extend(['news_sentiment_trend', 'news_sentiment_impact'])
+            # Add decay features
+            for hl in [2, 4, 8]:
+                decay_col = f'news_impact_decay_{hl}h'
+                if decay_col in gdelt_reset.columns:
+                    merge_cols.append(decay_col)
 
         merged = pd.merge_asof(
             df, 

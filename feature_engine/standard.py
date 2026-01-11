@@ -88,4 +88,13 @@ def add_features_to_bars(df, windows=[50, 100, 200, 400, 800, 1600]):
     # df['atr'] = pd.Series(tr).rolling(config.ATR_WINDOW, min_periods=1).mean().values
 
     df_new = pd.DataFrame(new_cols, index=df.index)
-    return pd.concat([df, df_new], axis=1)
+    result = pd.concat([df, df_new], axis=1)
+
+    # Autocorrelation Regime Gate Features
+    # Markets alternate between trending (positive autocorr) and mean-reverting (negative autocorr)
+    # These binary features let evolution gate strategies by regime
+    if 'autocorr_100' in result.columns:
+        result['autocorr_regime_trending'] = (result['autocorr_100'] > 0.1).astype(float)
+        result['autocorr_regime_reverting'] = (result['autocorr_100'] < -0.05).astype(float)
+
+    return result

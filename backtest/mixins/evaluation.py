@@ -67,13 +67,15 @@ class EvaluationMixin:
             sortino = (avg_ret / downside_std) * np.sqrt(self.annualization_factor)
             
             max_win = np.max(net_returns, axis=0)
-            stability_ratio = max_win / (total_ret + config.EPSILON)
-            
+            # Use abs(total_ret) to catch unstable strategies regardless of profitability
+            # A losing strategy with one huge win is just as unstable as a profitable one
+            stability_ratio = max_win / (np.abs(total_ret) + config.EPSILON)
+
             chunk_results = []
             for j, strat in enumerate(chunk_pop):
                 final_sortino = sortino[j]
-                
-                if stability_ratio[j] > config.STABILITY_PENALTY_THRESHOLD and total_ret[j] > 0: 
+
+                if stability_ratio[j] > config.STABILITY_PENALTY_THRESHOLD:
                     final_sortino *= config.STABILITY_PENALTY_FACTOR
                 
                 strat.fitness = final_sortino
