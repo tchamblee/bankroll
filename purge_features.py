@@ -3,28 +3,17 @@ import numpy as np
 import scipy.stats as stats
 import json
 import os
+import warnings
+
 import config
 from feature_engine import FeatureEngine
 from validate_features import triple_barrier_labels
-
-import warnings
-
-import pandas as pd
-import numpy as np
-import scipy.stats as stats
-import json
-import os
-import config
-from feature_engine import FeatureEngine
-from validate_features import triple_barrier_labels
-
-import warnings
 
 def get_feature_correlation_matrix(df, features):
     # Optimized: Rank then Pearson (Equivalent to Spearman but much faster)
     return df[features].rank(method='average').corr(method='pearson')
 
-def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, p_threshold=0.05, corr_threshold=0.92, stability_threshold=0.25, silent=False):
+def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, p_threshold=0.05, corr_threshold=0.85, stability_threshold=0.25, silent=False):
     """
     Identifies features to purge based on Variance, IC, and Collinearity.
     Saves survivors to data/survivors_{horizon}.json.
@@ -167,26 +156,28 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     # Vectorized Filtering
     pass_ic_mask = full_corrs.abs() >= ic_threshold
     pass_stab_mask = stability_scores >= stability_threshold
-    
+    pass_pval_mask = p_values_series <= p_threshold  # Statistical significance filter
+
     # Identify failures
     # Fix: Convert survivors list to Index for boolean masking
     survivors_idx = pd.Index(survivors)
-    
+
     fail_ic = survivors_idx[~pass_ic_mask].tolist()
-    fail_stab = survivors_idx[pass_ic_mask & ~pass_stab_mask].tolist() # Only check stab if passed IC
-    
-    # Record Kill Reasons (Optional, for logging)
-    # For speed, we might skip detailed logging per feature if N is huge,
-    # but constructing the list is fast enough.
-    
-    for f in fail_ic: # These are indices now
+    fail_pval = survivors_idx[pass_ic_mask & ~pass_pval_mask].tolist()  # Only check p-val if passed IC
+    fail_stab = survivors_idx[pass_ic_mask & pass_pval_mask & ~pass_stab_mask].tolist()  # Check stab if passed IC and p-val
+
+    # Record Kill Reasons
+    for f in fail_ic:
         kill_list.append({'Feature': f, 'Reason': f'Weak Signal (IC={full_corrs[f]:.4f})'})
-        
+
+    for f in fail_pval:
+        kill_list.append({'Feature': f, 'Reason': f'Not Significant (p={p_values_series[f]:.2e})'})
+
     for f in fail_stab:
         kill_list.append({'Feature': f, 'Reason': f'Unstable (Stability={stability_scores[f]:.2f})'})
-        
-    # Valid survivors of Step 2
-    ic_survivors = survivors_idx[pass_ic_mask & pass_stab_mask].tolist()
+
+    # Valid survivors of Step 2 - must pass IC, p-value, AND stability
+    ic_survivors = survivors_idx[pass_ic_mask & pass_pval_mask & pass_stab_mask].tolist()
     
     if len(ic_survivors) == 0:
         if not silent: print("No survivors after Weakness Check.")
@@ -265,6 +256,7 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
         # Categorize kills for reporting
         dead_kills = [k['Feature'] for k in kill_list if 'Zero Variance' in k['Reason']]
         weak_ic_kills = [k['Feature'] for k in kill_list if 'Weak Signal' in k['Reason']]
+        not_sig_kills = [k['Feature'] for k in kill_list if 'Not Significant' in k['Reason']]
         unstable_kills = [k['Feature'] for k in kill_list if 'Unstable' in k['Reason']]
         
         # Filter Redundant Kills: Show only if Base Name is DIFFERENT
@@ -293,7 +285,11 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
         if weak_ic_kills:
             print(f"📉 WEAK (Low IC): {len(weak_ic_kills)} features.")
             print(f"   Examples: {weak_ic_kills[:10]}")
-            
+
+        if not_sig_kills:
+            print(f"🎲 NOT SIGNIFICANT (p>{p_threshold}): {len(not_sig_kills)} features.")
+            print(f"   Examples: {not_sig_kills[:10]}")
+
         if unstable_kills:
             print(f"🎢 UNSTABLE: {len(unstable_kills)} features.")
             print(f"   Examples: {unstable_kills[:10]}")
@@ -430,24 +426,28 @@ if __name__ == "__main__":
     
     if useless_features:
         print(f"\n🗑️  Feature Drop Summary (Failed in ALL Horizons):")
-        
+
         # Categorize
         dead_list = []
         redundant_list = []
+        not_sig_list = []
         weak_list = []
-        
+
         for f in useless_features:
             reasons = global_kill_reasons.get(f, [])
             is_dead = any("Zero Variance" in r for r in reasons)
             is_redundant = any("Redundant" in r for r in reasons)
-            
+            is_not_sig = any("Not Significant" in r for r in reasons)
+
             if is_dead:
                 dead_list.append(f)
             elif is_redundant:
                 redundant_list.append(f)
+            elif is_not_sig:
+                not_sig_list.append(f)
             else:
                 weak_list.append(f)
-                
+
         # Helper to print truncated list
         def print_truncated(label, items, icon=""):
             items = sorted(items)
@@ -462,10 +462,13 @@ if __name__ == "__main__":
         # Print Groups
         if dead_list:
             print_truncated("DEAD (Zero Variance)", dead_list, "❌")
-            
+
         if redundant_list:
             print_truncated("REDUNDANT (Collinear)", redundant_list, "👯")
-            
+
+        if not_sig_list:
+            print_truncated("NOT SIGNIFICANT (p>0.05)", not_sig_list, "🎲")
+
         if weak_list:
             print_truncated("LOW SIGNAL (Weak/Unstable)", weak_list, "📉")
             
