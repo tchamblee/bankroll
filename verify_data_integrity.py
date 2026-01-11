@@ -186,11 +186,22 @@ def check_data_quality(df):
     const_cols = stds[stds == 0].index.tolist()
     
     if const_cols:
-        issues_found = True
-        print(f"\n⚠️  {len(const_cols)} features are CONSTANT (Zero Variance):")
-        print(const_cols[:20])
-        if len(const_cols) > 20:
-            print(f"...and {len(const_cols)-20} more.")
+        # Separate expected zero-variance (sparse event features) from unexpected
+        expected_zero_patterns = ['_surprise_z', 'auction_']  # Event-based, may be sparse
+        expected_zero = [c for c in const_cols if any(p in c for p in expected_zero_patterns)]
+        unexpected_zero = [c for c in const_cols if c not in expected_zero]
+
+        if unexpected_zero:
+            issues_found = True
+            print(f"\n⚠️  {len(unexpected_zero)} features are CONSTANT (Zero Variance):")
+            print(unexpected_zero[:20])
+            if len(unexpected_zero) > 20:
+                print(f"...and {len(unexpected_zero)-20} more.")
+
+        if expected_zero:
+            print(f"\nℹ️  {len(expected_zero)} event-based features are constant (insufficient historical events):")
+            print(f"   {expected_zero[:5]}{'...' if len(expected_zero) > 5 else ''}")
+            print("   (These will populate as more event data is collected)")
     else:
         print("✅ No constant features found.")
 

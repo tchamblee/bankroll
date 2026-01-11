@@ -32,6 +32,15 @@ def generate_feature_matrix(force=False):
         exit(1)
         
     df = engine.bars
+
+    # Ensure chronological order and remove zero-duration bars
+    df = df.sort_values('time_start').reset_index(drop=True)
+    if 'time_end' in df.columns:
+        zero_duration = df['time_start'] == df['time_end']
+        if zero_duration.sum() > 0:
+            print(f"⚠️  Removing {zero_duration.sum()} zero-duration bars")
+            df = df[~zero_duration].reset_index(drop=True)
+
     print(f"\n📊 Generated Matrix Shape: {df.shape}")
     print(f"📅 Date Range: {df['time_start'].min()} to {df['time_start'].max()}")
     
