@@ -10,66 +10,107 @@ import config
 from numba import jit
 
 @jit(nopython=True)
-def _jit_triple_barrier(closes, highs, lows, lookahead, tp_pct, sl_pct):
+def _jit_triple_barrier_atr(closes, highs, lows, atr, lookahead, tp_mult, sl_mult):
     """
     Numba-optimized core logic for Triple Barrier labeling.
-    Uses fixed percentages to align with TradeSimulator logic.
+    Uses ATR-based barriers to match TradeSimulator logic.
+
+    Args:
+        closes: Close prices
+        highs: High prices
+        lows: Low prices
+        atr: ATR values at each bar
+        lookahead: Maximum bars to hold
+        tp_mult: Take profit ATR multiplier
+        sl_mult: Stop loss ATR multiplier
     """
     n = len(closes)
     outcomes = np.empty(n)
     outcomes[:] = np.nan
-    
+
     for i in range(n - lookahead):
         current_price = closes[i]
-        
-        # Fixed Percentage Barriers
-        upper_barrier = current_price * (1.0 + tp_pct)
-        lower_barrier = current_price * (1.0 - sl_pct)
-        
+        current_atr = atr[i]
+
+        # Skip if ATR is invalid
+        if current_atr <= 0 or np.isnan(current_atr):
+            continue
+
+        # ATR-based Barriers (matches TradeSimulator)
+        upper_barrier = current_price + (current_atr * tp_mult)
+        lower_barrier = current_price - (current_atr * sl_mult)
+
         # Path analysis
         first_upper = -1
         first_lower = -1
-        
+
         for k in range(1, lookahead + 1):
             idx = i + k
             # Upper barrier check
             if highs[idx] >= upper_barrier:
                 first_upper = k
                 break
-        
+
         for k in range(1, lookahead + 1):
             idx = i + k
             # Lower barrier check
             if lows[idx] <= lower_barrier:
                 first_lower = k
                 break
-        
+
         # Outcome Logic
         if first_upper == -1 and first_lower == -1:
             # Vertical barrier (time limit) - Return at Horizon
             outcomes[i] = (closes[i + lookahead] - current_price) / current_price
         elif first_upper != -1 and (first_lower == -1 or first_upper < first_lower):
-            # Hit Upper Barrier (TP)
-            outcomes[i] = tp_pct
+            # Hit Upper Barrier (TP) - return as percentage
+            outcomes[i] = (upper_barrier - current_price) / current_price
         else:
-            # Hit Lower Barrier (SL)
-            outcomes[i] = -sl_pct
-            
+            # Hit Lower Barrier (SL) - return as percentage
+            outcomes[i] = (lower_barrier - current_price) / current_price
+
     return outcomes
 
-def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS):
+
+def triple_barrier_labels(df, lookahead=config.DEFAULT_TIME_LIMIT,
+                          tp_mult=config.DEFAULT_TAKE_PROFIT,
+                          sl_mult=config.DEFAULT_STOP_LOSS):
     """
-    Implements Triple-Barrier Method for labeling.
-    Uses Numba for high performance.
+    Implements Triple-Barrier Method for labeling using ATR-based barriers.
+    Matches the TradeSimulator barrier logic for consistent evaluation.
+
+    Args:
+        df: DataFrame with OHLC and ATR data
+        lookahead: Maximum bars to hold (time limit)
+        tp_mult: Take profit as ATR multiplier (default: 4.0)
+        sl_mult: Stop loss as ATR multiplier (default: 2.0)
     """
-    if df is None or len(df) == 0: return pd.Series(dtype=np.float64)
-    
+    if df is None or len(df) == 0:
+        return pd.Series(dtype=np.float64)
+
     closes = df['close'].values.astype(np.float64)
     highs = df['high'].values.astype(np.float64)
     lows = df['low'].values.astype(np.float64)
-    
-    res = _jit_triple_barrier(closes, highs, lows, lookahead, tp_pct, sl_pct)
-    
+
+    # Get ATR - try multiple possible column names
+    if 'atr' in df.columns:
+        atr = df['atr'].values.astype(np.float64)
+    elif 'atr_50' in df.columns:
+        atr = df['atr_50'].values.astype(np.float64)
+    else:
+        # Calculate ATR if not present
+        high_low = df['high'] - df['low']
+        high_close = (df['high'] - df['close'].shift(1)).abs()
+        low_close = (df['low'] - df['close'].shift(1)).abs()
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = tr.rolling(config.ATR_WINDOW).mean().values.astype(np.float64)
+
+    # Apply ATR floor (from config)
+    atr_floor = closes * (config.MIN_ATR_BPS / 10000)
+    atr = np.maximum(atr, atr_floor)
+
+    res = _jit_triple_barrier_atr(closes, highs, lows, atr, lookahead, tp_mult, sl_mult)
+
     return pd.Series(res, index=df.index)
 
 if __name__ == "__main__":
@@ -135,9 +176,11 @@ if __name__ == "__main__":
         
         df = base_df.copy()
         
-        # 2. Generate Labels (Triple Barrier)
-        # Using default TP=1.5% SL=0.5% as a standard baseline
-        df['target_return'] = triple_barrier_labels(df, lookahead=horizon, tp_pct=config.DEFAULT_TAKE_PROFIT, sl_pct=config.DEFAULT_STOP_LOSS)
+        # 2. Generate Labels (Triple Barrier with ATR-based barriers)
+        # Uses ATR multipliers from config (TP=4.0*ATR, SL=2.0*ATR) to match TradeSimulator
+        df['target_return'] = triple_barrier_labels(df, lookahead=horizon,
+                                                     tp_mult=config.DEFAULT_TAKE_PROFIT,
+                                                     sl_mult=config.DEFAULT_STOP_LOSS)
         
         # 3. Analyze (Hunger Games)
         # Broader inclusion logic: Exclude metadata, keep everything else
@@ -235,3 +278,6 @@ if __name__ == "__main__":
                 print("Not enough valid data for Random Forest check.")
         except Exception as e:
             print(f"RF Check failed: {e}")
+
+    print("\n✅ Feature validation complete.")
+    sys.exit(0)
