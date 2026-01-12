@@ -140,6 +140,7 @@ class StopLossOptimizer:
     def get_best_variant(self):
         """
         Programmatically find and return the best stop variant.
+        CRITICAL: Selection is based on CPCV (Combinatorial Purged Cross-Validation) metrics.
         Returns (best_strategy, stats_dict) or (None, None) if no improvement found.
         """
         if not self.variants:
@@ -154,58 +155,80 @@ class StopLossOptimizer:
         for s in population:
             s.horizon = self.horizon
 
-        # Evaluate on train/val/test
-        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
-        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
-        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
-
         def get_stats(df, s_id):
             row = df[df['id'] == s_id].iloc[0]
             return {'ret': row['total_return'], 'sortino': row['sortino'], 'trades': int(row['trades'])}
 
-        parent_train = get_stats(train_df, self.parent_strategy.name)
-        parent_val = get_stats(val_df, self.parent_strategy.name)
-        parent_min_sort = min(parent_train['sortino'], parent_val['sortino'])
+        def get_cpcv_stats(df, s_id):
+            row = df[df['id'] == s_id].iloc[0]
+            return {
+                'cpcv_min': row['cpcv_min'],
+                'cpcv_p5': row['cpcv_p5_sortino'],
+                'cpcv_median': row['cpcv_median']
+            }
+
+        # Run CPCV evaluation for robust selection
+        if self.verbose:
+            print("   Running CPCV evaluation for robust stop optimization...")
+        cpcv_df = self.backtester.evaluate_combinatorial_purged_cv(population, time_limit=self.horizon)
+
+        # Also get train/val/test for profitability checks
+        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
+
+        # Parent baseline using CPCV min
+        parent_cpcv = get_cpcv_stats(cpcv_df, self.parent_strategy.name)
+        parent_fitness = parent_cpcv['cpcv_min']
+
+        if self.verbose:
+            print(f"   Parent CPCV: Min={parent_cpcv['cpcv_min']:.2f}, P5={parent_cpcv['cpcv_p5']:.2f}")
 
         # Get configurable thresholds
-        min_sortino_threshold = getattr(config, 'OPTIMIZE_STOPS_MIN_SORTINO', 1.0)
         min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
-        improvement_threshold = abs(parent_min_sort) * min_improvement if parent_min_sort != 0 else 0.1
+        improvement_threshold = abs(parent_fitness) * min_improvement if parent_fitness != 0 else 0.1
 
         best_candidate = None
-        best_fitness = parent_min_sort
+        best_fitness = parent_fitness
 
         for variant in self.variants:
+            if variant.name not in cpcv_df['id'].values:
+                continue
             if variant.name not in train_df['id'].values:
                 continue
 
+            v_cpcv = get_cpcv_stats(cpcv_df, variant.name)
             v_train = get_stats(train_df, variant.name)
             v_val = get_stats(val_df, variant.name)
 
-            # Must be profitable
+            # CRITICAL: Reject any variant with negative CPCV min
+            if v_cpcv['cpcv_min'] < 0:
+                continue
+
+            # Must be profitable on train/val
             if v_train['ret'] <= 0 or v_val['ret'] <= 0:
                 continue
 
-            # Must meet robustness threshold
-            if v_train['sortino'] <= min_sortino_threshold or v_val['sortino'] <= min_sortino_threshold:
-                continue
-
-            v_fitness = min(v_train['sortino'], v_val['sortino'])
+            v_fitness = v_cpcv['cpcv_min']
 
             # Must beat parent by threshold
-            if v_fitness > (parent_min_sort + improvement_threshold) and v_fitness > best_fitness:
+            if v_fitness > (parent_fitness + improvement_threshold) and v_fitness > best_fitness:
                 best_fitness = v_fitness
                 best_candidate = variant
 
         if best_candidate:
+            best_cpcv = get_cpcv_stats(cpcv_df, best_candidate.name)
             # Get final stats including test
             best_stats = {
                 'train': get_stats(train_df, best_candidate.name),
                 'val': get_stats(val_df, best_candidate.name),
-                'test': get_stats(test_df, best_candidate.name)
+                'test': get_stats(test_df, best_candidate.name),
+                'cpcv_min': best_cpcv['cpcv_min'],
+                'cpcv_p5': best_cpcv['cpcv_p5']
             }
             if self.verbose:
-                print(f"   🏆 Best: {best_candidate.name} (Fit: {best_fitness:.2f} vs Parent {parent_min_sort:.2f})")
+                print(f"   🏆 Best: {best_candidate.name}")
+                print(f"      CPCV: Min={best_cpcv['cpcv_min']:.2f}, P5={best_cpcv['cpcv_p5']:.2f} (Parent Min: {parent_fitness:.2f})")
             return best_candidate, best_stats
 
         if self.verbose:
@@ -217,76 +240,83 @@ class StopLossOptimizer:
             print("No variants to evaluate.")
             return
 
-        print(f"\n🔬 Evaluating {len(self.variants)} Variants on All Sets (Train / Val / Test)...")
-        
+        print(f"\n🔬 Evaluating {len(self.variants)} Variants using CPCV...")
+
         population = [self.parent_strategy] + self.variants
-        
+
         # Hydrate Horizon on Strategy Objects (redundant safety)
         for s in population:
             s.horizon = self.horizon
-            
-        # Use Engine's Built-in Evaluation
-        # We can do this in one go.
-        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
-        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
-        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
-        
-        # Consolidate Results
-        results_data = []
-        
+
         def get_stats(df, s_id):
             row = df[df['id'] == s_id].iloc[0]
             return {
-                'ret': row['total_return'], 
-                'sortino': row['sortino'], 
+                'ret': row['total_return'],
+                'sortino': row['sortino'],
                 'trades': int(row['trades'])
             }
+
+        def get_cpcv_stats(df, s_id):
+            row = df[df['id'] == s_id].iloc[0]
+            return {
+                'cpcv_min': row['cpcv_min'],
+                'cpcv_p5': row['cpcv_p5_sortino'],
+                'cpcv_median': row['cpcv_median']
+            }
+
+        # Run CPCV evaluation for robust selection
+        cpcv_df = self.backtester.evaluate_combinatorial_purged_cv(population, time_limit=self.horizon)
+
+        # Also get train/val/test for profitability checks and display
+        train_df = self.backtester.evaluate_population(population, set_type='train', time_limit=self.horizon)
+        val_df = self.backtester.evaluate_population(population, set_type='validation', time_limit=self.horizon)
+        test_df = self.backtester.evaluate_population(population, set_type='test', time_limit=self.horizon)
 
         parent_stats = {
             'train': get_stats(train_df, self.parent_strategy.name),
             'val': get_stats(val_df, self.parent_strategy.name),
             'test': get_stats(test_df, self.parent_strategy.name)
         }
+        parent_cpcv = get_cpcv_stats(cpcv_df, self.parent_strategy.name)
 
-        # Parent baseline uses train/val only (no data leakage)
-        parent_min_sort = min(parent_stats['train']['sortino'], parent_stats['val']['sortino'])
-        
+        # Parent baseline uses CPCV min (robust metric)
+        parent_cpcv_min = parent_cpcv['cpcv_min']
+
         print(f"\n🏛️  PARENT ({self.parent_strategy.name}) [SL:{self.parent_strategy.stop_loss_pct} TP:{self.parent_strategy.take_profit_pct}]:")
-        print(f"   MIN  : Sort {parent_min_sort:5.2f}")
+        print(f"   CPCV : Min {parent_cpcv_min:5.2f} | P5 {parent_cpcv['cpcv_p5']:5.2f}")
         print(f"   TRAIN: Ret {parent_stats['train']['ret']*100:6.2f}% | Sort {parent_stats['train']['sortino']:5.2f} | Tr {parent_stats['train']['trades']}")
         print(f"   VAL  : Ret {parent_stats['val']['ret']*100:6.2f}% | Sort {parent_stats['val']['sortino']:5.2f} | Tr {parent_stats['val']['trades']}")
         print(f"   TEST : Ret {parent_stats['test']['ret']*100:6.2f}% | Sort {parent_stats['test']['sortino']:5.2f} | Tr {parent_stats['test']['trades']}")
-        print("-" * 120)
+        print("-" * 130)
 
         better_variants = []
 
         # Get configurable thresholds
-        min_sortino_threshold = getattr(config, 'OPTIMIZE_STOPS_MIN_SORTINO', 1.0)
         min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
-        improvement_threshold = abs(parent_min_sort) * min_improvement if parent_min_sort != 0 else 0.1
+        improvement_threshold = abs(parent_cpcv_min) * min_improvement if parent_cpcv_min != 0 else 0.1
 
         for i, variant in enumerate(self.variants):
+            if variant.name not in cpcv_df['id'].values:
+                continue
+
+            v_cpcv = get_cpcv_stats(cpcv_df, variant.name)
             v_train = get_stats(train_df, variant.name)
             v_val = get_stats(val_df, variant.name)
             v_test = get_stats(test_df, variant.name)
 
-            # Filtering Logic (NO DATA LEAKAGE - test is informational only)
-            # 1. Must be profitable in Train/Val (Sanity)
+            # CRITICAL: Reject any variant with negative CPCV min
+            if v_cpcv['cpcv_min'] < 0:
+                continue
+
+            # Must be profitable in Train/Val
             if v_train['ret'] <= 0 or v_val['ret'] <= 0:
                 continue
 
-            # 2. Must meet robustness threshold on Train/Val only
-            is_robust = (v_train['sortino'] > min_sortino_threshold and
-                        v_val['sortino'] > min_sortino_threshold)
+            # Selection metric: CPCV min (robust across all folds)
+            v_cpcv_min = v_cpcv['cpcv_min']
 
-            if not is_robust:
-                continue
-
-            # Selection metric: min(train, val) - test is NOT used for selection
-            min_sort_in_sample = min(v_train['sortino'], v_val['sortino'])
-
-            # 3. Must beat parent by minimum improvement threshold (avoid noise)
-            if min_sort_in_sample <= (parent_min_sort + improvement_threshold):
+            # Must beat parent by minimum improvement threshold (avoid noise)
+            if v_cpcv_min <= (parent_cpcv_min + improvement_threshold):
                 continue
 
             # Note test performance for informational display
@@ -301,29 +331,30 @@ class StopLossOptimizer:
                 'train': v_train,
                 'val': v_val,
                 'test': v_test,
-                'min_sort': min_sort_in_sample,  # Only train/val
+                'cpcv_min': v_cpcv_min,
+                'cpcv_p5': v_cpcv['cpcv_p5'],
                 'note': note
             }
 
             better_variants.append(res)
 
-        # Sort by Minimum Sortino
-        better_variants.sort(key=lambda x: x['min_sort'], reverse=True)
-        
-        print(f"\n🏆 Top {min(20, len(better_variants))} Variants (Sorted by In-Sample Min Sortino):")
-        print(f"{'SL':<5} | {'TP':<5} | {'Min':<6} | {'Train':<6} | {'Val':<6} | {'Test':<6} | {'Test Ret':<9} | {'OOS':<6} | {'Name'}")
-        print("-" * 100)
+        # Sort by CPCV Min (robust metric)
+        better_variants.sort(key=lambda x: x['cpcv_min'], reverse=True)
+
+        print(f"\n🏆 Top {min(20, len(better_variants))} Variants (Sorted by CPCV Min):")
+        print(f"{'SL':<5} | {'TP':<5} | {'CMin':<6} | {'CP5':<6} | {'Train':<6} | {'Val':<6} | {'Test':<6} | {'Test Ret':<9} | {'OOS':<6} | {'Name'}")
+        print("-" * 110)
 
         for v in better_variants[:20]:
-            is_best = (v['min_sort'] > parent_min_sort)
+            is_best = (v['cpcv_min'] > parent_cpcv_min)
             marker = "⭐" if is_best else "  "
-            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['min_sort']:6.2f} | {v['train']['sortino']:6.2f} | {v['val']['sortino']:6.2f} | {v['test']['sortino']:6.2f} | {v['test']['ret']*100:8.2f}% | {v['note']:<6} {marker}| {v['name']}")
+            print(f"{v['sl']:<5.2f} | {v['tp']:<5.2f} | {v['cpcv_min']:6.2f} | {v['cpcv_p5']:6.2f} | {v['train']['sortino']:6.2f} | {v['val']['sortino']:6.2f} | {v['test']['sortino']:6.2f} | {v['test']['ret']*100:8.2f}% | {v['note']:<6} {marker}| {v['name']}")
 
         # Save Best
         if better_variants:
             best = better_variants[0]
             out_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"optimized_stops_{self.target_name}.json")
-            
+
             def convert_stats(stats_dict):
                 return {
                     'ret': float(stats_dict['ret']),
@@ -339,10 +370,12 @@ class StopLossOptimizer:
                     'horizon': self.horizon,
                     'train_stats': convert_stats(v['train']),
                     'val_stats': convert_stats(v['val']),
-                    'test_stats': convert_stats(v['test'])
+                    'test_stats': convert_stats(v['test']),
+                    'cpcv_min': float(v['cpcv_min']),
+                    'cpcv_p5': float(v['cpcv_p5'])
                 })
                 to_save.append(d)
-                
+
             with open(out_file, 'w') as f:
                 json.dump(to_save, f, indent=4)
             print(f"\n💾 Saved top 5 variants to {out_file}")

@@ -30,6 +30,16 @@ nest_asyncio.apply()
 configure_library_logging()
 
 
+class SyntheticTick:
+    """Synthetic tick for Forex where tick-by-tick data is not supported."""
+    def __init__(self, ticker):
+        self.time = ticker.time if ticker.time else datetime.now()
+        self.bidPrice = ticker.bid
+        self.askPrice = ticker.ask
+        self.bidSize = ticker.bidSize
+        self.askSize = ticker.askSize
+
+
 class PaperTradeApp:
     """
     Main paper trading application.
@@ -275,6 +285,11 @@ class PaperTradeApp:
                         bar = self.data_manager.add_tick(tick, conf)
                         if bar is not None:
                             asyncio.create_task(self.process_new_bar())
+                elif t.bidSize and t.askSize and t.bid > 0 and t.ask > 0:
+                    # Fallback for Forex: tick-by-tick BidAsk not supported
+                    bar = self.data_manager.add_tick(SyntheticTick(t), conf)
+                    if bar is not None:
+                        asyncio.create_task(self.process_new_bar())
             else:
                 self.data_manager.add_tick(t, conf)
 

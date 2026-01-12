@@ -227,6 +227,42 @@ def remove_from_inbox(name):
     else:
         print(f"⚠️  Strategy '{name}' not found in Inbox.")
 
+def clear_negative_cmin_inbox():
+    inbox_path = config.DIRS['STRATEGY_INBOX']
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    with open(inbox_path, 'r') as f:
+        try:
+            strategies = json.load(f)
+        except:
+            print("Inbox is corrupted.")
+            return
+
+    if not strategies:
+        print("Inbox is empty.")
+        return
+
+    print("🧹 Clearing strategies with negative CMin from Inbox...")
+
+    kept_strategies = []
+    removed_count = 0
+
+    for s in strategies:
+        cmin = get_cpcv_min(s)
+        if cmin < 0:
+            removed_count += 1
+        else:
+            kept_strategies.append(s)
+
+    if removed_count > 0:
+        with open(inbox_path, 'w') as f:
+            json.dump(kept_strategies, f, indent=4)
+        print(f"✅ Removed {removed_count} strategies with negative CMin. {len(kept_strategies)} remain.")
+    else:
+        print("✅ No strategies with negative CMin found.")
+
 def add_all_from_inbox():
     inbox_path = config.DIRS['STRATEGY_INBOX']
     if not os.path.exists(inbox_path):
@@ -272,6 +308,7 @@ def main():
     
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
+    subparsers.add_parser('clear-negative-cmin', help='Clear inbox strategies with negative CMin')
     subparsers.add_parser('prune', help='Remove candidates from inbox')
     subparsers.add_parser('cleanup', help='Remove losing strategies from inbox (Ret <= 0)')
     subparsers.add_parser('help', help='Show this help message')
@@ -294,6 +331,8 @@ def main():
         clear_list()
     elif args.command == 'clear-inbox':
         clear_inbox()
+    elif args.command == 'clear-negative-cmin':
+        clear_negative_cmin_inbox()
     elif args.command == 'prune':
         prune_inbox()
     elif args.command == 'cleanup':

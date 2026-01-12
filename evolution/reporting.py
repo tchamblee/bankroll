@@ -9,6 +9,95 @@ import config
 from genome import Strategy
 from backtest.statistics import deflated_sharpe_ratio, estimated_sharpe_ratio
 
+
+def extract_features(strategy):
+    """
+    Extracts all feature names used by a strategy's genes.
+    Returns a set of feature strings.
+    """
+    features = set()
+    all_genes = list(strategy.long_genes) + list(strategy.short_genes)
+
+    for gene in all_genes:
+        # Most genes have 'feature'
+        if hasattr(gene, 'feature') and gene.feature:
+            features.add(gene.feature)
+        # Mean reversion, etc have 'regime_feature'
+        if hasattr(gene, 'regime_feature') and gene.regime_feature:
+            features.add(gene.regime_feature)
+        # Relational, Cross, Correlation, Divergence have feature_left/right
+        if hasattr(gene, 'feature_left') and gene.feature_left:
+            features.add(gene.feature_left)
+        if hasattr(gene, 'feature_right') and gene.feature_right:
+            features.add(gene.feature_right)
+        # Some genes use feature_a/b
+        if hasattr(gene, 'feature_a') and gene.feature_a:
+            features.add(gene.feature_a)
+        if hasattr(gene, 'feature_b') and gene.feature_b:
+            features.add(gene.feature_b)
+        # Squeeze uses feature_short/long
+        if hasattr(gene, 'feature_short') and gene.feature_short:
+            features.add(gene.feature_short)
+        if hasattr(gene, 'feature_long') and gene.feature_long:
+            features.add(gene.feature_long)
+
+    return features
+
+
+def jaccard_similarity(set_a, set_b):
+    """Calculate Jaccard similarity between two sets."""
+    if not set_a or not set_b:
+        return 0.0
+    intersection = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return intersection / union if union > 0 else 0.0
+
+
+def filter_for_diversity(candidates, data_list, max_similarity=0.5):
+    """
+    Filters candidates to ensure feature diversity.
+    Rejects strategies with >max_similarity Jaccard overlap with already accepted strategies.
+
+    Args:
+        candidates: List of Strategy objects
+        data_list: List of strategy data dicts (parallel to candidates)
+        max_similarity: Maximum allowed Jaccard similarity (default 0.5 = 50% overlap)
+
+    Returns:
+        Tuple of (filtered_candidates, filtered_data)
+    """
+    if not candidates:
+        return [], []
+
+    accepted_candidates = []
+    accepted_data = []
+    accepted_features = []  # List of feature sets for accepted strategies
+
+    for strat, data in zip(candidates, data_list):
+        strat_features = extract_features(strat)
+
+        # Check against all accepted strategies
+        is_diverse = True
+        conflict_name = None
+        max_sim = 0.0
+
+        for i, acc_features in enumerate(accepted_features):
+            sim = jaccard_similarity(strat_features, acc_features)
+            if sim > max_sim:
+                max_sim = sim
+                if sim > max_similarity:
+                    is_diverse = False
+                    conflict_name = accepted_candidates[i].name
+
+        if is_diverse:
+            accepted_candidates.append(strat)
+            accepted_data.append(data)
+            accepted_features.append(strat_features)
+        else:
+            print(f"      🔀 Rejected {strat.name}: {max_sim*100:.0f}% feature overlap with {conflict_name}")
+
+    return accepted_candidates, accepted_data
+
 # Import Optimizer
 try:
     from optimize_candidate import StrategyOptimizer
@@ -42,7 +131,13 @@ def play_success_sound():
         for cmd in players:
             try:
                 # Use Popen to play asynchronously (don't block the loop)
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # start_new_session=True detaches process to avoid zombies
+                subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
                 return
             except (FileNotFoundError, OSError):
                 continue
@@ -408,29 +503,54 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     # Save Apex Strategies
     os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
     out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
-    
+
     print("\n--- 🧩 CONSTRUCTING PORTFOLIO ---")
-    
+
     # Merge with existing
     existing_data = []
+    existing_strats = []
     if os.path.exists(out_path):
         try:
-            with open(out_path, "r") as f: 
+            with open(out_path, "r") as f:
                 raw_existing = json.load(f)
-                existing_data = [x for x in raw_existing if x.get('test_return', 0) > 0]
+                for x in raw_existing:
+                    if x.get('test_return', 0) > 0:
+                        existing_data.append(x)
+                        try:
+                            existing_strats.append(Strategy.from_dict(x))
+                        except:
+                            pass
         except: pass
-    
-    combined = existing_data + output
-    combined.sort(key=lambda x: x.get('robust_score', -999), reverse=True)
-    
-    # Dedup
+
+    # Combine strategies and data (existing first, then new)
+    combined_strats = existing_strats + filtered_candidates
+    combined_data = existing_data + output
+
+    # Sort by robust_score (we'll apply diversity to this sorted order)
+    paired = list(zip(combined_strats, combined_data))
+    paired.sort(key=lambda x: x[1].get('robust_score', -999), reverse=True)
+
+    if paired:
+        sorted_strats, sorted_data = zip(*paired)
+        sorted_strats = list(sorted_strats)
+        sorted_data = list(sorted_data)
+    else:
+        sorted_strats, sorted_data = [], []
+
+    # Apply Feature Diversity Filter (50% max overlap)
+    # This ensures apex strategies use distinct alpha sources
+    print(f"    🔀 Applying feature diversity filter (max 50% overlap)...")
+    diverse_strats, diverse_data = filter_for_diversity(sorted_strats, sorted_data, max_similarity=0.5)
+    print(f"    ✅ {len(diverse_data)} diverse strategies remain (from {len(sorted_data)})")
+
+    # Dedup by name (shouldn't be needed after diversity filter, but safety)
     seen = set()
     unique = []
-    for s in combined:
+    for s in diverse_data:
         if s['name'] not in seen:
             unique.append(s)
             seen.add(s['name'])
-    
+
     with open(out_path, "w") as f: json.dump(unique[:1000], f, indent=4)
     print(f"💾 Saved results to {out_path}")
     
