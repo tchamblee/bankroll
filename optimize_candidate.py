@@ -299,14 +299,16 @@ class StrategyOptimizer:
             # Constraints:
             # 1. Must be profitable on both train and val
             # 2. Must have positive CPCV min (checked above)
-            # 3. Must beat parent fitness by minimum threshold (avoid noise)
+            # 3. Must meet sortino threshold on both train and val
+            # 4. Must beat parent fitness by minimum threshold (avoid noise)
             is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
+            meets_sortino = v_train['sortino'] >= config.MIN_SORTINO_THRESHOLD and v_val['sortino'] >= config.MIN_SORTINO_THRESHOLD
 
             min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
             improvement_threshold = abs(parent_fitness) * min_improvement if parent_fitness != 0 else 0.1
             improved = v_fitness > (parent_fitness + improvement_threshold)
 
-            if is_profitable and improved:
+            if is_profitable and meets_sortino and improved:
                 if v_fitness > best_fitness:
                     best_fitness = v_fitness
                     best_candidate = variant

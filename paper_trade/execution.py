@@ -69,6 +69,18 @@ class ExecutionEngine:
                 if len(saved_cool) == len(self.cooldowns):
                     self.cooldowns = np.array(saved_cool, dtype=int)
 
+            # Validate active_strat_idx is within bounds
+            if self.active_strat_idx >= len(self.strategies):
+                logger.warning(
+                    f"Restored active_strat_idx={self.active_strat_idx} is out of bounds "
+                    f"(only {len(self.strategies)} strategies). Resetting position state."
+                )
+                self.position = 0
+                self.active_strat_idx = -1
+                self.entry_price = 0.0
+                self.current_sl = 0.0
+                self.current_tp = 0.0
+
             logger.info(
                 f"Restored State: Pos={self.position} @ {self.entry_price:.5f} "
                 f"(Strat {self.active_strat_idx}) | Bal=${self.balance:.0f}"
@@ -145,6 +157,10 @@ class ExecutionEngine:
         with the backtester and trade_simulator.
         """
         if self.position == 0 or self.active_strat_idx == -1:
+            return
+
+        # Bounds check for strategies list
+        if not self.strategies or self.active_strat_idx >= len(self.strategies):
             return
 
         # Need ATR for barrier checking
@@ -236,7 +252,7 @@ class ExecutionEngine:
         # No change - same direction
         if signal == self.position:
             # Hydrate SL/TP if needed (restored from state but barriers not computed)
-            if self.position != 0 and self.active_strat_idx >= 0 and (self.current_sl == 0.0 or self.current_tp == 0.0):
+            if self.position != 0 and self.active_strat_idx >= 0 and self.active_strat_idx < len(self.strategies) and (self.current_sl == 0.0 or self.current_tp == 0.0):
                 try:
                     strat = self.strategies[self.active_strat_idx]
                     direction = 'long' if self.position > 0 else 'short'

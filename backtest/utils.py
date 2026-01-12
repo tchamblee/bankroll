@@ -113,6 +113,26 @@ def refresh_strategies(strategies_data):
         return strategies_data
         
     df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+
+    # Apply time filter (same as evolution engine)
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        if 'time_start' in df.columns:
+            # Ensure datetime compatibility
+            if not pd.api.types.is_datetime64_any_dtype(df['time_start']):
+                df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+
+            # Handle Timezone
+            ts_col = df['time_start']
+            if ts_col.dt.tz is None:
+                ts_col = ts_col.dt.tz_localize('UTC')
+            else:
+                ts_col = ts_col.dt.tz_convert('UTC')
+
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+
+            if ts_col.min() < start_ts:
+                df = df[ts_col >= start_ts].reset_index(drop=True)
+
     engine = BacktestEngine(df, cost_bps=config.COST_BPS, annualization_factor=config.ANNUALIZATION_FACTOR)
     
     # Convert dicts to Strategy objects
