@@ -4,7 +4,7 @@ import multiprocessing
 from joblib import Parallel, delayed
 import config
 from ..workers import _worker_simulate
-from ..utils import prepare_simulation_data
+from ..utils import prepare_simulation_data, get_barrier_params
 
 class SimulationMixin:
     def run_simulation_batch(self, signals_matrix, strategies, prices, times, time_limit=None, highs=None, lows=None, atr=None):
@@ -36,10 +36,7 @@ class SimulationMixin:
             'sl': getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
             'tp': getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
             'limit_dist': getattr(s, 'limit_dist_atr', 0.0),
-            'sl_long': s.get_effective_sl('long') if hasattr(s, 'get_effective_sl') else getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
-            'sl_short': s.get_effective_sl('short') if hasattr(s, 'get_effective_sl') else getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS),
-            'tp_long': s.get_effective_tp('long') if hasattr(s, 'get_effective_tp') else getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
-            'tp_short': s.get_effective_tp('short') if hasattr(s, 'get_effective_tp') else getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT),
+            **get_barrier_params(s),
         } for s in strategies]
         
         chunks_sig = [signals_matrix[:, i:i + batch_size] for i in range(0, n_strats, batch_size)]

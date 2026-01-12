@@ -5,6 +5,55 @@ import numpy as np
 import config
 from genome import Strategy
 
+
+def get_barrier_params(strategy):
+    """
+    Extract direction-specific SL/TP parameters from a single strategy.
+
+    Returns dict with keys: sl_long, sl_short, tp_long, tp_short
+
+    Falls back to symmetric base values (stop_loss_pct, take_profit_pct)
+    if direction-specific values are not available.
+    """
+    base_sl = getattr(strategy, 'stop_loss_pct', config.DEFAULT_STOP_LOSS)
+    base_tp = getattr(strategy, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT)
+
+    if hasattr(strategy, 'get_effective_sl'):
+        sl_long = strategy.get_effective_sl('long')
+        sl_short = strategy.get_effective_sl('short')
+    else:
+        sl_long = getattr(strategy, 'sl_long', base_sl)
+        sl_short = getattr(strategy, 'sl_short', base_sl)
+
+    if hasattr(strategy, 'get_effective_tp'):
+        tp_long = strategy.get_effective_tp('long')
+        tp_short = strategy.get_effective_tp('short')
+    else:
+        tp_long = getattr(strategy, 'tp_long', base_tp)
+        tp_short = getattr(strategy, 'tp_short', base_tp)
+
+    return {
+        'sl_long': sl_long,
+        'sl_short': sl_short,
+        'tp_long': tp_long,
+        'tp_short': tp_short,
+    }
+
+
+def extract_barrier_params(strategies):
+    """
+    Extract direction-specific SL/TP parameters from a list of strategies.
+
+    Returns numpy arrays for use in simulation:
+        sl_longs, sl_shorts, tp_longs, tp_shorts
+    """
+    params = [get_barrier_params(s) for s in strategies]
+    sl_longs = np.array([p['sl_long'] for p in params], dtype=np.float64)
+    sl_shorts = np.array([p['sl_short'] for p in params], dtype=np.float64)
+    tp_longs = np.array([p['tp_long'] for p in params], dtype=np.float64)
+    tp_shorts = np.array([p['tp_short'] for p in params], dtype=np.float64)
+    return sl_longs, sl_shorts, tp_longs, tp_shorts
+
 def find_strategy_in_files(strategy_name):
     """Searches all strategy output files for a strategy with the given name."""
     search_patterns = [
@@ -102,11 +151,15 @@ def refresh_strategies(strategies_data):
         
         # Validation
         stats_val = engine.evaluate_population(group, set_type='validation', time_limit=h)
-        
+
+        # CPCV (Combinatorial Purged Cross-Validation)
+        stats_cpcv = engine.evaluate_combinatorial_purged_cv(group, time_limit=h)
+
         # Create lookup maps
         test_map = {row['id']: row for _, row in stats_test.iterrows()}
         train_map = {row['id']: row for _, row in stats_train.iterrows()}
         val_map = {row['id']: row for _, row in stats_val.iterrows()}
+        cpcv_map = {row['id']: row for _, row in stats_cpcv.iterrows()}
         
         # Update original data dicts
         for s in group:
@@ -170,6 +223,12 @@ def refresh_strategies(strategies_data):
                     'sortino_oos': float(te_stats['sortino']),
                     'robust_return': float(te_stats['total_return'])
                 }
+
+                # --- CPCV Stats ---
+                if s.name in cpcv_map:
+                    cpcv_stats = cpcv_map[s.name]
+                    target_dict['cpcv_p5'] = float(cpcv_stats['cpcv_p5_sortino'])
+                    target_dict['cpcv_min'] = float(cpcv_stats['cpcv_min'])
 
     engine.shutdown()
     print("✅ Metrics refreshed.")

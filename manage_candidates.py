@@ -8,7 +8,7 @@ import numpy as np
 from genome import Strategy
 from backtest.engine import BacktestEngine
 from backtest.utils import refresh_strategies, find_strategy_in_files
-from backtest.reporting import print_candidate_table, get_min_sortino
+from backtest.reporting import print_candidate_table, get_min_sortino, get_cpcv_p5, get_cpcv_min
 
 import glob
 
@@ -38,8 +38,8 @@ def list_candidates():
     candidates = refresh_strategies(candidates)
     save_candidates(candidates)
     
-    # Sort by Minimum Sortino
-    candidates.sort(key=get_min_sortino, reverse=True)
+    # Sort by CPCV P5 (most robust first)
+    candidates.sort(key=get_cpcv_p5, reverse=True)
     
     # Print standardized table
     print_candidate_table(candidates)
@@ -84,6 +84,7 @@ def clear_inbox():
         print("🧹 Strategy Inbox cleared.")
     else:
         print("⚠️  Inbox file not found.")
+
 
 def prune_inbox():
     inbox_path = config.DIRS['STRATEGY_INBOX']
@@ -197,8 +198,8 @@ def list_inbox():
     with open(inbox_path, 'w') as f:
         json.dump(strategies, f, indent=4)
 
-    # Sort by Minimum Sortino (Best Practice)
-    strategies.sort(key=get_min_sortino, reverse=True)
+    # Sort by CPCV P5 (most robust first)
+    strategies.sort(key=get_cpcv_p5, reverse=True)
 
     # Print standardized table
     print_candidate_table(strategies, title="INBOX STRATEGIES")

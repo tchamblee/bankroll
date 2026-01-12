@@ -261,6 +261,17 @@ def get_min_sortino(c):
 
     return min(t_s, v_s, te_s)
 
+
+def get_cpcv_p5(c):
+    """Returns CPCV P5 (5th percentile) sortino for sorting. Returns -999 if not available."""
+    return c.get('cpcv_p5', -999)
+
+
+def get_cpcv_min(c):
+    """Returns CPCV min sortino for filtering. Returns -999 if not available."""
+    return c.get('cpcv_min', -999)
+
+
 def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
     """Prints a standardized table of strategy candidates."""
     if not candidates:
@@ -269,7 +280,7 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
 
     print(f"\n📋 {title} ({len(candidates)} strategies)")
     # Headers
-    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Min S':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
+    header = f"{'Name':<50} | {'Hz':<3} | {'Trds':<4} | {'Tr S':<5} | {'Val S':<5} | {'Tst S':<5} | {'Min S':<5} | {'CP5':<5} | {'CMin':<5} | {'Tr %':<6} | {'Val %':<6} | {'Tst %':<6}"
     print(header)
     print("-" * len(header))
     
@@ -307,8 +318,10 @@ def print_candidate_table(candidates, title="CURRENT CANDIDATE LIST"):
             te_s = m.get('sortino_oos', 0)
 
         avg_s = get_min_sortino(c)
+        cpcv_p5 = c.get('cpcv_p5', 0)
+        cpcv_min = c.get('cpcv_min', 0)
 
-        row = f"{name[:50]:<50} | {horizon:<3} | {te_tr:<4} | {t_s:5.2f} | {v_s:5.2f} | {te_s:5.2f} | {avg_s:5.2f} | {t_r:5.2f}% | {v_r:5.2f}% | {te_r:5.2f}%"
+        row = f"{name[:50]:<50} | {horizon:<3} | {te_tr:<4} | {t_s:5.2f} | {v_s:5.2f} | {te_s:5.2f} | {avg_s:5.2f} | {cpcv_p5:5.2f} | {cpcv_min:5.2f} | {t_r:5.2f}% | {v_r:5.2f}% | {te_r:5.2f}%"
         print(row)
         
         if 'warning' in c:

@@ -122,7 +122,14 @@ def main():
     # ------------------------------------------------------------------
     cmd_add = f"python3 manage_candidates.py add {current_name}"
     run_command(cmd_add, f"Step 4: Promotion ({current_name})")
-    
+
+    # ------------------------------------------------------------------
+    # STEP 5: Remove Original from Inbox
+    # ------------------------------------------------------------------
+    # Remove the ORIGINAL strategy (args.name) from inbox, not the renamed one
+    cmd_remove = f"python3 manage_candidates.py remove-inbox {args.name}"
+    run_command(cmd_remove, f"Step 5: Cleanup Inbox ({args.name})")
+
     print("\n✅ Pipeline Complete!")
     print(f"   Final Strategy: {current_name}")
 

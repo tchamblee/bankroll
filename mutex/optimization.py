@@ -5,6 +5,7 @@ import os
 import json
 import config
 from backtest.statistics import calculate_sortino_ratio
+from backtest.utils import extract_barrier_params
 from .simulator import _jit_simulate_mutex_custom
 
 def optimize_mutex_portfolio(candidates, backtester):
@@ -80,10 +81,9 @@ def optimize_mutex_portfolio(candidates, backtester):
         'Test':  (val_end, len(full_prices))
     }
     
-    # Extract Params
+    # Extract Params - use direction-specific SL/TP for asymmetric barriers
     horizons = np.array([c.horizon for c in top_candidates], dtype=np.int64)
-    sl_mults = np.array([getattr(c, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for c in top_candidates], dtype=np.float64)
-    tp_mults = np.array([getattr(c, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for c in top_candidates], dtype=np.float64)
+    sl_longs, sl_shorts, tp_longs, tp_shorts = extract_barrier_params(top_candidates)
 
     best_combo = []
     best_total_profit = -99999.0
@@ -109,7 +109,8 @@ def optimize_mutex_portfolio(candidates, backtester):
             sub_sig.astype(np.float64),
             full_prices[s_start:s_end], full_highs[s_start:s_end], full_lows[s_start:s_end], full_atr[s_start:s_end],
             hours[s_start:s_end], weekdays[s_start:s_end],
-            horizons[[i]], sl_mults[[i]], tp_mults[[i]],
+            horizons[[i]],
+            sl_longs[[i]], sl_shorts[[i]], tp_longs[[i]], tp_shorts[[i]],
             config.STANDARD_LOT_SIZE,
             config.SPREAD_BPS / 10000.0,
             config.COST_BPS / 10000.0,
@@ -149,8 +150,10 @@ def optimize_mutex_portfolio(candidates, backtester):
             
             # Subset Params
             sub_horizons = horizons[idxs]
-            sub_sl = sl_mults[idxs]
-            sub_tp = tp_mults[idxs]
+            sub_sl_longs = sl_longs[idxs]
+            sub_sl_shorts = sl_shorts[idxs]
+            sub_tp_longs = tp_longs[idxs]
+            sub_tp_shorts = tp_shorts[idxs]
             
             # Evaluate on ALL Sets
             set_results = {}
@@ -166,7 +169,8 @@ def optimize_mutex_portfolio(candidates, backtester):
                     sub_sig.astype(np.float64),
                     full_prices[s_start:s_end], full_highs[s_start:s_end], full_lows[s_start:s_end], full_atr[s_start:s_end],
                     hours[s_start:s_end], weekdays[s_start:s_end],
-                    sub_horizons, sub_sl, sub_tp,
+                    sub_horizons,
+                    sub_sl_longs, sub_sl_shorts, sub_tp_longs, sub_tp_shorts,
                     config.STANDARD_LOT_SIZE,
                     config.SPREAD_BPS / 10000.0,
                     config.COST_BPS / 10000.0,

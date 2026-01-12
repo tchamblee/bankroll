@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import config
 from backtest import BacktestEngine
 from backtest.statistics import calculate_sortino_ratio
-from backtest.utils import prepare_simulation_data
+from backtest.utils import prepare_simulation_data, extract_barrier_params
 from .simulator import _jit_simulate_mutex_custom
 from .optimization import optimize_mutex_portfolio
 from .utils import load_all_candidates
@@ -56,15 +56,15 @@ def run_mutex_backtest():
         oos_sig = shifted_sig[oos_start:]
         
         horizons = np.array([s.horizon for s in best_portfolio], dtype=np.int64)
-        sl_mults = np.array([getattr(s, 'stop_loss_pct', config.DEFAULT_STOP_LOSS) for s in best_portfolio], dtype=np.float64)
-        tp_mults = np.array([getattr(s, 'take_profit_pct', config.DEFAULT_TAKE_PROFIT) for s in best_portfolio], dtype=np.float64)
-        
+        sl_longs, sl_shorts, tp_longs, tp_shorts = extract_barrier_params(best_portfolio)
+
         target_risk_dollars = config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT
-        
+
         strat_rets, strat_trades, strat_wins, _, strat_long_trades, strat_short_trades = _jit_simulate_mutex_custom(
             oos_sig.astype(np.float64),
             prices, highs, lows, atr, hours, weekdays,
-            horizons, sl_mults, tp_mults,
+            horizons,
+            sl_longs, sl_shorts, tp_longs, tp_shorts,
             config.STANDARD_LOT_SIZE,
             config.SPREAD_BPS / 10000.0,
             config.COST_BPS / 10000.0,

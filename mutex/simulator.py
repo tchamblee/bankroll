@@ -6,7 +6,9 @@ from utils.trading import check_barrier_long, check_barrier_short, calculate_cos
 def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                                highs: np.ndarray, lows: np.ndarray, atr_vec: np.ndarray,
                                hours: np.ndarray, weekdays: np.ndarray,
-                               horizons: np.ndarray, sl_mults: np.ndarray, tp_mults: np.ndarray,
+                               horizons: np.ndarray,
+                               sl_longs: np.ndarray, sl_shorts: np.ndarray,
+                               tp_longs: np.ndarray, tp_shorts: np.ndarray,
                                lot_size: float, spread_pct: float, comm_pct: float,
                                account_size: float, end_hour: int, cooldown_bars: int,
                                min_comm: float, slippage_factor: float, commission_threshold: float,
@@ -81,10 +83,11 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                     curr_atr = atr_vec[i-1] if i > 0 else e_atr
 
                     # Use i-1 for High/Low checks
+                    # Use direction-specific SL/TP for asymmetric barriers
                     if curr_pos > 0:
                         hit, _, code = check_barrier_long(
                             e_price, e_atr, lows[i-1], highs[i-1],
-                            sl_mults[s], tp_mults[s], curr_atr,
+                            sl_longs[s], tp_longs[s], curr_atr,
                             vol_scale_threshold, vol_scale_tighten
                         )
                         if hit:
@@ -93,7 +96,7 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                     else:
                         hit, _, code = check_barrier_short(
                             e_price, e_atr, lows[i-1], highs[i-1],
-                            sl_mults[s], tp_mults[s], curr_atr,
+                            sl_shorts[s], tp_shorts[s], curr_atr,
                             vol_scale_threshold, vol_scale_tighten
                         )
                         if hit:
@@ -123,9 +126,13 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
                         if vol_targeting:
                             # Risk = Size * LotSize * (SL * ATR)
                             # Size = Risk / (LotSize * SL * ATR)
-                            eff_sl = sl_mults[s] if sl_mults[s] > 0 else 1.0
+                            # Use direction-specific SL for sizing
+                            if sig > 0:
+                                eff_sl = sl_longs[s] if sl_longs[s] > 0 else 1.0
+                            else:
+                                eff_sl = sl_shorts[s] if sl_shorts[s] > 0 else 1.0
                             eff_atr = atr_vec[i] if atr_vec[i] > 1e-6 else 1e-6
-                            
+
                             calc_size = target_risk_dollars / (lot_size * eff_sl * eff_atr)
                             size = min(max(calc_size, min_lots), max_lots)
                             
@@ -143,14 +150,19 @@ def _jit_simulate_mutex_custom(signals: np.ndarray, prices: np.ndarray,
             if exit_signal and curr_pos != 0:
                  if is_sl_hit or (target_pos == 0 and not force_close and (i - entry_indices[s]) < horizons[s]):
                     e_price = entry_prices[s]
-                    sl_dist = entry_atrs[s] * sl_mults[s]
-                    tp_dist = entry_atrs[s] * tp_mults[s]
-                    
+                    # Use direction-specific SL/TP for exit price calculation
+                    if curr_pos > 0:
+                        sl_dist = entry_atrs[s] * sl_longs[s]
+                        tp_dist = entry_atrs[s] * tp_longs[s]
+                    else:
+                        sl_dist = entry_atrs[s] * sl_shorts[s]
+                        tp_dist = entry_atrs[s] * tp_shorts[s]
+
                     if is_sl_hit:
                          if curr_pos > 0: exec_price = e_price - sl_dist
                          else: exec_price = e_price + sl_dist
                     else:
-                        # TP Hit 
+                        # TP Hit
                         if curr_pos > 0: exec_price = e_price + tp_dist
                         else: exec_price = e_price - tp_dist
 

@@ -360,7 +360,51 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         return
 
     print(f"✅ {len(output)} Strategies passed final filtering.")
-    
+
+    # --- CPCV ROBUSTNESS CHECK ---
+    # Filter out strategies with CPCV min <= 0 (not robust across all combinatorial paths)
+    if filtered_candidates:
+        print(f"    🔬 Running CPCV robustness check...")
+        cpcv_results = backtester.evaluate_combinatorial_purged_cv(filtered_candidates, time_limit=horizon)
+        cpcv_map = {row['id']: row for _, row in cpcv_results.iterrows()}
+
+        robust_candidates = []
+        robust_data = []
+        rejected_cpcv = []
+
+        for i, (strat, data) in enumerate(zip(filtered_candidates, output)):
+            cpcv_row = cpcv_map.get(strat.name)
+            if cpcv_row is not None:
+                cpcv_min = float(cpcv_row['cpcv_min'])
+                cpcv_p5 = float(cpcv_row['cpcv_p5_sortino'])
+                data['cpcv_min'] = cpcv_min
+                data['cpcv_p5'] = cpcv_p5
+
+                if cpcv_min > 0:
+                    robust_candidates.append(strat)
+                    robust_data.append(data)
+                else:
+                    rejected_cpcv.append((strat.name, cpcv_min))
+            else:
+                # No CPCV data - keep but warn
+                robust_candidates.append(strat)
+                robust_data.append(data)
+
+        if rejected_cpcv:
+            print(f"    ❌ Rejected {len(rejected_cpcv)} strategies with CMin <= 0:")
+            for name, cmin in rejected_cpcv[:5]:
+                print(f"       - {name} (CMin: {cmin:.2f})")
+            if len(rejected_cpcv) > 5:
+                print(f"       ... and {len(rejected_cpcv) - 5} more")
+
+        filtered_candidates = robust_candidates
+        output = robust_data
+        print(f"    ✅ {len(output)} strategies passed CPCV robustness check.")
+
+    if not output:
+        print(f"❌ No strategies passed CPCV robustness check.")
+        return
+
     # Save Apex Strategies
     os.makedirs(config.DIRS['STRATEGIES_DIR'], exist_ok=True)
     out_path = os.path.join(config.DIRS['STRATEGIES_DIR'], f"apex_strategies_{horizon}.json")
