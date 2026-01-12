@@ -188,8 +188,8 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     print(f"    🧬 Expanded {original_count} candidates to {len(top_candidates)} (added Long/Short variants)")
 
     # 1. Evaluate on Development Sets (Train + Validation) ONLY
-    val_res, val_returns = backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
-    train_res = backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
+    val_res, val_returns = backtester.evaluate_population(top_candidates, set_type='validation', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_VAL)
+    train_res = backtester.evaluate_population(top_candidates, set_type='train', time_limit=horizon, min_trades=config.MIN_TRADES_TRAIN)
     
     # Create lookup maps
     val_map = {row['id']: row for _, row in val_res.iterrows()}
@@ -225,11 +225,17 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         passed_gate = True
         rejection_reason = []
 
-        # 1. Strict Sortino Filter (> MIN_SORTINO_THRESHOLD on Train/Val)
-        if train_sortino < config.MIN_SORTINO_THRESHOLD or val_sortino < config.MIN_SORTINO_THRESHOLD:
+        # 1. Sortino Filter (Floor + Average)
+        # Floor: no slice below MIN_SORTINO_FLOOR (prevents catastrophic regime failure)
+        # Aggregate: average of train/val must meet MIN_SORTINO_THRESHOLD
+        avg_sortino_tv = (train_sortino + val_sortino) / 2
+        if train_sortino < config.MIN_SORTINO_FLOOR or val_sortino < config.MIN_SORTINO_FLOOR:
             passed_gate = False
-            if train_sortino < config.MIN_SORTINO_THRESHOLD: rejection_reason.append(f"Train_Sort({train_sortino:.2f})")
-            if val_sortino < config.MIN_SORTINO_THRESHOLD: rejection_reason.append(f"Val_Sort({val_sortino:.2f})")
+            if train_sortino < config.MIN_SORTINO_FLOOR: rejection_reason.append(f"Train_Sort_Floor({train_sortino:.2f})")
+            if val_sortino < config.MIN_SORTINO_FLOOR: rejection_reason.append(f"Val_Sort_Floor({val_sortino:.2f})")
+        elif avg_sortino_tv < config.MIN_SORTINO_THRESHOLD:
+            passed_gate = False
+            rejection_reason.append(f"Avg_Sort_TV({avg_sortino_tv:.2f})")
         
         # 2. Positive Return Filter
         elif train_ret <= 0 or val_ret <= 0:
@@ -237,11 +243,11 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             if train_ret <= 0: rejection_reason.append(f"Train_Ret({train_ret*100:.2f}%)")
             if val_ret <= 0: rejection_reason.append(f"Val_Ret({val_ret*100:.2f}%)")
 
-        # 3. Min Trades Filter
-        elif train_trades < config.MIN_TRADES_FOR_METRICS or val_trades < config.MIN_TRADES_FOR_METRICS:
+        # 3. Min Trades Filter (scaled by slice size)
+        elif train_trades < config.MIN_TRADES_TRAIN or val_trades < config.MIN_TRADES_VAL:
             passed_gate = False
-            if train_trades < config.MIN_TRADES_FOR_METRICS: rejection_reason.append(f"Train_Trds({train_trades})")
-            if val_trades < config.MIN_TRADES_FOR_METRICS: rejection_reason.append(f"Val_Trds({val_trades})")
+            if train_trades < config.MIN_TRADES_TRAIN: rejection_reason.append(f"Train_Trds({train_trades}<{config.MIN_TRADES_TRAIN})")
+            if val_trades < config.MIN_TRADES_VAL: rejection_reason.append(f"Val_Trds({val_trades}<{config.MIN_TRADES_VAL})")
 
         if not passed_gate:
             # Track closest call for debugging/info
@@ -301,7 +307,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
         print(f"    🔍 Optimizing & Evaluating {len(survivor_candidates)} survivors on Test Set...")
         
         # Initial Test Eval (to get baseline stats and return vectors for DSR)
-        test_res, test_returns = backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
+        test_res, test_returns = backtester.evaluate_population(survivor_candidates, set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_TEST)
         test_map = {row['id']: row for _, row in test_res.iterrows()}
 
         for i, s in enumerate(survivor_candidates):
@@ -372,23 +378,34 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
             final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
 
-            # --- FINAL GATE: Test Performance Check ---
-            if final_test_ret <= 0 or final_test_sortino < config.MIN_SORTINO_THRESHOLD or final_train_sortino < config.MIN_SORTINO_THRESHOLD or final_val_sortino < config.MIN_SORTINO_THRESHOLD or final_test_trades < config.MIN_TRADES_FOR_METRICS:
+            # --- FINAL GATE: Test Performance Check (Floor + Average) ---
+            # Floor: no slice below MIN_SORTINO_FLOOR
+            # Aggregate: average of all three must meet MIN_SORTINO_THRESHOLD
+            avg_sortino_all = (final_train_sortino + final_val_sortino + final_test_sortino) / 3
+            sortino_floor_fail = (final_train_sortino < config.MIN_SORTINO_FLOOR or
+                                  final_val_sortino < config.MIN_SORTINO_FLOOR or
+                                  final_test_sortino < config.MIN_SORTINO_FLOOR)
+            sortino_avg_fail = avg_sortino_all < config.MIN_SORTINO_THRESHOLD
+
+            if final_test_ret <= 0 or sortino_floor_fail or sortino_avg_fail or final_test_trades < config.MIN_TRADES_TEST:
                     # Logic to capture High-Quality strategies that failed ONLY on OOS/Test
                     min_score_here = min(final_train_sortino, final_val_sortino)
-                    
+
                     if min_score_here > best_rejected_min_ret:
                          best_rejected_min_ret = min_score_here
                          best_rejected_name = s.name
-                         
+
                          fail_reasons = []
                          if final_test_ret <= 0: fail_reasons.append(f"TestRet({final_test_ret*100:.2f}%)")
-                         if final_test_sortino < config.MIN_SORTINO_THRESHOLD: fail_reasons.append(f"TestSort({final_test_sortino:.2f})")
-                         if final_test_trades < config.MIN_TRADES_FOR_METRICS: fail_reasons.append(f"TestTrds({final_test_trades})")
-                         
+                         if final_train_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"TrainFloor({final_train_sortino:.2f})")
+                         if final_val_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"ValFloor({final_val_sortino:.2f})")
+                         if final_test_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"TestFloor({final_test_sortino:.2f})")
+                         if sortino_avg_fail: fail_reasons.append(f"AvgSort({avg_sortino_all:.2f})")
+                         if final_test_trades < config.MIN_TRADES_TEST: fail_reasons.append(f"TestTrds({final_test_trades}<{config.MIN_TRADES_TEST})")
+
                          reason_str = ", ".join(fail_reasons)
                          best_rejected_details = f"Failed Test: [{reason_str}] | TrainSort:{final_train_sortino:.2f}, ValSort:{final_val_sortino:.2f}, TestSort:{final_test_sortino:.2f}"
-                    
+
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)
@@ -440,7 +457,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 if rejected_strat:
                     print(f"   🔎 Peeking at OOS Test performance for {best_rejected_name}...")
                     try:
-                        t_res, _ = backtester.evaluate_population([rejected_strat], set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_FOR_METRICS)
+                        t_res, _ = backtester.evaluate_population([rejected_strat], set_type='test', return_series=True, time_limit=horizon, min_trades=config.MIN_TRADES_TEST)
                         if not t_res.empty:
                             t_sort = float(t_res.iloc[0]['sortino'])
                             t_ret = float(t_res.iloc[0]['total_return'])

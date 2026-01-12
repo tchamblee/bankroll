@@ -56,6 +56,7 @@ COST_BPS = 0.20
 SPREAD_BPS = 0.25
 MIN_RETURN_THRESHOLD = 0.001
 MIN_SORTINO_THRESHOLD = 0.9
+MIN_SORTINO_FLOOR = 0.3  # Minimum per-slice floor (no catastrophic regime failures)
 MIN_HOF_SORTINO = 0.5  # Early gate for HOF entry (defense-in-depth before final 0.9 filter)
 SLIPPAGE_ATR_FACTOR = 0.1
 
@@ -108,6 +109,16 @@ STABILITY_PENALTY_FACTOR = 0.6
 TRAIN_START_DATE = "2025-07-15"
 TRAIN_SPLIT_RATIO = 0.6
 VAL_SPLIT_RATIO = 0.8
+
+# Scaled trade minimums based on slice size (relative to train)
+# Train=60%, Val=20%, Test=20% → Val/Test need 1/3 the trades of Train
+_TRAIN_SIZE = TRAIN_SPLIT_RATIO
+_VAL_SIZE = VAL_SPLIT_RATIO - TRAIN_SPLIT_RATIO
+_TEST_SIZE = 1.0 - VAL_SPLIT_RATIO
+MIN_TRADES_TRAIN = MIN_TRADES_FOR_METRICS
+MIN_TRADES_VAL = max(3, int(MIN_TRADES_FOR_METRICS * _VAL_SIZE / _TRAIN_SIZE))
+MIN_TRADES_TEST = max(3, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))
+
 WFV_FOLDS = 5
 CPCV_N_FOLDS = 6
 CPCV_N_TEST_FOLDS = 2

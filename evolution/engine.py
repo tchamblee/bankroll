@@ -87,16 +87,82 @@ class EvolutionaryAlphaFactory:
         if hasattr(self, 'backtester'):
             self.backtester.shutdown()
 
+    def generate_viable_strategies(self, target_count, horizon, batch_size=1000, verbose=True):
+        """
+        Generate random strategies that pass a minimum viability bar.
+
+        Instead of generating pure random strategies (many garbage), this:
+        1. Generates batches of random strategies
+        2. Quick-evaluates them on train set only
+        3. Keeps only those with positive return and minimum trades
+        4. Repeats until target count is reached (no giving up)
+
+        This ensures all strategies entering evolution have baseline quality.
+        """
+        viable = []
+        total_generated = 0
+        min_trades_filter = max(3, int(config.MIN_TRADES_COEFFICIENT / horizon / 3))
+        start_time = time.time()
+
+        while len(viable) < target_count:
+            # Generate batch
+            batch = [
+                self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX))
+                for _ in range(batch_size)
+            ]
+            total_generated += batch_size
+
+            # Quick eval on train set only (fast)
+            results = self.backtester.evaluate_population(
+                batch, set_type='train', time_limit=horizon, min_trades=1
+            )
+
+            # Filter for viability: positive return + minimum trades
+            for i, row in results.iterrows():
+                if len(viable) >= target_count:
+                    break
+
+                strat_name = row['id']
+                total_return = row.get('total_return', 0)
+                trades = row.get('trades', 0)
+
+                # Minimum bar: positive return and enough trades
+                if total_return > 0 and trades >= min_trades_filter:
+                    # Find the strategy object by name
+                    strat = next((s for s in batch if s.name == strat_name), None)
+                    if strat:
+                        viable.append(strat)
+
+            if verbose:
+                elapsed = time.time() - start_time
+                pass_rate = len(viable) / max(1, total_generated) * 100
+                # Estimate time remaining
+                if len(viable) > 0:
+                    rate_per_sec = len(viable) / max(1, elapsed)
+                    remaining = (target_count - len(viable)) / max(0.001, rate_per_sec)
+                    eta_str = f", ~{remaining:.0f}s remaining" if remaining < 3600 else f", ~{remaining/60:.0f}m remaining"
+                else:
+                    eta_str = ""
+                print(f"    ... Viability filter: {len(viable)}/{target_count} ({pass_rate:.1f}% of {total_generated} pass{eta_str})")
+
+        return viable
+
     def initialize_population(self, horizon=None):
         self.population = []
         print(f"  🎲 Generating {self.pop_size} Random Strategies to initialize population.")
-        
-        # Batch generation with progress logging
-        for i in range(self.pop_size):
-            self.population.append(self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)))
-            if (i + 1) % 500 == 0:
-                print(f"    ... Generated {i + 1}/{self.pop_size} strategies")
-        print(f"    ... Generated {self.pop_size}/{self.pop_size} strategies. Done.")
+
+        # Use viable strategy generation for better starting quality
+        if horizon:
+            self.population = self.generate_viable_strategies(self.pop_size, horizon)
+            viable_count = len([s for s in self.population])
+            print(f"    ... Generated {viable_count}/{self.pop_size} strategies (pre-filtered for viability). Done.")
+        else:
+            # Fallback to pure random if no horizon specified
+            for i in range(self.pop_size):
+                self.population.append(self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)))
+                if (i + 1) % 500 == 0:
+                    print(f"    ... Generated {i + 1}/{self.pop_size} strategies")
+            print(f"    ... Generated {self.pop_size}/{self.pop_size} strategies. Done.")
 
     def evolve(self, horizon=60):
         self.initialize_population(horizon=horizon)
@@ -213,10 +279,11 @@ class EvolutionaryAlphaFactory:
                 mutate_strategy(child, self.factory.features)
                 new_population.append(child)
             
-            # Immigration
+            # Immigration (use viable strategies for better quality immigrants)
             n_immigrants = int(self.pop_size * config.IMMIGRATION_PERCENTAGE)
-            for _ in range(n_immigrants):
-                new_population.append(self.factory.create_strategy((config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)))
+            if n_immigrants > 0:
+                immigrants = self.generate_viable_strategies(n_immigrants, horizon, batch_size=max(100, n_immigrants * 5), verbose=False)
+                new_population.extend(immigrants)
             
             # Crossover
             while len(new_population) < self.pop_size:
