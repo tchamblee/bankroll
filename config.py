@@ -58,6 +58,8 @@ MIN_RETURN_THRESHOLD = 0.001
 MIN_SORTINO_THRESHOLD = 0.9
 MIN_SORTINO_FLOOR = 0.3  # Minimum per-slice floor (no catastrophic regime failures)
 MIN_HOF_SORTINO = 0.5  # Early gate for HOF entry (defense-in-depth before final 0.9 filter)
+MIN_TEST_SORTINO = 1.5  # Minimum test Sortino for final acceptance (OOS quality gate)
+MIN_CPCV_THRESHOLD = 1.5  # Minimum CPCV score for robustness (filters overfit strategies)
 SLIPPAGE_ATR_FACTOR = 0.1
 
 # --- MATH CONSTANTS ---
@@ -93,7 +95,7 @@ VOL_SCALE_TIGHTEN = 0.8    # Tighten SL by 20% when triggered
 LIMIT_DIST_OPTIONS = [0.0] * 15 + [0.05, 0.1, 0.15, 0.2, 0.3]
 
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
-MIN_TRADES_FOR_METRICS = 20
+MIN_TRADES_FOR_METRICS = 30
 MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
 MIN_COMMISSION = 2.0
@@ -122,13 +124,13 @@ MIN_TRADES_TEST = max(3, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))
 WFV_FOLDS = 5
 CPCV_N_FOLDS = 6
 CPCV_N_TEST_FOLDS = 2
-CPCV_MIN_TRADES_SLICE = 3
+CPCV_MIN_TRADES_SLICE = 5
 
 # --- EVOLUTIONARY ALGORITHM SETTINGS ---
 EVO_BATCH_SIZE = 2000
 GENE_COUNT_MIN = 1  # Allow single-gene strategies (less overfitting risk)
 GENE_COUNT_MAX = 4
-COMPLEXITY_PENALTY_PER_GENE = 0.02
+COMPLEXITY_PENALTY_PER_GENE = 0.10  # 10% penalty per gene to favor simpler strategies
 DOMINANCE_PENALTY_THRESHOLD = 0.40
 DOMINANCE_PENALTY_MULTIPLIER = 1.0
 ELITE_PERCENTAGE = 0.3

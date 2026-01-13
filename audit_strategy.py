@@ -170,8 +170,19 @@ def evaluate_strategy_all_sets(engine, strategy, print_report=False):
         print(f"📊 FULL AUDIT REPORT: {strategy.name}")
         print("="*60)
         print(f"Horizon:     {strategy.horizon} bars")
-        print(f"Stop Loss:   {strategy.stop_loss_pct}%")
-        print(f"Take Profit: {strategy.take_profit_pct}%")
+
+        # Show actual barriers (asymmetric if set)
+        sl_long = strategy.sl_long if strategy.sl_long is not None else strategy.stop_loss_pct
+        sl_short = strategy.sl_short if strategy.sl_short is not None else strategy.stop_loss_pct
+        tp_long = strategy.tp_long if strategy.tp_long is not None else strategy.take_profit_pct
+        tp_short = strategy.tp_short if strategy.tp_short is not None else strategy.take_profit_pct
+
+        if sl_long == sl_short and tp_long == tp_short:
+            print(f"Stop Loss:   {sl_long} ATR")
+            print(f"Take Profit: {tp_long} ATR")
+        else:
+            print(f"Stop Loss:   Long={sl_long} ATR, Short={sl_short} ATR")
+            print(f"Take Profit: Long={tp_long} ATR, Short={tp_short} ATR")
     
     segments = [
         ("TRAIN", 0, engine.train_idx),

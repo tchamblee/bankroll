@@ -349,38 +349,66 @@ class GenomeFactory:
 
 
     def create_strategy(self, num_genes_range=(config.GENE_COUNT_MIN, config.GENE_COUNT_MAX)):
-        # print("DEBUG: Creating strategy...")
-        num_genes = random.randint(max(2, num_genes_range[0]), max(2, num_genes_range[1])) # Ensure at least 2 for Setup+Trigger
+        num_genes = random.randint(num_genes_range[0], num_genes_range[1])
+
+        # 50% chance of SIMPLE strategy (no forced Setup+Trigger pattern)
+        use_simple_mode = random.random() < 0.5
+
+        # 33% chance of single-direction (long-only or short-only)
+        direction_roll = random.random()
+        if direction_roll < 0.33:
+            directions = ['long']  # Long-only
+        elif direction_roll < 0.66:
+            directions = ['short']  # Short-only
+        else:
+            directions = ['long', 'short']  # Bidirectional
 
         long_genes = []
         short_genes = []
 
-        # --- ORGANIC GATING ENFORCEMENT ---
-        # 1. The Setup (Regime Gene)
-        # print("DEBUG: Creating Setup Gene")
-        long_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='long'))
-        short_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='short'))
-
-        # 2. The Trigger (Action Gene)
-        # print("DEBUG: Creating Trigger Gene")
-        long_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='long'))
-        short_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='short'))
-
-        # 3. Filler (Random Mix)
-        for _ in range(num_genes - 2):
-            # print("DEBUG: Creating Filler Gene")
-            pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
-            long_genes.append(self.create_gene_from_pool(pool, for_direction='long'))
-
-            pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
-            short_genes.append(self.create_gene_from_pool(pool, for_direction='short'))
-        
-        # Concordance: Majority Rule
-        concordance = None
-        if num_genes <= 2:
-            concordance = 2 # Require BOTH (Setup + Trigger) for small strategies
+        if use_simple_mode:
+            # --- SIMPLE MODE: Just pick random genes from any pool ---
+            for _ in range(num_genes):
+                pool = self.trigger_pool if random.random() < 0.7 else self.regime_pool
+                if 'long' in directions:
+                    long_genes.append(self.create_gene_from_pool(pool, for_direction='long'))
+                if 'short' in directions:
+                    short_genes.append(self.create_gene_from_pool(pool, for_direction='short'))
         else:
-            concordance = math.ceil(num_genes * 0.51)
+            # --- COMPLEX MODE: Organic Gating (Setup + Trigger) ---
+            # Only use this mode if we have at least 2 genes
+            if num_genes < 2:
+                num_genes = 2
+
+            # 1. The Setup (Regime Gene)
+            if 'long' in directions:
+                long_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='long'))
+            if 'short' in directions:
+                short_genes.append(self.create_gene_from_pool(self.regime_pool, for_direction='short'))
+
+            # 2. The Trigger (Action Gene)
+            if 'long' in directions:
+                long_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='long'))
+            if 'short' in directions:
+                short_genes.append(self.create_gene_from_pool(self.trigger_pool, for_direction='short'))
+
+            # 3. Filler (Random Mix)
+            for _ in range(num_genes - 2):
+                pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
+                if 'long' in directions:
+                    long_genes.append(self.create_gene_from_pool(pool, for_direction='long'))
+                if 'short' in directions:
+                    pool = self.regime_pool if random.random() < 0.5 else self.trigger_pool
+                    short_genes.append(self.create_gene_from_pool(pool, for_direction='short'))
+
+        # Concordance based on actual gene count
+        actual_genes = max(len(long_genes), len(short_genes))
+        if actual_genes <= 1:
+            concordance = 1
+        elif actual_genes == 2:
+            concordance = 2
+        else:
+            concordance = math.ceil(actual_genes * 0.51)
 
         sl_pct = random.choice(config.STOP_LOSS_OPTIONS)
         tp_pct = random.choice(config.TAKE_PROFIT_OPTIONS)
@@ -389,7 +417,6 @@ class GenomeFactory:
         # 50% chance of asymmetric barriers (directional SL/TP)
         sl_long = sl_short = tp_long = tp_short = None
         if random.random() < 0.5:
-            # Asymmetric: short-side typically has tighter SL (faster risk-off moves)
             sl_long = random.choice(config.STOP_LOSS_OPTIONS)
             sl_short = random.choice(config.STOP_LOSS_OPTIONS)
             tp_long = random.choice(config.TAKE_PROFIT_OPTIONS)

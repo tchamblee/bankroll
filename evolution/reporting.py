@@ -378,16 +378,18 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
             final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
 
-            # --- FINAL GATE: Test Performance Check (Floor + Average) ---
+            # --- FINAL GATE: Test Performance Check (Floor + Average + Minimum OOS) ---
             # Floor: no slice below MIN_SORTINO_FLOOR
             # Aggregate: average of all three must meet MIN_SORTINO_THRESHOLD
+            # OOS Quality: test Sortino must meet MIN_TEST_SORTINO
             avg_sortino_all = (final_train_sortino + final_val_sortino + final_test_sortino) / 3
             sortino_floor_fail = (final_train_sortino < config.MIN_SORTINO_FLOOR or
                                   final_val_sortino < config.MIN_SORTINO_FLOOR or
                                   final_test_sortino < config.MIN_SORTINO_FLOOR)
             sortino_avg_fail = avg_sortino_all < config.MIN_SORTINO_THRESHOLD
+            test_sortino_fail = final_test_sortino < config.MIN_TEST_SORTINO
 
-            if final_test_ret <= 0 or sortino_floor_fail or sortino_avg_fail or final_test_trades < config.MIN_TRADES_TEST:
+            if final_test_ret <= 0 or sortino_floor_fail or sortino_avg_fail or test_sortino_fail or final_test_trades < config.MIN_TRADES_TEST:
                     # Logic to capture High-Quality strategies that failed ONLY on OOS/Test
                     min_score_here = min(final_train_sortino, final_val_sortino)
 
@@ -400,6 +402,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                          if final_train_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"TrainFloor({final_train_sortino:.2f})")
                          if final_val_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"ValFloor({final_val_sortino:.2f})")
                          if final_test_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"TestFloor({final_test_sortino:.2f})")
+                         if test_sortino_fail: fail_reasons.append(f"TestSort({final_test_sortino:.2f}<{config.MIN_TEST_SORTINO})")
                          if sortino_avg_fail: fail_reasons.append(f"AvgSort({avg_sortino_all:.2f})")
                          if final_test_trades < config.MIN_TRADES_TEST: fail_reasons.append(f"TestTrds({final_test_trades}<{config.MIN_TRADES_TEST})")
 
@@ -474,9 +477,9 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
     print(f"✅ {len(output)} Strategies passed final filtering.")
 
     # --- CPCV ROBUSTNESS CHECK ---
-    # Filter out strategies with CPCV min <= 0 (not robust across all combinatorial paths)
+    # Filter out strategies with CPCV min below threshold (not robust across all combinatorial paths)
     if filtered_candidates:
-        print(f"    🔬 Running CPCV robustness check...")
+        print(f"    🔬 Running CPCV robustness check (min threshold: {config.MIN_CPCV_THRESHOLD})...")
         cpcv_results = backtester.evaluate_combinatorial_purged_cv(filtered_candidates, time_limit=horizon)
         cpcv_map = {row['id']: row for _, row in cpcv_results.iterrows()}
 
@@ -492,7 +495,7 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 data['cpcv_min'] = cpcv_min
                 data['cpcv_p5'] = cpcv_p5
 
-                if cpcv_min > 0:
+                if cpcv_min >= config.MIN_CPCV_THRESHOLD:
                     robust_candidates.append(strat)
                     robust_data.append(data)
                 else:
@@ -503,9 +506,9 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                 robust_data.append(data)
 
         if rejected_cpcv:
-            print(f"    ❌ Rejected {len(rejected_cpcv)} strategies with CMin <= 0:")
+            print(f"    ❌ Rejected {len(rejected_cpcv)} strategies with CPCV < {config.MIN_CPCV_THRESHOLD}:")
             for name, cmin in rejected_cpcv[:5]:
-                print(f"       - {name} (CMin: {cmin:.2f})")
+                print(f"       - {name} (CPCV: {cmin:.2f})")
             if len(rejected_cpcv) > 5:
                 print(f"       ... and {len(rejected_cpcv) - 5} more")
 
