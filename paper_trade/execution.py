@@ -249,8 +249,8 @@ class ExecutionEngine:
         self.last_atr = atr
         self.current_atr = atr
 
-        # No change - same direction
-        if signal == self.position:
+        # No change - same direction (compare signs, not values)
+        if np.sign(signal) == np.sign(self.position):
             # Hydrate SL/TP if needed (restored from state but barriers not computed)
             if self.position != 0 and self.active_strat_idx >= 0 and self.active_strat_idx < len(self.strategies) and (self.current_sl == 0.0 or self.current_tp == 0.0):
                 try:

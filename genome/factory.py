@@ -9,7 +9,12 @@ from .constants import (
     VALID_CORR_WINDOWS,
     VALID_FLUX_LAGS,
     VALID_EFF_WINDOWS,
-    VALID_SLOPE_WINDOWS
+    VALID_SLOPE_WINDOWS,
+    VALID_SIGMA_THRESHOLDS,
+    VALID_SIGMA_THRESHOLDS_POSITIVE,
+    VALID_CORR_THRESHOLDS,
+    VALID_EFFICIENCY_THRESHOLDS,
+    VALID_PERCENTAGE_THRESHOLDS
 )
 from .genes import (
     ZScoreGene, SoftZScoreGene, RelationalGene, SqueezeGene, CorrelationGene, FluxGene,
@@ -137,12 +142,11 @@ class GenomeFactory:
                 reg_thresh = 0.0 # Premium > 0 = Fear
             else:
                 regime = self._weighted_choice(self.regime_pool) if self.regime_pool else self._weighted_choice(pool)
-                # Generic regime threshold
-                stats = self.feature_stats.get(regime, {'mean': 0, 'std': 1})
-                reg_thresh = stats['mean'] + random.choice([-0.5, 0.5]) * stats['std']
+                # Generic regime threshold (discretized)
+                reg_thresh = random.choice(VALID_SIGMA_THRESHOLDS)
 
-            raw_thresh = random.choice([2.0, 2.5, 3.0])
-            threshold = abs(self._get_valid_threshold(trigger, -raw_thresh if random.random() < 0.5 else raw_thresh)) # Ensure reachable magnitude
+            # Use discretized threshold
+            threshold = random.choice(VALID_SIGMA_THRESHOLDS_POSITIVE)
 
             # Use specified direction if provided, otherwise random
             # This ensures MeanReversionGene direction matches its gene list placement
@@ -155,26 +159,25 @@ class GenomeFactory:
         elif rand_val < 0.35:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
-            # Relaxed Thresholds for Higher Frequency (1.25 sigma ~ 20% occurrence)
-            raw_thresh = random.choice([-1.5, -1.25, 1.25, 1.5])
-            threshold = self._get_valid_threshold(feature, raw_thresh)
+            # Use discretized thresholds
+            threshold = random.choice(VALID_SIGMA_THRESHOLDS)
             window = random.choice(VALID_ZSCORE_WINDOWS)
             return ZScoreGene(feature, operator, threshold, window)
-        
+
         # 10% Soft ZScore Gene (Continuous Confidence)
         elif rand_val < 0.45:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
-            raw_thresh = random.choice([-1.5, -1.0, 1.0, 1.5])
-            threshold = self._get_valid_threshold(feature, raw_thresh)
+            # Use discretized thresholds
+            threshold = random.choice(VALID_SIGMA_THRESHOLDS)
             window = random.choice(VALID_ZSCORE_WINDOWS)
-            slope = random.uniform(0.5, 2.0)
+            slope = random.choice([0.5, 1.0, 1.5, 2.0])  # Discretized slope
             return SoftZScoreGene(feature, operator, threshold, window, slope)
 
         # 5% Seasonality Gene (Time-Based Alpha)
         elif rand_val < 0.50:
              operator = random.choice(['>', '<'])
-             threshold = random.choice([-1.5, -1.0, 1.0, 1.5])
+             threshold = random.choice(VALID_SIGMA_THRESHOLDS)
              return SeasonalityGene(operator, threshold)
 
         # 10% Relational Gene (Context - "Is A > B?")
@@ -213,7 +216,8 @@ class GenomeFactory:
             feature_left = self._weighted_choice(pool)
             feature_right = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.choice([-0.6, -0.4, 0.4, 0.6])
+            # Use discretized thresholds
+            threshold = random.choice(VALID_CORR_THRESHOLDS)
             window = random.choice(VALID_CORR_WINDOWS)
             return CorrelationGene(feature_left, feature_right, operator, threshold, window)
 
@@ -221,8 +225,9 @@ class GenomeFactory:
         elif rand_val < 0.80:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
+            # For flux, use rounded feature-specific threshold
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = random.uniform(-0.1, 0.1) * stats['std']
+            threshold = round(random.uniform(-0.1, 0.1) * stats['std'], 4)
             lag = random.choice(VALID_FLUX_LAGS)
             return FluxGene(feature, operator, threshold, lag)
 
@@ -230,7 +235,8 @@ class GenomeFactory:
         elif rand_val < 0.85:
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
-            threshold = random.uniform(0.3, 0.8)
+            # Use discretized thresholds
+            threshold = random.choice(VALID_EFFICIENCY_THRESHOLDS)
             window = random.choice(VALID_EFF_WINDOWS)
             return EfficiencyGene(feature, operator, threshold, window)
 
@@ -252,18 +258,18 @@ class GenomeFactory:
         # 3% Event Gene (Memory - "Did X happen recently?")
         elif rand_val < 0.93:
             feature = self._weighted_choice(pool)
-            
+
             # Make Event Adaptive: Wrap in Z-Score
             # "Did Z-Score(Feature) > 2.0 happen in last 10 bars?"
             z_window = random.choice(VALID_ZSCORE_WINDOWS)
             adaptive_feature = f"zscore_{feature}_{z_window}"
-            
+
             operator = random.choice(['>', '<'])
-            raw_thresh = random.choice([-1.5, -1.0, 1.0, 1.5]) # Relaxed Sigma
-            threshold = self._get_valid_threshold(feature, raw_thresh) # Check against underlying feature stats
-            
+            # Use discretized thresholds
+            threshold = random.choice(VALID_SIGMA_THRESHOLDS)
+
             window = random.choice(VALID_ZSCORE_WINDOWS) # Lookback for the event itself
-            
+
             return EventGene(adaptive_feature, operator, threshold, window)
 
         # 2% Cross Gene (Event - "A crossed B")
@@ -300,10 +306,11 @@ class GenomeFactory:
         elif rand_val < 1.00: # Capture last slice
             feature = self._weighted_choice(pool)
             operator = random.choice(['>', '<'])
+            # Use rounded feature-specific threshold
             stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-            threshold = stats['mean']
-            window = random.randint(10, 50)
-            percentage = random.choice([0.8, 0.9, 0.95])
+            threshold = round(stats['mean'], 2)
+            window = random.choice([10, 20, 30, 50])
+            percentage = random.choice(VALID_PERCENTAGE_THRESHOLDS)
             return ValidityGene(feature, operator, threshold, window, percentage)
 
         # Remaining: Persistence, Extrema, Consecutive, Delta
@@ -313,11 +320,12 @@ class GenomeFactory:
             if dice < 0.25:
                 bounded_pool = [f for f in pool if 'hurst' in f or 'entropy' in f or 'fdi' in f or 'efficiency' in f]
                 target_feature = self._weighted_choice(bounded_pool) if bounded_pool else self._weighted_choice(pool)
-                
+
                 op = random.choice(['>', '<'])
+                # Use rounded feature-specific threshold
                 stats = self.feature_stats.get(target_feature, {'mean': 0.5, 'std': 0.1})
-                threshold = stats['mean'] + random.choice([-1, 0, 1]) * stats['std']
-                window = random.randint(3, 8)
+                threshold = round(stats['mean'] + random.choice([-1, 0, 1]) * stats['std'], 2)
+                window = random.choice([3, 5, 8, 10])
                 return PersistenceGene(target_feature, op, threshold, window)
             elif dice < 0.50:
                 feature = self._weighted_choice(pool)
@@ -327,23 +335,23 @@ class GenomeFactory:
             elif dice < 0.75:
                 direction = random.choice(['up', 'down'])
                 op = random.choice(['>', '=='])
-                count = random.randint(2, 6)
+                count = random.choice([2, 3, 4, 5])
                 return ConsecutiveGene(direction, op, count)
             else:
                 feature = self._weighted_choice(pool)
                 operator = random.choice(['>', '<'])
+                # Use rounded feature-specific threshold
                 stats = self.feature_stats.get(feature, {'mean': 0, 'std': 1})
-                threshold = random.uniform(-0.5, 0.5) * stats['std']
-                lookback = random.choice(VALID_DELTA_LOOKBACKS) 
+                threshold = round(random.uniform(-0.5, 0.5) * stats['std'], 6)
+                lookback = random.choice(VALID_DELTA_LOOKBACKS)
                 return DeltaGene(feature, operator, threshold, lookback)
 
     def create_random_gene(self):
         # Fallback now uses ZScore instead of Static
         feature = self._weighted_choice(self.features)
         operator = random.choice(['>', '<'])
-        # Lower thresholds to encourage activity (1.5 sigma instead of 2.0)
-        raw_thresh = random.choice([-1.5, 1.5, 2.0])
-        threshold = self._get_valid_threshold(feature, raw_thresh)
+        # Use discretized thresholds
+        threshold = random.choice(VALID_SIGMA_THRESHOLDS)
         window = random.choice(VALID_ZSCORE_WINDOWS)
         return ZScoreGene(feature, operator, threshold, window)
 

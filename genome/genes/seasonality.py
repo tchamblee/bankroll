@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_ZSCORE_WINDOWS
+from ..constants import VALID_SIGMA_THRESHOLDS
 
 class SeasonalityGene:
     """
@@ -38,10 +38,10 @@ class SeasonalityGene:
         return res
 
     def mutate(self, features_pool=None):
-        # 1. Mutate Threshold
+        # 1. Mutate Threshold (Strict Grid)
         if random.random() < 0.5:
-            self.threshold += random.uniform(-0.5, 0.5)
-            
+            self.threshold = random.choice(VALID_SIGMA_THRESHOLDS)
+
         # 2. Mutate Operator
         if random.random() < 0.3:
             self.operator = '>' if self.operator == '<' else '<'

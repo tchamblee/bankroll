@@ -33,7 +33,8 @@ class FluxGene:
 
     def mutate(self, features_pool):
         if random.random() < 0.3: self.lag = random.choice(VALID_FLUX_LAGS)
-        if random.random() < 0.3: self.threshold += random.uniform(-0.1, 0.1)
+        # Note: threshold here is feature-specific, keep continuous but round to avoid magic numbers
+        if random.random() < 0.3: self.threshold = round(self.threshold + random.uniform(-0.1, 0.1), 4)
         if random.random() < 0.1: self.feature = random.choice(features_pool)
         if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
 

@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_CORR_WINDOWS
+from ..constants import VALID_CORR_WINDOWS, VALID_CORR_THRESHOLDS
 
 class CorrelationGene:
     """
@@ -39,13 +39,12 @@ class CorrelationGene:
         if random.random() < 0.3:
             self.window = random.choice(VALID_CORR_WINDOWS)
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.1, 0.1)
-            self.threshold = max(-1.0, min(1.0, self.threshold))
-        if random.random() < 0.15: 
+            self.threshold = random.choice(VALID_CORR_THRESHOLDS)
+        if random.random() < 0.15:
             self.feature_left = random.choice(features_pool)
-        if random.random() < 0.15: 
+        if random.random() < 0.15:
             self.feature_right = random.choice(features_pool)
-        if random.random() < 0.2: 
+        if random.random() < 0.2:
             self.operator = '>' if self.operator == '<' else '<'
 
     def copy(self):

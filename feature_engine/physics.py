@@ -1,8 +1,20 @@
 import numpy as np
 import pandas as pd
+import atexit
 from scipy.stats import linregress
 from numba import jit
 from joblib import Parallel, delayed
+
+# Cleanup joblib workers on exit
+def _cleanup_joblib():
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        executor = get_reusable_executor()
+        if executor is not None:
+            executor.shutdown(wait=False, kill_workers=True)
+    except:
+        pass
+atexit.register(_cleanup_joblib)
 
 # --- Math / Helper Functions (from physics_features.py) ---
 

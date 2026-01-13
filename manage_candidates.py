@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from genome import Strategy
 from backtest.engine import BacktestEngine
-from backtest.utils import refresh_strategies, find_strategy_in_files
+from backtest.utils import refresh_strategies, find_strategy_in_files, check_direction_consistency
 from backtest.reporting import print_candidate_table, get_min_sortino, get_cpcv_p5, get_cpcv_min
 
 import glob
@@ -271,50 +271,217 @@ def add_all_from_inbox():
 
     with open(inbox_path, 'r') as f:
         inbox_strategies = json.load(f)
-        
+
     candidates = load_candidates()
     candidate_names = {c['name'] for c in candidates}
-    
+
     added_count = 0
     for s in inbox_strategies:
         if s['name'] not in candidate_names:
             candidates.append(s)
             candidate_names.add(s['name'])
             added_count += 1
-            
+
     if added_count > 0:
         save_candidates(candidates)
         print(f"✅ Added {added_count} strategies from Inbox to Candidates.")
     else:
         print("⚠️  No new strategies to add (all already in candidates).")
 
+
+def audit_direction_consistency(source='candidates'):
+    """
+    Checks direction consistency for all strategies in candidates or inbox.
+    Flags strategies where long/short performance flipped between train and test.
+    """
+    if source == 'candidates':
+        strategies = load_candidates()
+        source_name = "Candidates"
+    else:
+        inbox_path = config.DIRS['STRATEGY_INBOX']
+        if not os.path.exists(inbox_path):
+            print("Inbox file not found.")
+            return
+        with open(inbox_path, 'r') as f:
+            strategies = json.load(f)
+        source_name = "Inbox"
+
+    if not strategies:
+        print(f"{source_name} is empty.")
+        return
+
+    print(f"🔍 Auditing direction consistency for {len(strategies)} strategies in {source_name}...")
+    print(f"   Loading market data...")
+
+    # Load data
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found.")
+        return
+
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+
+    # Apply time filter
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        if 'time_start' in df.columns:
+            if not pd.api.types.is_datetime64_any_dtype(df['time_start']):
+                df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+            ts_col = df['time_start']
+            if ts_col.dt.tz is None:
+                ts_col = ts_col.dt.tz_localize('UTC')
+            else:
+                ts_col = ts_col.dt.tz_convert('UTC')
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+            if ts_col.min() < start_ts:
+                df = df[ts_col >= start_ts].reset_index(drop=True)
+
+    engine = BacktestEngine(df, cost_bps=config.COST_BPS)
+
+    consistent_count = 0
+    inconsistent_strategies = []
+
+    print(f"\n{'Strategy':<50} | {'Long':<20} | {'Short':<20} | Status")
+    print("-" * 100)
+
+    for s_data in strategies:
+        try:
+            strat = Strategy.from_dict(s_data)
+            strat.horizon = s_data.get('horizon', config.DEFAULT_TIME_LIMIT)
+
+            result = check_direction_consistency(engine, strat, strat.horizon)
+
+            # Format output
+            long_str = f"T:{result['long_train_ret']:+.1%} -> Te:{result['long_test_ret']:+.1%}"
+            short_str = f"T:{result['short_train_ret']:+.1%} -> Te:{result['short_test_ret']:+.1%}"
+
+            if result['consistent']:
+                status = "✅ OK"
+                consistent_count += 1
+            else:
+                status = f"⚠️  FLIPPED"
+                inconsistent_strategies.append((s_data['name'], result['warning']))
+                # Store warning in strategy data
+                s_data['direction_warning'] = result['warning']
+
+            print(f"{s_data['name'][:50]:<50} | {long_str:<20} | {short_str:<20} | {status}")
+
+        except Exception as e:
+            print(f"{s_data.get('name', '?')[:50]:<50} | {'ERROR':<20} | {'ERROR':<20} | ❌ {str(e)[:30]}")
+
+    engine.shutdown()
+
+    print("-" * 100)
+    print(f"\n📊 Summary: {consistent_count}/{len(strategies)} strategies are direction-consistent")
+
+    if inconsistent_strategies:
+        print(f"\n⚠️  Strategies with direction flips:")
+        for name, warning in inconsistent_strategies:
+            print(f"   - {name}: {warning}")
+
+
+def clear_direction_flipped_inbox():
+    """
+    Removes strategies from inbox that have direction flips (long/short performance
+    changed sign between train and test).
+    """
+    inbox_path = config.DIRS['STRATEGY_INBOX']
+    if not os.path.exists(inbox_path):
+        print("Inbox file not found.")
+        return
+
+    with open(inbox_path, 'r') as f:
+        strategies = json.load(f)
+
+    if not strategies:
+        print("Inbox is empty.")
+        return
+
+    print(f"🔍 Checking direction consistency for {len(strategies)} inbox strategies...")
+
+    # Load data
+    if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+        print("❌ Feature Matrix not found.")
+        return
+
+    df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+
+    # Apply time filter
+    if hasattr(config, 'TRAIN_START_DATE') and config.TRAIN_START_DATE:
+        if 'time_start' in df.columns:
+            if not pd.api.types.is_datetime64_any_dtype(df['time_start']):
+                df['time_start'] = pd.to_datetime(df['time_start'], utc=True)
+            ts_col = df['time_start']
+            if ts_col.dt.tz is None:
+                ts_col = ts_col.dt.tz_localize('UTC')
+            else:
+                ts_col = ts_col.dt.tz_convert('UTC')
+            start_ts = pd.Timestamp(config.TRAIN_START_DATE).tz_localize('UTC')
+            if ts_col.min() < start_ts:
+                df = df[ts_col >= start_ts].reset_index(drop=True)
+
+    engine = BacktestEngine(df, cost_bps=config.COST_BPS)
+
+    kept_strategies = []
+    removed_count = 0
+
+    for s_data in strategies:
+        try:
+            strat = Strategy.from_dict(s_data)
+            strat.horizon = s_data.get('horizon', config.DEFAULT_TIME_LIMIT)
+
+            result = check_direction_consistency(engine, strat, strat.horizon)
+
+            if result['consistent']:
+                kept_strategies.append(s_data)
+            else:
+                removed_count += 1
+                print(f"   ❌ Removing {s_data['name']}: {result['warning']}")
+
+        except Exception as e:
+            # Keep strategies we can't check
+            kept_strategies.append(s_data)
+            print(f"   ⚠️  Could not check {s_data.get('name', '?')}: {e}")
+
+    engine.shutdown()
+
+    if removed_count > 0:
+        with open(inbox_path, 'w') as f:
+            json.dump(kept_strategies, f, indent=4)
+        print(f"\n✅ Removed {removed_count} strategies with direction flips. {len(kept_strategies)} remain.")
+    else:
+        print("\n✅ No direction-flipped strategies found.")
+
 def main():
     parser = argparse.ArgumentParser(description="Manage Strategy Candidates for Mutex Portfolio")
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-    
+
     subparsers.add_parser('list', help='List current candidates')
     subparsers.add_parser('inbox', help='List found strategies in inbox')
-    
+
     add_parser = subparsers.add_parser('add', help='Add a strategy by name')
     add_parser.add_argument('name', type=str, help='Name of the strategy (e.g., Child_2080)')
-    
+
     subparsers.add_parser('add-all', help='Add ALL strategies from inbox to candidates')
-    
+
     rm_parser = subparsers.add_parser('remove', help='Remove a strategy from CANDIDATES list')
     rm_parser.add_argument('name', type=str, help='Name of the strategy')
 
     rm_inbox_parser = subparsers.add_parser('remove-inbox', help='Remove a strategy from INBOX')
     rm_inbox_parser.add_argument('name', type=str, help='Name of the strategy')
-    
+
     subparsers.add_parser('clear', help='Clear the candidate list')
     subparsers.add_parser('clear-inbox', help='Clear the strategy inbox')
     subparsers.add_parser('clear-negative-cmin', help='Clear inbox strategies with negative CMin')
+    subparsers.add_parser('clear-direction-flipped', help='Clear inbox strategies with direction flips')
     subparsers.add_parser('prune', help='Remove candidates from inbox')
     subparsers.add_parser('cleanup', help='Remove losing strategies from inbox (Ret <= 0)')
+
+    audit_dir_parser = subparsers.add_parser('audit-directions', help='Audit direction consistency')
+    audit_dir_parser.add_argument('--inbox', action='store_true', help='Audit inbox instead of candidates')
+
     subparsers.add_parser('help', help='Show this help message')
-    
+
     args = parser.parse_args()
-    
+
     if args.command == 'list':
         list_candidates()
     elif args.command == 'inbox':
@@ -333,10 +500,15 @@ def main():
         clear_inbox()
     elif args.command == 'clear-negative-cmin':
         clear_negative_cmin_inbox()
+    elif args.command == 'clear-direction-flipped':
+        clear_direction_flipped_inbox()
     elif args.command == 'prune':
         prune_inbox()
     elif args.command == 'cleanup':
         cleanup_inbox()
+    elif args.command == 'audit-directions':
+        source = 'inbox' if args.inbox else 'candidates'
+        audit_direction_consistency(source)
     elif args.command == 'help':
         parser.print_help()
     else:

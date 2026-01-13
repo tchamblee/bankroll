@@ -8,6 +8,7 @@ import scipy.stats
 import config
 from genome import Strategy
 from backtest.statistics import deflated_sharpe_ratio, estimated_sharpe_ratio
+from backtest.utils import check_direction_consistency
 
 
 def extract_features(strategy):
@@ -518,6 +519,39 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
 
     if not output:
         print(f"❌ No strategies passed CPCV robustness check.")
+        return
+
+    # --- DIRECTION CONSISTENCY CHECK ---
+    # Filter out strategies where long/short performance flipped between train and test
+    if filtered_candidates:
+        print(f"    🔍 Running direction consistency check...")
+        consistent_candidates = []
+        consistent_data = []
+        rejected_direction = []
+
+        for strat, data in zip(filtered_candidates, output):
+            strat.horizon = horizon  # Ensure horizon is set
+            result = check_direction_consistency(backtester, strat, horizon)
+
+            if result['consistent']:
+                consistent_candidates.append(strat)
+                consistent_data.append(data)
+            else:
+                rejected_direction.append((strat.name, result['warning']))
+
+        if rejected_direction:
+            print(f"    ❌ Rejected {len(rejected_direction)} strategies with direction flips:")
+            for name, warning in rejected_direction[:5]:
+                print(f"       - {name}: {warning}")
+            if len(rejected_direction) > 5:
+                print(f"       ... and {len(rejected_direction) - 5} more")
+
+        filtered_candidates = consistent_candidates
+        output = consistent_data
+        print(f"    ✅ {len(output)} strategies passed direction consistency check.")
+
+    if not output:
+        print(f"❌ No strategies passed direction consistency check.")
         return
 
     # Save Apex Strategies

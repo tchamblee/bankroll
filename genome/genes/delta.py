@@ -38,20 +38,20 @@ class DeltaGene:
         # 1. Mutate Lookback (Strict Grid)
         if random.random() < 0.3:
             self.lookback = random.choice(VALID_DELTA_LOOKBACKS)
-        
-        # 2. Mutate Threshold
+
+        # 2. Mutate Threshold (round to avoid magic numbers)
         if random.random() < 0.3:
             change = self.threshold * 0.1 * (1 if random.random() > 0.5 else -1)
-            if abs(self.threshold) < 0.001: 
+            if abs(self.threshold) < 0.001:
                 change = 0.001 * (1 if random.random() > 0.5 else -1)
-            self.threshold += change
-            
+            self.threshold = round(self.threshold + change, 6)
+
         # 3. Mutate Feature
-        if random.random() < 0.1: 
+        if random.random() < 0.1:
             self.feature = random.choice(features_pool)
-            
+
         # 4. Mutate Operator
-        if random.random() < 0.2: 
+        if random.random() < 0.2:
             self.operator = '>' if self.operator == '<' else '<'
 
     def copy(self):

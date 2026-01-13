@@ -254,6 +254,115 @@ def refresh_strategies(strategies_data):
     print("✅ Metrics refreshed.")
     return strategies_data
 
+def check_direction_consistency(engine, strategy, horizon=None):
+    """
+    Checks if a strategy's long and short sides are consistent between train and test.
+
+    A direction is considered "flipped" if:
+    - It was profitable (>0) in train but unprofitable (<0) in test, or vice versa
+    - Has at least MIN_TRADES_FOR_CHECK trades in both periods
+
+    Returns:
+        dict with keys:
+            - 'consistent': bool - True if both directions are consistent
+            - 'long_flipped': bool - True if long direction flipped
+            - 'short_flipped': bool - True if short direction flipped
+            - 'long_train_ret': float - Long return in train
+            - 'long_test_ret': float - Long return in test
+            - 'short_train_ret': float - Short return in train
+            - 'short_test_ret': float - Short return in test
+            - 'warning': str or None - Description of inconsistency
+    """
+    MIN_TRADES_FOR_CHECK = 5  # Need at least 5 trades to consider a direction active
+
+    h = horizon if horizon else getattr(strategy, 'horizon', config.DEFAULT_TIME_LIMIT)
+
+    # Generate signals for the full dataset
+    signals = engine.generate_signal_matrix([strategy], horizon=h)
+
+    # Shift signals by 1 to enforce next-open execution
+    signals = np.roll(signals, 1, axis=0)
+    signals[0] = 0
+
+    # Split signals into long-only and short-only
+    signals_long = signals.copy()
+    signals_long[signals_long < 0] = 0
+
+    signals_short = signals.copy()
+    signals_short[signals_short > 0] = 0
+
+    results = {
+        'consistent': True,
+        'long_flipped': False,
+        'short_flipped': False,
+        'long_train_ret': 0.0,
+        'long_test_ret': 0.0,
+        'short_train_ret': 0.0,
+        'short_test_ret': 0.0,
+        'long_train_trades': 0,
+        'long_test_trades': 0,
+        'short_train_trades': 0,
+        'short_test_trades': 0,
+        'warning': None
+    }
+
+    # Helper to run simulation on a segment
+    def run_segment(sig_matrix, start_idx, end_idx):
+        seg_slice = slice(start_idx, end_idx)
+        signals_seg = sig_matrix[seg_slice]
+        prices_seg = engine.open_vec[seg_slice]
+        times_seg = engine.times_vec[seg_slice]
+        highs_seg = engine.high_vec[seg_slice]
+        lows_seg = engine.low_vec[seg_slice]
+        atr_seg = engine.atr_vec[seg_slice] if engine.atr_vec is not None else None
+
+        ret, trades = engine.run_simulation_batch(
+            signals_seg, [strategy], prices_seg, times_seg,
+            time_limit=h, highs=highs_seg, lows=lows_seg, atr=atr_seg
+        )
+        return np.sum(ret[:, 0]), int(trades[0])
+
+    # Run on train
+    long_train_ret, long_train_trades = run_segment(signals_long, 0, engine.train_idx)
+    short_train_ret, short_train_trades = run_segment(signals_short, 0, engine.train_idx)
+
+    # Run on test
+    long_test_ret, long_test_trades = run_segment(signals_long, engine.val_idx, len(engine.close_vec))
+    short_test_ret, short_test_trades = run_segment(signals_short, engine.val_idx, len(engine.close_vec))
+
+    results['long_train_ret'] = long_train_ret
+    results['long_test_ret'] = long_test_ret
+    results['short_train_ret'] = short_train_ret
+    results['short_test_ret'] = short_test_ret
+    results['long_train_trades'] = long_train_trades
+    results['long_test_trades'] = long_test_trades
+    results['short_train_trades'] = short_train_trades
+    results['short_test_trades'] = short_test_trades
+
+    warnings = []
+
+    # Check long direction consistency (only if enough trades in both periods)
+    if long_train_trades >= MIN_TRADES_FOR_CHECK and long_test_trades >= MIN_TRADES_FOR_CHECK:
+        # Check for sign flip
+        if (long_train_ret > 0 and long_test_ret < 0) or (long_train_ret < 0 and long_test_ret > 0):
+            results['long_flipped'] = True
+            results['consistent'] = False
+            warnings.append(f"LONG flipped: train={long_train_ret:.2%} -> test={long_test_ret:.2%}")
+
+    # Check short direction consistency (only if enough trades in both periods)
+    if short_train_trades >= MIN_TRADES_FOR_CHECK and short_test_trades >= MIN_TRADES_FOR_CHECK:
+        # Check for sign flip
+        if (short_train_ret > 0 and short_test_ret < 0) or (short_train_ret < 0 and short_test_ret > 0):
+            results['short_flipped'] = True
+            results['consistent'] = False
+            warnings.append(f"SHORT flipped: train={short_train_ret:.2%} -> test={short_test_ret:.2%}")
+
+    if warnings:
+        results['warning'] = "; ".join(warnings)
+
+    return results
+
+
 def prepare_simulation_data(prices, highs=None, lows=None, atr=None):
     """
     Prepares data vectors for simulation, handling ATR fallback and Look-Ahead prevention.

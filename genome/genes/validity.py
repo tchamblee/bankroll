@@ -1,5 +1,6 @@
 import numpy as np
 import random
+from ..constants import VALID_PERCENTAGE_THRESHOLDS
 
 class ValidityGene:
     """
@@ -48,11 +49,12 @@ class ValidityGene:
 
     def mutate(self, features_pool):
         if random.random() < 0.3:
-            self.window = max(5, self.window + random.choice([-5, 5]))
+            self.window = random.choice([10, 20, 30, 50])
         if random.random() < 0.3:
-            self.percentage = max(0.1, min(1.0, self.percentage + random.uniform(-0.1, 0.1)))
+            self.percentage = random.choice(VALID_PERCENTAGE_THRESHOLDS)
+        # Note: threshold here is feature-specific, keep continuous but round to avoid magic numbers
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.1, 0.1)
+            self.threshold = round(self.threshold + random.uniform(-0.1, 0.1), 2)
         if random.random() < 0.1:
             self.feature = random.choice(features_pool)
 

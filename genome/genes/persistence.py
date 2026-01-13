@@ -59,9 +59,10 @@ class PersistenceGene:
 
     def mutate(self, features_pool):
         if random.random() < 0.3:
-            self.window = max(2, self.window + random.choice([-1, 1, 2]))
+            self.window = random.choice([3, 5, 8, 10])
+        # Note: threshold here is feature-specific, keep continuous but round to avoid magic numbers
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.5, 0.5)
+            self.threshold = round(self.threshold + random.uniform(-0.5, 0.5), 2)
         if random.random() < 0.1:
             self.feature = random.choice(features_pool)
 

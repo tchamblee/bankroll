@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_ZSCORE_WINDOWS
+from ..constants import VALID_ZSCORE_WINDOWS, VALID_SIGMA_THRESHOLDS_POSITIVE, VALID_SIGMA_THRESHOLDS
 
 class MeanReversionGene:
     """
@@ -54,19 +54,18 @@ class MeanReversionGene:
         # 1. Mutate Window
         if random.random() < 0.3:
             self.window = random.choice(VALID_ZSCORE_WINDOWS)
-            
-        # 2. Mutate Thresholds
+
+        # 2. Mutate Thresholds (Strict Grid)
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.5, 0.5)
-            self.threshold = max(1.5, self.threshold) # Keep it extreme (>1.5 sigma)
-            
+            self.threshold = random.choice(VALID_SIGMA_THRESHOLDS_POSITIVE)
+
         if random.random() < 0.3:
-            self.regime_threshold += random.uniform(-0.5, 0.5)
-            
+            self.regime_threshold = random.choice(VALID_SIGMA_THRESHOLDS)
+
         # 3. Mutate Feature
-        if random.random() < 0.1: 
+        if random.random() < 0.1:
             self.feature = random.choice(features_pool)
-            
+
         # 4. Mutate Regime Feature
         if regime_pool and random.random() < 0.1:
             self.regime_feature = random.choice(regime_pool)

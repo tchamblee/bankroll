@@ -1,7 +1,19 @@
 import numpy as np
 import pandas as pd
+import atexit
 from joblib import Parallel, delayed
 from .event_decay import _jit_bars_since_true
+
+# Cleanup joblib workers on exit
+def _cleanup_joblib():
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        executor = get_reusable_executor()
+        if executor is not None:
+            executor.shutdown(wait=False, kill_workers=True)
+    except:
+        pass
+atexit.register(_cleanup_joblib)
 
 def _calc_micro_window_features(w, ticket_imbalance, log_ret, bar_duration, pres_imbalance, normalized_ofi, abs_imbalance, volume):
     """Worker function for parallel window microstructure feature calculation."""

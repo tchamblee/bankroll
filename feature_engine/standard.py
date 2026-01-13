@@ -1,7 +1,19 @@
 import numpy as np
 import pandas as pd
+import atexit
 from joblib import Parallel, delayed
 import config
+
+# Cleanup joblib workers on exit
+def _cleanup_joblib():
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        executor = get_reusable_executor()
+        if executor is not None:
+            executor.shutdown(wait=False, kill_workers=True)
+    except:
+        pass
+atexit.register(_cleanup_joblib)
 
 def _calc_window_features(w, log_ret, close, open, high, low, gk_var):
     """Worker function for parallel window feature calculation."""

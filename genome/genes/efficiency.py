@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_EFF_WINDOWS
+from ..constants import VALID_EFF_WINDOWS, VALID_EFFICIENCY_THRESHOLDS
 
 class EfficiencyGene:
     """
@@ -33,7 +33,7 @@ class EfficiencyGene:
 
     def mutate(self, features_pool):
         if random.random() < 0.3: self.window = random.choice(VALID_EFF_WINDOWS)
-        if random.random() < 0.3: self.threshold = max(0.0, min(1.0, self.threshold + random.uniform(-0.1, 0.1)))
+        if random.random() < 0.3: self.threshold = random.choice(VALID_EFFICIENCY_THRESHOLDS)
         if random.random() < 0.1: self.feature = random.choice(features_pool)
         if random.random() < 0.2: self.operator = '>' if self.operator == '<' else '<'
 

@@ -3,9 +3,27 @@ import numpy as np
 import tempfile
 import os
 import shutil
+import atexit
 import config
 import warnings
 from .feature_computation import precompute_base_features
+
+# Global cleanup for joblib workers - runs on interpreter exit
+def _cleanup_joblib_workers():
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        executor = get_reusable_executor()
+        if executor is not None:
+            executor.shutdown(wait=False, kill_workers=True)
+    except:
+        pass
+    try:
+        from joblib.externals.loky import stop_reusable_executor
+        stop_reusable_executor()
+    except:
+        pass
+
+atexit.register(_cleanup_joblib_workers)
 
 class BacktestEngineBase:
     """

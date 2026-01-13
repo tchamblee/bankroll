@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_ZSCORE_WINDOWS
+from ..constants import VALID_ZSCORE_WINDOWS, VALID_SIGMA_THRESHOLDS
 
 class EventGene:
     """
@@ -47,9 +47,9 @@ class EventGene:
 
     def mutate(self, features_pool):
         if random.random() < 0.3:
-            self.window = max(5, self.window + random.choice([-2, 2, 5]))
+            self.window = random.choice(VALID_ZSCORE_WINDOWS)
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.5, 0.5)
+            self.threshold = random.choice(VALID_SIGMA_THRESHOLDS)
         if random.random() < 0.1:
             self.feature = random.choice(features_pool)
 

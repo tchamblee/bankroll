@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from ..constants import VALID_ZSCORE_WINDOWS
+from ..constants import VALID_ZSCORE_WINDOWS, VALID_SIGMA_THRESHOLDS
 
 class ZScoreGene:
     """
@@ -34,17 +34,17 @@ class ZScoreGene:
         # 1. Mutate Window (Strict Grid)
         if random.random() < 0.3:
             self.window = random.choice(VALID_ZSCORE_WINDOWS)
-            
-        # 2. Mutate Threshold (Sigma)
+
+        # 2. Mutate Threshold (Strict Grid - prevents magic numbers)
         if random.random() < 0.3:
-            self.threshold += random.uniform(-0.5, 0.5)
-            
+            self.threshold = random.choice(VALID_SIGMA_THRESHOLDS)
+
         # 3. Mutate Feature
-        if random.random() < 0.1: 
+        if random.random() < 0.1:
             self.feature = random.choice(features_pool)
-            
+
         # 4. Mutate Operator
-        if random.random() < 0.2: 
+        if random.random() < 0.2:
             self.operator = '>' if self.operator == '<' else '<'
 
     def copy(self):
