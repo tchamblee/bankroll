@@ -96,15 +96,17 @@ def find_strategy_in_files(strategy_name):
                 continue
     return None
 
-def refresh_strategies(strategies_data):
+def refresh_strategies(strategies_data, purge_failing=False):
     """
     Re-simulates strategies to ensure fresh performance metrics.
     Updates the dictionaries in-place and returns the list.
+
+    If purge_failing=True, removes strategies that no longer pass quality thresholds.
     """
     from .engine import BacktestEngine
     if not strategies_data:
         return []
-    
+
     print(f"🔄 Refreshing metrics for {len(strategies_data)} strategies...")
     
     # Load Data
@@ -252,6 +254,45 @@ def refresh_strategies(strategies_data):
 
     engine.shutdown()
     print("✅ Metrics refreshed.")
+
+    # Optionally purge strategies that no longer pass quality thresholds
+    if purge_failing:
+        min_test_sortino = config.MIN_TEST_SORTINO
+        min_val_sortino = getattr(config, 'MIN_VAL_SORTINO', config.MIN_SORTINO_THRESHOLD)
+        min_cpcv = config.MIN_CPCV_THRESHOLD
+        max_decay = config.MAX_TRAIN_TEST_DECAY
+
+        passing = []
+        purged = []
+
+        for s in strategies_data:
+            test_sort = s.get('test_sortino', 0)
+            val_sort = s.get('val_sortino', 0)
+            cpcv = s.get('cpcv_min', 0)
+            train_ret = s.get('train_return', 0)
+            test_ret = s.get('test_return', 0)
+            decay = 1 - (test_ret / train_ret) if train_ret > 0 else 1.0
+
+            fails = []
+            if test_sort < min_test_sortino: fails.append(f"test_sort={test_sort:.2f}")
+            if val_sort < min_val_sortino: fails.append(f"val_sort={val_sort:.2f}")
+            if cpcv < min_cpcv: fails.append(f"cpcv={cpcv:.2f}")
+            if decay > max_decay: fails.append(f"decay={decay:.0%}")
+
+            if fails:
+                purged.append((s.get('name', '?'), fails))
+            else:
+                passing.append(s)
+
+        if purged:
+            print(f"🗑️  Purged {len(purged)} strategies that no longer pass thresholds:")
+            for name, reasons in purged[:5]:
+                print(f"   - {name}: {', '.join(reasons)}")
+            if len(purged) > 5:
+                print(f"   ... and {len(purged) - 5} more")
+
+        return passing
+
     return strategies_data
 
 def check_direction_consistency(engine, strategy, horizon=None):

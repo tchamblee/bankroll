@@ -61,7 +61,7 @@ def main():
     for horizon in config.PREDICTION_HORIZONS:
         survivors_file = config.SURVIVORS_FILE_TEMPLATE.format(horizon)
         if os.path.exists(survivors_file):
-            run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 500 --gens 5", 
+            run_step(f"evolutionary_loop.py --survivors {survivors_file} --horizon {horizon} --pop_size 2000 --gens 5", 
                      f"Evolutionary Strategy Discovery (Horizon: {horizon})")
         else:
             print(f"⚠️ Survivors file not found for Horizon {horizon}. Skipping.")

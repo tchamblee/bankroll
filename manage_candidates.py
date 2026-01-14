@@ -7,12 +7,140 @@ import pandas as pd
 import numpy as np
 from genome import Strategy
 from backtest.engine import BacktestEngine
-from backtest.utils import refresh_strategies, find_strategy_in_files, check_direction_consistency
+from backtest.utils import refresh_strategies, find_strategy_in_files, check_direction_consistency, prepare_simulation_data, extract_barrier_params
 from backtest.reporting import print_candidate_table, get_min_sortino, get_cpcv_p5, get_cpcv_min
+from backtest.statistics import calculate_sortino_ratio
+from mutex.simulator import _jit_simulate_mutex_custom
 
 import glob
 
 CANDIDATES_FILE = config.CANDIDATES_FILE
+
+# Cache for backtester to avoid reloading data
+_cached_engine = None
+
+def _get_engine():
+    """Get or create a cached BacktestEngine instance."""
+    global _cached_engine
+    if _cached_engine is None:
+        if not os.path.exists(config.DIRS['FEATURE_MATRIX']):
+            raise RuntimeError("Feature Matrix not found")
+        df = pd.read_parquet(config.DIRS['FEATURE_MATRIX'])
+        _cached_engine = BacktestEngine(df, annualization_factor=config.ANNUALIZATION_FACTOR)
+    return _cached_engine
+
+def check_standalone_profitability(strategy_data, verbose=True):
+    """
+    Check if a strategy is profitable STANDALONE using the actual mutex simulator.
+    This is the same simulator used for live trading, with stops, costs, and position sizing.
+
+    Returns: (passes, results_dict) where results_dict contains Train/Val/Test profits and sortinos
+    """
+    engine = _get_engine()
+
+    strat = Strategy.from_dict(strategy_data)
+    strat.horizon = strategy_data.get('horizon', 60)
+
+    # Data slices
+    train_end = engine.train_idx
+    val_end = engine.val_idx
+    n = len(engine.open_vec)
+
+    sets = {
+        'Train': (0, train_end),
+        'Val': (train_end, val_end),
+        'Test': (val_end, n)
+    }
+
+    # Prepare data
+    full_prices = engine.open_vec.astype(np.float64)
+    full_highs = engine.high_vec.astype(np.float64)
+    full_lows = engine.low_vec.astype(np.float64)
+    full_atr = engine.atr_vec.astype(np.float64)
+
+    if len(full_atr) > 1:
+        full_atr = np.roll(full_atr, 1)
+        full_atr[0] = full_atr[1]
+
+    times = engine.times_vec
+    if hasattr(times, 'dt'):
+        hours = times.dt.hour.values.astype(np.int8)
+        weekdays = times.dt.dayofweek.values.astype(np.int8)
+    else:
+        dt_idx = pd.to_datetime(times)
+        hours = dt_idx.hour.values.astype(np.int8)
+        weekdays = dt_idx.dayofweek.values.astype(np.int8)
+
+    # Generate signals
+    engine.ensure_context([strat])
+    raw_sig = engine.generate_signal_matrix([strat])
+    shifted_sig = np.vstack([np.zeros((1, 1), dtype=raw_sig.dtype), raw_sig[:-1]])
+
+    horizons = np.array([strat.horizon], dtype=np.int64)
+    sl_longs, sl_shorts, tp_longs, tp_shorts = extract_barrier_params([strat])
+    target_risk_dollars = config.ACCOUNT_SIZE * config.RISK_PER_TRADE_PERCENT
+
+    results = {}
+
+    for set_name, (s_start, s_end) in sets.items():
+        sub_sig = shifted_sig[s_start:s_end]
+
+        strat_rets, strat_trades, _, _, _, _ = _jit_simulate_mutex_custom(
+            sub_sig.astype(np.float64),
+            full_prices[s_start:s_end], full_highs[s_start:s_end],
+            full_lows[s_start:s_end], full_atr[s_start:s_end],
+            hours[s_start:s_end], weekdays[s_start:s_end],
+            horizons,
+            sl_longs, sl_shorts, tp_longs, tp_shorts,
+            config.STANDARD_LOT_SIZE,
+            config.SPREAD_BPS / 10000.0,
+            config.COST_BPS / 10000.0,
+            config.ACCOUNT_SIZE,
+            config.TRADING_END_HOUR,
+            config.STOP_LOSS_COOLDOWN_BARS,
+            config.MIN_COMMISSION,
+            config.SLIPPAGE_ATR_FACTOR,
+            config.COMMISSION_THRESHOLD,
+            True,  # Vol Targeting
+            target_risk_dollars,
+            float(config.MIN_LOTS),
+            float(config.MAX_LOTS),
+            config.VOL_SCALE_THRESHOLD,
+            config.VOL_SCALE_TIGHTEN
+        )
+
+        rets = np.sum(strat_rets, axis=1)
+        profit = np.sum(rets) * config.ACCOUNT_SIZE
+        sortino = calculate_sortino_ratio(rets, config.ANNUALIZATION_FACTOR)
+        trades = strat_trades[0]
+
+        results[set_name] = {'profit': profit, 'sortino': sortino, 'trades': trades}
+
+    # Check criteria: must be profitable on Train AND Test, with decent Test Sortino
+    train_profit = results['Train']['profit']
+    test_profit = results['Test']['profit']
+    test_sortino = results['Test']['sortino']
+
+    passes = True
+    failures = []
+
+    if train_profit <= 0:
+        passes = False
+        failures.append(f"Train PnL ${train_profit:,.0f} <= $0")
+    if test_profit <= 0:
+        passes = False
+        failures.append(f"Test PnL ${test_profit:,.0f} <= $0")
+    if test_sortino < 0.5:
+        passes = False
+        failures.append(f"Test Sortino {test_sortino:.2f} < 0.5")
+
+    if verbose:
+        if passes:
+            print(f"    ✅ Standalone: Train ${train_profit:,.0f}, Test ${test_profit:,.0f}, Sortino {test_sortino:.2f}")
+        else:
+            print(f"    ❌ Standalone FAILED: {', '.join(failures)}")
+
+    return passes, results, failures
 
 def load_candidates():
     if not os.path.exists(CANDIDATES_FILE):
@@ -58,7 +186,7 @@ def add_strategy(name):
         print(f"❌ Could not find strategy '{name}' in any output files.")
         return
 
-    # === QUALITY GATES ===
+    # === QUALITY GATES (Stored Metrics) ===
     test_sortino = strategy_data.get('test_sortino', 0)
     val_sortino = strategy_data.get('val_sortino', 0)
     cpcv_min = strategy_data.get('cpcv_min', 0)
@@ -80,10 +208,20 @@ def add_strategy(name):
         failures.append(f"decay={decay:.0%} > {config.MAX_TRAIN_TEST_DECAY:.0%}")
 
     if failures:
-        print(f"❌ Strategy '{name}' REJECTED - fails quality gates:")
+        print(f"❌ Strategy '{name}' REJECTED - fails quality gates:", file=sys.stderr)
         for f in failures:
-            print(f"   • {f}")
-        return
+            print(f"   • {f}", file=sys.stderr)
+        sys.exit(1)  # Non-zero exit so promote_strategy.py sees the failure
+
+    # === STANDALONE PROFITABILITY CHECK (Actual Simulator) ===
+    print(f"🔬 Running standalone simulation check...")
+    passes, sim_results, sim_failures = check_standalone_profitability(strategy_data, verbose=True)
+
+    if not passes:
+        print(f"❌ Strategy '{name}' REJECTED - fails standalone profitability:", file=sys.stderr)
+        for f in sim_failures:
+            print(f"   • {f}", file=sys.stderr)
+        sys.exit(1)
 
     # Passed all gates
     candidates.append(strategy_data)
@@ -232,10 +370,10 @@ def list_inbox():
         print("Inbox is empty.")
         return
 
-    # REFRESH METRICS
-    strategies = refresh_strategies(strategies)
-    
-    # Save back to inbox
+    # REFRESH METRICS and PURGE strategies that no longer pass thresholds
+    strategies = refresh_strategies(strategies, purge_failing=True)
+
+    # Save back to inbox (with purged strategies removed)
     with open(inbox_path, 'w') as f:
         json.dump(strategies, f, indent=4)
 
@@ -316,19 +454,65 @@ def add_all_from_inbox():
     candidates = load_candidates()
     candidate_names = {c['name'] for c in candidates}
 
+    print(f"🔬 Checking {len(inbox_strategies)} inbox strategies for standalone profitability...")
+
     added_count = 0
+    rejected_count = 0
+
     for s in inbox_strategies:
-        if s['name'] not in candidate_names:
+        if s['name'] in candidate_names:
+            continue  # Already in candidates
+
+        print(f"\n  Checking {s['name']}...")
+        passes, sim_results, failures = check_standalone_profitability(s, verbose=True)
+
+        if passes:
             candidates.append(s)
             candidate_names.add(s['name'])
             added_count += 1
+        else:
+            rejected_count += 1
 
     if added_count > 0:
         save_candidates(candidates)
-        print(f"✅ Added {added_count} strategies from Inbox to Candidates.")
-    else:
+        print(f"\n✅ Added {added_count} strategies from Inbox to Candidates.")
+    if rejected_count > 0:
+        print(f"❌ Rejected {rejected_count} strategies (failed standalone profitability).")
+    if added_count == 0 and rejected_count == 0:
         print("⚠️  No new strategies to add (all already in candidates).")
 
+
+def verify_candidates():
+    """
+    Re-verify all candidates against standalone profitability using the actual simulator.
+    Removes any strategies that no longer pass.
+    """
+    candidates = load_candidates()
+    if not candidates:
+        print("No candidates to verify.")
+        return
+
+    print(f"🔬 Verifying {len(candidates)} candidates for standalone profitability...")
+
+    kept = []
+    removed = []
+
+    for s in candidates:
+        print(f"\n  Checking {s['name']}...")
+        passes, sim_results, failures = check_standalone_profitability(s, verbose=True)
+
+        if passes:
+            kept.append(s)
+        else:
+            removed.append((s['name'], failures))
+
+    if removed:
+        print(f"\n❌ Removing {len(removed)} strategies that failed standalone check:")
+        for name, failures in removed:
+            print(f"   - {name}: {', '.join(failures)}")
+        save_candidates(kept)
+    else:
+        print(f"\n✅ All {len(candidates)} candidates passed standalone verification.")
 
 def audit_direction_consistency(source='candidates'):
     """
@@ -515,6 +699,7 @@ def main():
     subparsers.add_parser('clear-direction-flipped', help='Clear inbox strategies with direction flips')
     subparsers.add_parser('prune', help='Remove candidates from inbox')
     subparsers.add_parser('cleanup', help='Remove losing strategies from inbox (Ret <= 0)')
+    subparsers.add_parser('verify', help='Re-verify candidates against standalone profitability (actual simulator)')
 
     audit_dir_parser = subparsers.add_parser('audit-directions', help='Audit direction consistency')
     audit_dir_parser.add_argument('--inbox', action='store_true', help='Audit inbox instead of candidates')
@@ -547,6 +732,8 @@ def main():
         prune_inbox()
     elif args.command == 'cleanup':
         cleanup_inbox()
+    elif args.command == 'verify':
+        verify_candidates()
     elif args.command == 'audit-directions':
         source = 'inbox' if args.inbox else 'candidates'
         audit_direction_consistency(source)

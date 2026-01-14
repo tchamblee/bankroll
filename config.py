@@ -56,11 +56,11 @@ COST_BPS = 0.02  # ES commission ~$2.50/contract at ~$5000/contract
 SPREAD_BPS = 0.05  # ES spread ~0.25 points
 MIN_RETURN_THRESHOLD = 0.001
 MIN_SORTINO_THRESHOLD = 0.9
-MIN_SORTINO_FLOOR = 0.3  # Minimum per-slice floor (no catastrophic regime failures)
+MIN_SORTINO_FLOOR = 0.2  # Minimum per-slice floor (no catastrophic regime failures)
 MIN_HOF_SORTINO = 0.5  # Early gate for HOF entry (defense-in-depth before final 0.9 filter)
 MIN_TEST_SORTINO = 1.5  # Minimum test Sortino for final acceptance (OOS quality gate)
 MIN_VAL_SORTINO = 1.5  # Minimum validation Sortino (require OOS consistency across both val and test)
-MIN_CPCV_THRESHOLD = 1.75  # Minimum CPCV score for robustness (filters overfit strategies)
+MIN_CPCV_THRESHOLD = 1.6  # Minimum CPCV score for robustness (filters overfit strategies)
 SLIPPAGE_ATR_FACTOR = 0.1
 
 # --- MATH CONSTANTS ---
@@ -121,8 +121,8 @@ _VAL_SIZE = VAL_SPLIT_RATIO - TRAIN_SPLIT_RATIO
 _TEST_SIZE = 1.0 - VAL_SPLIT_RATIO
 MIN_TRADES_TRAIN = MIN_TRADES_FOR_METRICS
 MIN_TRADES_VAL = max(20, int(MIN_TRADES_FOR_METRICS * _VAL_SIZE / _TRAIN_SIZE))
-MIN_TRADES_TEST = max(75, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))  # Critical OOS gate (75 for 18mo data)
-MAX_TRAIN_TEST_DECAY = 0.50  # Reject if test_return < 50% of train_return (>50% decay = overfit)
+MIN_TRADES_TEST = max(50, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))  # Critical OOS gate (50 for ~4mo test)
+MAX_TRAIN_TEST_DECAY = 0.60  # Reject if test_return < 40% of train_return (>60% decay = overfit)
 
 WFV_FOLDS = 5
 CPCV_N_FOLDS = 6

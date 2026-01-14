@@ -379,18 +379,24 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
             final_train_sortino = float(best_stats['train']['sortino']) if is_optimized else train_sortino
             final_val_sortino = float(best_stats['val']['sortino']) if is_optimized else val_sortino
 
-            # --- FINAL GATE: Test Performance Check (Floor + Average + Minimum OOS) ---
+            # --- FINAL GATE: Test Performance Check (Floor + Average + Minimum OOS + Decay) ---
             # Floor: no slice below MIN_SORTINO_FLOOR
             # Aggregate: average of all three must meet MIN_SORTINO_THRESHOLD
             # OOS Quality: test Sortino must meet MIN_TEST_SORTINO
+            # Decay: test return must be at least (1 - MAX_TRAIN_TEST_DECAY) of train return
             avg_sortino_all = (final_train_sortino + final_val_sortino + final_test_sortino) / 3
             sortino_floor_fail = (final_train_sortino < config.MIN_SORTINO_FLOOR or
                                   final_val_sortino < config.MIN_SORTINO_FLOOR or
                                   final_test_sortino < config.MIN_SORTINO_FLOOR)
             sortino_avg_fail = avg_sortino_all < config.MIN_SORTINO_THRESHOLD
             test_sortino_fail = final_test_sortino < config.MIN_TEST_SORTINO
+            val_sortino_fail = final_val_sortino < getattr(config, 'MIN_VAL_SORTINO', config.MIN_SORTINO_THRESHOLD)
 
-            if final_test_ret <= 0 or sortino_floor_fail or sortino_avg_fail or test_sortino_fail or final_test_trades < config.MIN_TRADES_TEST:
+            # Decay check: reject if test return decayed too much from train
+            decay = 1 - (final_test_ret / final_train_ret) if final_train_ret > 0 else 1.0
+            decay_fail = decay > config.MAX_TRAIN_TEST_DECAY
+
+            if final_test_ret <= 0 or sortino_floor_fail or sortino_avg_fail or test_sortino_fail or val_sortino_fail or final_test_trades < config.MIN_TRADES_TEST or decay_fail:
                     # Logic to capture High-Quality strategies that failed ONLY on OOS/Test
                     min_score_here = min(final_train_sortino, final_val_sortino)
 
@@ -404,12 +410,24 @@ def save_campaign_results(hall_of_fame, backtester, horizon, training_id, total_
                          if final_val_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"ValFloor({final_val_sortino:.2f})")
                          if final_test_sortino < config.MIN_SORTINO_FLOOR: fail_reasons.append(f"TestFloor({final_test_sortino:.2f})")
                          if test_sortino_fail: fail_reasons.append(f"TestSort({final_test_sortino:.2f}<{config.MIN_TEST_SORTINO})")
+                         if val_sortino_fail: fail_reasons.append(f"ValSort({final_val_sortino:.2f}<{getattr(config, 'MIN_VAL_SORTINO', config.MIN_SORTINO_THRESHOLD)})")
                          if sortino_avg_fail: fail_reasons.append(f"AvgSort({avg_sortino_all:.2f})")
                          if final_test_trades < config.MIN_TRADES_TEST: fail_reasons.append(f"TestTrds({final_test_trades}<{config.MIN_TRADES_TEST})")
+                         if decay_fail: fail_reasons.append(f"Decay({decay*100:.0f}%>{config.MAX_TRAIN_TEST_DECAY*100:.0f}%)")
 
                          reason_str = ", ".join(fail_reasons)
                          best_rejected_details = f"Failed Test: [{reason_str}] | TrainSort:{final_train_sortino:.2f}, ValSort:{final_val_sortino:.2f}, TestSort:{final_test_sortino:.2f}"
 
+                    # Verbose rejection logging - show actual failure reason
+                    reject_reasons = []
+                    if final_test_ret <= 0: reject_reasons.append(f"TestRet≤0")
+                    if sortino_floor_fail: reject_reasons.append(f"SortFloor")
+                    if sortino_avg_fail: reject_reasons.append(f"AvgSort<{config.MIN_SORTINO_THRESHOLD}")
+                    if test_sortino_fail: reject_reasons.append(f"TestSort={final_test_sortino:.1f}<{config.MIN_TEST_SORTINO}")
+                    if val_sortino_fail: reject_reasons.append(f"ValSort={final_val_sortino:.1f}<{getattr(config, 'MIN_VAL_SORTINO', config.MIN_SORTINO_THRESHOLD)}")
+                    if final_test_trades < config.MIN_TRADES_TEST: reject_reasons.append(f"Trades={final_test_trades}<{config.MIN_TRADES_TEST}")
+                    if decay_fail: reject_reasons.append(f"Decay={decay*100:.0f}%>{config.MAX_TRAIN_TEST_DECAY*100:.0f}%")
+                    print(f"      ❌ {s.name}: {', '.join(reject_reasons)}")
                     continue
 
             # DSR calculation on Validation Set (Updated if optimized)
