@@ -18,6 +18,7 @@ def find_strategy(name):
     search_files = [
         "output/strategies/candidates.json",
         "output/strategies/mutex_portfolio.json",
+        "output/strategies/mutex_portfolio_rounded.json",
         "output/strategies/found_strategies.json",
     ]
     # Add all apex files

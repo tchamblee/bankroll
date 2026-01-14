@@ -53,13 +53,42 @@ def add_strategy(name):
 
     print(f"🔍 Searching for '{name}'...")
     strategy_data = find_strategy_in_files(name)
-    
-    if strategy_data:
-        candidates.append(strategy_data)
-        print(f"✅ Added '{name}' (Horizon: {strategy_data.get('horizon')})")
-        save_candidates(candidates)
-    else:
+
+    if not strategy_data:
         print(f"❌ Could not find strategy '{name}' in any output files.")
+        return
+
+    # === QUALITY GATES ===
+    test_sortino = strategy_data.get('test_sortino', 0)
+    val_sortino = strategy_data.get('val_sortino', 0)
+    cpcv_min = strategy_data.get('cpcv_min', 0)
+    train_ret = strategy_data.get('train_return', 0)
+    test_ret = strategy_data.get('test_return', 0)
+
+    # Calculate decay
+    decay = 1 - (test_ret / train_ret) if train_ret > 0 else 1.0
+
+    # Check thresholds
+    failures = []
+    if test_sortino < config.MIN_TEST_SORTINO:
+        failures.append(f"test_sortino={test_sortino:.2f} < {config.MIN_TEST_SORTINO}")
+    if hasattr(config, 'MIN_VAL_SORTINO') and val_sortino < config.MIN_VAL_SORTINO:
+        failures.append(f"val_sortino={val_sortino:.2f} < {config.MIN_VAL_SORTINO}")
+    if cpcv_min < config.MIN_CPCV_THRESHOLD:
+        failures.append(f"cpcv_min={cpcv_min:.2f} < {config.MIN_CPCV_THRESHOLD}")
+    if decay > config.MAX_TRAIN_TEST_DECAY:
+        failures.append(f"decay={decay:.0%} > {config.MAX_TRAIN_TEST_DECAY:.0%}")
+
+    if failures:
+        print(f"❌ Strategy '{name}' REJECTED - fails quality gates:")
+        for f in failures:
+            print(f"   • {f}")
+        return
+
+    # Passed all gates
+    candidates.append(strategy_data)
+    print(f"✅ Added '{name}' (Horizon: {strategy_data.get('horizon')}, CPCV: {cpcv_min:.2f}, Decay: {decay:.0%})")
+    save_candidates(candidates)
 
 def remove_strategy(name):
     candidates = load_candidates()

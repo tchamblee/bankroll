@@ -57,7 +57,8 @@ def _process_ticker(ticker, raw_dir, clean_dir):
             
         # Fallback to Last Price (Stocks/Futures)
         elif 'last_price' in df.columns and has_data('last_price'):
-            price_col = 'last_price'
+            df['mid_price'] = df['last_price']  # Create mid_price for bars.py compatibility
+            price_col = 'mid_price'
         
         if not price_col:
             print(f"  ❌ No price column for {ticker}")
@@ -77,7 +78,13 @@ def _process_ticker(ticker, raw_dir, clean_dir):
         if outlier_count > 0:
             print(f"  🧹 {ticker}: Removing {outlier_count} outliers (>2%)")
             df = df[~outliers]
-        
+
+        # Drop columns that are entirely NaN (placeholder columns from backfill)
+        all_nan_cols = [c for c in df.columns if df[c].isna().all()]
+        if all_nan_cols:
+            print(f"  🧹 {ticker}: Dropping {len(all_nan_cols)} all-NaN columns: {all_nan_cols}")
+            df = df.drop(columns=all_nan_cols)
+
         # Save Consolidated
         out_name = f"CLEAN_{ticker}.parquet"
         out_path = os.path.join(clean_dir, out_name)

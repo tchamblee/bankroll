@@ -47,7 +47,7 @@ def main():
     # ------------------------------------------------------------------
     # STEP 1: Optimize Candidate (Gene Mutation/Selection)
     # ------------------------------------------------------------------
-    cmd_opt = f"python3 optimize_candidate.py {current_name}"
+    cmd_opt = f"python3 optimize_candidate.py {current_name} --walk-forward"
     output_opt = run_command(cmd_opt, "Step 1: Structural Optimization")
     
     if output_opt:

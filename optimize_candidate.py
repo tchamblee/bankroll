@@ -290,19 +290,20 @@ class StrategyOptimizer:
             v_train = get_stats(train_df, variant.name)
             v_val = get_stats(val_df, variant.name)
 
-            # CRITICAL: Reject any variant with negative CPCV min
-            if v_cpcv['cpcv_min'] < 0:
+            # CRITICAL: Reject any variant below CPCV threshold
+            if v_cpcv['cpcv_min'] < config.MIN_CPCV_THRESHOLD:
                 continue
 
             v_fitness = calc_fitness_cpcv(v_cpcv['cpcv_min'], v_n_genes)
 
             # Constraints:
             # 1. Must be profitable on both train and val
-            # 2. Must have positive CPCV min (checked above)
+            # 2. Must meet CPCV threshold (checked above)
             # 3. Must meet sortino threshold on both train and val
             # 4. Must beat parent fitness by minimum threshold (avoid noise)
             is_profitable = v_train['ret'] > 0 and v_val['ret'] > 0
-            meets_sortino = v_train['sortino'] >= config.MIN_SORTINO_THRESHOLD and v_val['sortino'] >= config.MIN_SORTINO_THRESHOLD
+            min_val_sortino = getattr(config, 'MIN_VAL_SORTINO', config.MIN_SORTINO_THRESHOLD)
+            meets_sortino = v_train['sortino'] >= config.MIN_SORTINO_THRESHOLD and v_val['sortino'] >= min_val_sortino
 
             min_improvement = getattr(config, 'OPTIMIZE_MIN_IMPROVEMENT', 0.05)
             improvement_threshold = abs(parent_fitness) * min_improvement if parent_fitness != 0 else 0.1
@@ -446,8 +447,8 @@ class StrategyOptimizer:
         improvement_threshold = abs(parent_cpcv_min) * min_improvement if parent_cpcv_min != 0 else 0.1
 
         for res in results_data[1:]:
-            # CRITICAL: Reject any variant with negative CPCV min
-            if res['cpcv']['cpcv_min'] < 0:
+            # CRITICAL: Reject any variant below CPCV threshold
+            if res['cpcv']['cpcv_min'] < config.MIN_CPCV_THRESHOLD:
                 continue
 
             # Profitability check (train/val)
@@ -553,6 +554,34 @@ if __name__ == "__main__":
         if best:
             print(f"\n✅ Best Variant: {best.name}")
             print(f"   Train: {stats['train']['sortino']:.2f} | Val: {stats['val']['sortino']:.2f} | Test: {stats['test']['sortino']:.2f}")
+
+            # Save to file for promote_strategy.py compatibility
+            out_file = os.path.join(config.DIRS['STRATEGIES_DIR'], f"optimized_{args.name}.json")
+            d = best.to_dict()
+
+            # Convert numpy types to Python native types for JSON serialization
+            def convert_stats(s):
+                result = {}
+                for k, v in s.items():
+                    if isinstance(v, (np.floating, np.float32, np.float64)):
+                        result[k] = float(v)
+                    elif isinstance(v, (np.integer, np.int32, np.int64)):
+                        result[k] = int(v)
+                    else:
+                        result[k] = v
+                return result
+
+            d.update({
+                'horizon': horizon,
+                'train_stats': convert_stats(stats['train']),
+                'val_stats': convert_stats(stats['val']),
+                'test_stats': convert_stats(stats['test']),
+                'cpcv_min': float(stats['cpcv_min']),
+                'cpcv_p5': float(stats['cpcv_p5'])
+            })
+            with open(out_file, 'w') as f:
+                json.dump([d], f, indent=4)
+            print(f"💾 Saved to {out_file}")
         else:
             print("\n❌ No variant passed all gates.")
     else:
