@@ -32,12 +32,7 @@ def analyze_horizon(df, horizon, top_n=20, use_survivors=False):
                     'volume', 'net_aggressor_vol', 'cum_vol', 'vol_proxy', 'bar_id', 
                     'target_return', 'log_ret',
                     'avg_ask_price', 'avg_bid_price', 'avg_ask_size', 'avg_bid_size',
-                    'avg_spread', 'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
-                     # BLACKLIST (Suspicious Leakage known from purge_features.py)
-                    'rel_strength_z_6e', 
-                    'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
-                    'divergence_50_6e',
-                    'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
+                    'avg_spread', 'ticket_imbalance', 'residual_tnx', 'residual_eurusd']
     
     noise_patterns = ['kyle_lambda', 'tick_spread', 'tick_volatility', 'tick_ofi', 'pres_imbalance', 'avg_spread']
     

@@ -32,7 +32,7 @@ COT_STALENESS_DAYS = 14  # Max age for COT data before considered stale (weekly 
 SURVIVORS_FILE_TEMPLATE = os.path.join(DIRS['FEATURES_DIR'], "survivors_{}.json")
 APEX_FILE_TEMPLATE = os.path.join(DIRS['STRATEGIES_DIR'], "apex_strategies_{}.json")
 
-PRIMARY_TICKER = "EURUSD"
+PRIMARY_TICKER = "ES"
 
 # Data File Conventions
 RAW_DATA_PREFIX_TICKS = "RAW_TICKS"
@@ -49,11 +49,11 @@ IBKR_CLIENT_ID_PAPER = 2
 # --- TRADING CONSTRAINTS ---
 ACCOUNT_SIZE = 60000.0  # USD
 RISK_PER_TRADE_PERCENT = 0.01 # 1% of account per trade (Target Risk)
-STANDARD_LOT_SIZE = 100000.0 # Units of EUR/USD
+STANDARD_LOT_SIZE = 50.0 # ES point value ($50/point)
 MIN_LOTS = 1
-MAX_LOTS = 4
-COST_BPS = 0.20
-SPREAD_BPS = 0.25
+MAX_LOTS = 10
+COST_BPS = 0.02  # ES commission ~$2.50/contract at ~$5000/contract
+SPREAD_BPS = 0.05  # ES spread ~0.25 points
 MIN_RETURN_THRESHOLD = 0.001
 MIN_SORTINO_THRESHOLD = 0.9
 MIN_SORTINO_FLOOR = 0.3  # Minimum per-slice floor (no catastrophic regime failures)
@@ -66,20 +66,20 @@ SLIPPAGE_ATR_FACTOR = 0.1
 EPSILON = 1e-9
 
 # --- BAR DEFINITION ---
-# 600M units is approx 250 ticks for PRIMARY_TICKER (High Resolution)
-VOLUME_THRESHOLD = 600_000_000 
-AVG_BAR_MINS = 1.5 # Average duration of a volume bar in minutes
+# ES trades ~2M contracts/day; target ~1.5-2 min bars
+VOLUME_THRESHOLD = 5000  # Contracts per bar (ES uses contract volume)
+AVG_BAR_MINS = 2.0 # Average duration of a volume bar in minutes
 
 # Annualization based on Volume Density
-# Empirically validated 2026-01-11: 234,461 bars / 160.9 trading days * 252 = 367,288
-# NOTE: Should be re-validated after data changes:
+# PLACEHOLDER for ES - recalculate after data collection:
 #   df = pd.read_parquet('processed_data/feature_matrix.parquet')
 #   trading_days = (df['time_start'].max() - df['time_start'].min()).days * (252/365)
 #   ANNUALIZATION_FACTOR = int(len(df) / trading_days * 252)
-ANNUALIZATION_FACTOR = 367288
+# Estimate: ~100 bars/hour * 23 hours * 252 days = ~580,000
+ANNUALIZATION_FACTOR = 35444  # ~141 bars/day with 5000-contract volume bars
 
-ATR_FALLBACK_BPS = 10.0 # 0.1% of price
-MIN_ATR_BPS = 1.5 # 0.015% of price (~1.8 pips floor for EURUSD)
+ATR_FALLBACK_BPS = 50.0 # ES typical daily range ~50 points = 1%
+MIN_ATR_BPS = 5.0 # ~25 points floor for ES
 
 DEFAULT_STOP_LOSS = 2.0 # ATR Multiplier
 DEFAULT_TAKE_PROFIT = 4.0 # ATR Multiplier
@@ -95,7 +95,7 @@ VOL_SCALE_TIGHTEN = 0.8    # Tighten SL by 20% when triggered
 LIMIT_DIST_OPTIONS = [0.0] * 15 + [0.05, 0.1, 0.15, 0.2, 0.3]
 
 DEFAULT_TIME_LIMIT = 120 # Bars (4 hours at 2-min bars)
-MIN_TRADES_FOR_METRICS = 30
+MIN_TRADES_FOR_METRICS = 50  # Increased from 30 for statistical significance
 MIN_TRADES_COEFFICIENT = 3000 # target = max(50, coeff/horizon + 5)
 STOP_LOSS_COOLDOWN_BARS = 12 # Bars to wait after SL before re-entry (approx 1 hour)
 MIN_COMMISSION = 2.0
@@ -114,17 +114,19 @@ VAL_SPLIT_RATIO = 0.8
 
 # Scaled trade minimums based on slice size (relative to train)
 # Train=60%, Val=20%, Test=20% → Val/Test need 1/3 the trades of Train
+# BUT: enforce hard floors for statistical validity (30+ trades for significance)
 _TRAIN_SIZE = TRAIN_SPLIT_RATIO
 _VAL_SIZE = VAL_SPLIT_RATIO - TRAIN_SPLIT_RATIO
 _TEST_SIZE = 1.0 - VAL_SPLIT_RATIO
 MIN_TRADES_TRAIN = MIN_TRADES_FOR_METRICS
-MIN_TRADES_VAL = max(3, int(MIN_TRADES_FOR_METRICS * _VAL_SIZE / _TRAIN_SIZE))
-MIN_TRADES_TEST = max(3, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))
+MIN_TRADES_VAL = max(20, int(MIN_TRADES_FOR_METRICS * _VAL_SIZE / _TRAIN_SIZE))
+MIN_TRADES_TEST = max(50, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))  # Critical OOS gate
+MAX_TRAIN_TEST_DECAY = 0.75  # Reject if test_return < 25% of train_return (>75% decay = overfit)
 
 WFV_FOLDS = 5
 CPCV_N_FOLDS = 6
 CPCV_N_TEST_FOLDS = 2
-CPCV_MIN_TRADES_SLICE = 5
+CPCV_MIN_TRADES_SLICE = 10  # Increased from 5 for per-fold validity
 
 # --- EVOLUTIONARY ALGORITHM SETTINGS ---
 EVO_BATCH_SIZE = 2000
@@ -146,9 +148,9 @@ OPTIMIZE_USE_WALK_FORWARD = False  # Use walk-forward validation instead of trai
 OPTIMIZE_STOPS_MIN_SORTINO = 1.0  # Minimum sortino threshold for stop optimization
 
 # --- TIME FILTERS ---
-# London Open (08:00 UTC) to NY Close (17:00 EST -> ~22:00 UTC)
-TRADING_START_HOUR = 8
-TRADING_END_HOUR = 22
+# ES trades nearly 24h (Sun 5pm - Fri 4pm CT)
+TRADING_START_HOUR = 0
+TRADING_END_HOUR = 23
 
 # --- GDELT SETTINGS ---
 PANIC_SCORE_THRESHOLD = -2.0
@@ -163,68 +165,22 @@ GDELT_KEYWORDS = {
 }
 
 TARGETS = [
+    # Primary - ES Futures
     {
         "name": PRIMARY_TICKER,
-        "symbol": "EUR",
-        "secType": "CASH",
+        "symbol": "ES",
+        "secType": "CONTFUT",
         "currency": "USD",
-        "exchange": "IDEALPRO",
-        "mode": "TICKS_BID_ASK", 
+        "exchange": "CME",
+        "mode": "BARS_TRADES_1MIN",
     },
+    # US Treasury Rates - directly affect equity valuations
     {
         "name": "TNX",
         "symbol": "TNX",
         "secType": "IND",
         "currency": "USD",
         "exchange": "CBOE",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "BUND",
-        "symbol": "GBL",
-        "secType": "CONTFUT",
-        "currency": "EUR",
-        "exchange": "EUREX",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "BTP",
-        "symbol": "BTP",
-        "secType": "CONTFUT",
-        "currency": "EUR",
-        "exchange": "EUREX",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "USDCHF",
-        "symbol": "USD",
-        "secType": "CASH",
-        "currency": "CHF",
-        "exchange": "IDEALPRO",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "GBPUSD",
-        "symbol": "GBP",
-        "secType": "CASH",
-        "currency": "USD",
-        "exchange": "IDEALPRO",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "USDJPY",
-        "symbol": "USD",
-        "secType": "CASH",
-        "currency": "JPY",
-        "exchange": "IDEALPRO",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "IBIT",
-        "symbol": "IBIT",
-        "secType": "STK",
-        "currency": "USD",
-        "exchange": "SMART",
         "mode": "BARS_TRADES_1MIN",
     },
     {
@@ -237,30 +193,6 @@ TARGETS = [
         "rollover_days": 30,
     },
     {
-        "name": "SCHATZ",
-        "symbol": "GBS",
-        "secType": "CONTFUT",
-        "currency": "EUR",
-        "exchange": "EUREX",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "6E",
-        "symbol": "EUR",
-        "secType": "CONTFUT",
-        "currency": "USD",
-        "exchange": "CME",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
-        "name": "ES",
-        "symbol": "ES",
-        "secType": "CONTFUT",
-        "currency": "USD",
-        "exchange": "CME",
-        "mode": "BARS_TRADES_1MIN",
-    },
-    {
         "name": "ZN",
         "symbol": "ZN",
         "secType": "CONTFUT",
@@ -268,6 +200,16 @@ TARGETS = [
         "exchange": "CBOT",
         "mode": "BARS_TRADES_1MIN",
     },
+    # Volatility - critical for ES
+    {
+        "name": "VIX",
+        "symbol": "VIX",
+        "secType": "IND",
+        "currency": "USD",
+        "exchange": "CBOE",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    # Market Breadth - directly ES-relevant
     {
         "name": "TICK_NYSE",
         "symbol": "TICK-NYSE",
@@ -284,14 +226,15 @@ TARGETS = [
         "exchange": "NYSE",
         "mode": "BARS_TRADES_1MIN",
     },
+    # Risk Sentiment Proxy
     {
-        "name": "VIX",
-        "symbol": "VIX",
-        "secType": "IND",
+        "name": "IBIT",
+        "symbol": "IBIT",
+        "secType": "STK",
         "currency": "USD",
-        "exchange": "CBOE",
+        "exchange": "SMART",
         "mode": "BARS_TRADES_1MIN",
-    }
+    },
 ]
 
 # --- CONTROL FLAGS ---

@@ -25,16 +25,10 @@ def purge_features(df, horizon, target_col='target_return', ic_threshold=0.005, 
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', target_col,
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread',
-               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
-               # BLACKLIST (Suspicious Leakage)
-               'rel_strength_z_6e', 
-               'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
-               'divergence_50_6e',
-               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100',
+               'ticket_imbalance', 'residual_tnx', 'residual_eurusd',
                # BLACKLIST (Non-Stationary Raw Price Levels)
                'day_open', 'prev_val', 'prev_vah', 'prev_vpoc',
-               'price_es', 'price_zn', 'price_bund', 'price_6e', 'price_gbpusd', 
-               'price_usdjpy', 'price_tnx', 'price_us2y', 'price_schatz',
+               'price_zn', 'price_eurusd', 'price_tnx', 'price_us2y', 'price_vix',
                'hamiltonian_3200', 'lagrangian_3200', 'potential_energy_3200']
     
     # Filter out SPECIFIC raw microstructure noise and kyle_lambda
@@ -372,12 +366,7 @@ if __name__ == "__main__":
     exclude = ['time_start', 'time_end', 'open', 'high', 'low', 'close', 'volume', 'net_aggressor_vol', 
                'cum_vol', 'vol_proxy', 'bar_id', 'log_ret', 
                'avg_bid_price', 'avg_ask_price', 'avg_bid_size', 'avg_ask_size', 'avg_spread',
-               'ticket_imbalance', 'residual_bund', 'residual_tnx', 'residual_usdchf',
-               # BLACKLIST
-               'rel_strength_z_6e', 
-               'delta_rel_strength_z_6e_25', 'delta_rel_strength_z_6e_50', 'delta_rel_strength_z_6e_100',
-               'divergence_50_6e',
-               'delta_divergence_50_6e_25', 'delta_divergence_50_6e_50', 'delta_divergence_50_6e_100']
+               'ticket_imbalance', 'residual_tnx', 'residual_eurusd']
                
     # Filter out SPECIFIC raw microstructure noise and kyle_lambda
     noise_patterns = ['kyle_lambda', 'tick_spread', 'tick_volatility', 'tick_ofi', 'pres_imbalance', 'avg_spread']

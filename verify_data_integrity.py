@@ -145,11 +145,11 @@ def check_data_quality(df):
     nan_cols = nan_counts[nan_counts > 0]
 
     # Threshold for expected NaNs:
-    # - Rolling windows up to 400 bars
-    # - Intermarket data (US2Y, SCHATZ, etc) has ~5000 NaNs due to trading hours
-    # - Delta calculations add another 100 bars
-    # So threshold = 5000 (intermarket) + 400 (window) + 200 (buffer) = 5600
-    NAN_THRESHOLD = 5600
+    # - Rolling windows up to 3200 bars (physics features use large windows)
+    # - Chained rolling calcs can have ~3x window NaN (e.g., market_action_3200 = 3*3200)
+    # - Intermarket data adds ~5000 NaNs due to trading hours mismatch
+    # So threshold = 3*3200 + 1000 buffer = 10600
+    NAN_THRESHOLD = 10600
 
     unexpected_nans = nan_cols[nan_cols > NAN_THRESHOLD]
     expected_nans = nan_cols[nan_cols <= NAN_THRESHOLD]
@@ -295,10 +295,9 @@ def check_leaks(force=False):
     
     potential_leaks = corrs[corrs > 0.2] # 0.2 is essentially impossible for daily data
     
-    # Whitelist known valid signals (Arbitrage/Lead-Lag)
-    # rel_strength_z_6e: Futures (6E) vs Spot (EURUSD) Lead-Lag
-    # divergence_50_gbpusd: Spot (GBPUSD) vs Spot (EURUSD) Divergence/Momentum
-    KNOWN_LEAKS = ['rel_strength_z_6e', 'divergence_50_gbpusd']
+    # Whitelist known valid signals (Intermarket correlations)
+    # These features have legitimate high correlation with forward returns
+    KNOWN_LEAKS = []  # Cleared for ES - add back if new valid signals identified
     real_leaks = potential_leaks.drop(KNOWN_LEAKS, errors='ignore')
     
     if not real_leaks.empty:

@@ -56,9 +56,9 @@ def _calc_eom(high, low, volume, window):
     dist = mid.diff(1)
     
     # Box Ratio = Volume / (High - Low)
-    # We use a large divisor to keep numbers manageable, usually 10000 or similar.
-    # Here we just use raw volume and scale later if needed.
-    box_ratio = volume / (high - low).replace(0, np.nan)
+    # Use small epsilon for zero-range bars to avoid NaN propagation in rolling windows
+    hl_range = (high - low).replace(0, 1e-8)
+    box_ratio = volume / hl_range
     
     eom_1 = dist / box_ratio
     
@@ -96,7 +96,9 @@ def _calc_cmf(high, low, close, volume, window):
     Sum(AD, n) / Sum(Vol, n)
     """
     # Money Flow Multiplier = ((Close - Low) - (High - Close)) / (High - Low)
-    mf_mult = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
+    # Use small epsilon for zero-range bars to avoid NaN propagation in rolling windows
+    hl_range = (high - low).replace(0, 1e-8)
+    mf_mult = ((close - low) - (high - close)) / hl_range
     mf_vol = mf_mult * volume
     
     cmf = mf_vol.rolling(window).sum() / volume.rolling(window).sum()

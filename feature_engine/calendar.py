@@ -5,8 +5,8 @@ import pytz
 import config
 
 class CalendarFeature:
-    # Event type encoding
-    EVENT_TYPES = {'NFP': 1, 'CPI': 2, 'FOMC': 3, 'ECB': 4}
+    # Event type encoding (US events only for ES trading)
+    EVENT_TYPES = {'NFP': 1, 'CPI': 2, 'FOMC': 3}
 
     def __init__(self, calendar_path="resources/economic_calendar.csv"):
         self.calendar_path = calendar_path

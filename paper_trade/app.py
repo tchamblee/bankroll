@@ -2,6 +2,7 @@
 Paper Trade Module - Main Application
 
 Contains the PaperTradeApp class and entry point.
+Uses 1-minute bar subscriptions (consistent with backfill) to build volume bars.
 """
 import asyncio
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from ib_insync import IB, Forex
+from ib_insync import IB, ContFuture
 from ingest.ibkr_utils import build_contract_from_config, qualify_contract
 import nest_asyncio
 
@@ -30,16 +31,6 @@ nest_asyncio.apply()
 configure_library_logging()
 
 
-class SyntheticTick:
-    """Synthetic tick for Forex where tick-by-tick data is not supported."""
-    def __init__(self, ticker):
-        self.time = ticker.time if ticker.time else datetime.now()
-        self.bidPrice = ticker.bid
-        self.askPrice = ticker.ask
-        self.bidSize = ticker.bidSize
-        self.askSize = ticker.askSize
-
-
 class PaperTradeApp:
     """
     Main paper trading application.
@@ -54,9 +45,10 @@ class PaperTradeApp:
         self.strategies = []
         self.executor = None
         self.stop_event = asyncio.Event()
-        self.contract_map = {}
+        self.contract_map = {}  # conId -> target config
+        self.bar_subscriptions = {}  # contract -> BarDataList (for live updates)
         self.primary_contract = None
-        self.last_eur_tick = datetime.now()
+        self.last_bar_update = datetime.now()
 
         # Temp dir for JIT feature calculation
         self.temp_dir = tempfile.mkdtemp(prefix="paper_trade_jit_")
@@ -177,20 +169,34 @@ class PaperTradeApp:
 
             if not self.primary_contract:
                 logger.info(f"Qualifying primary contract: {cfg.PRIMARY_TICKER}")
-                eur = Forex(cfg.PRIMARY_TICKER)
-                await self.ib.qualifyContractsAsync(eur)
-                self.primary_contract = eur
-                self.contract_map[eur.conId] = [t for t in cfg.TARGETS if t['name'] == cfg.PRIMARY_TICKER][0]
+                primary_conf = [t for t in cfg.TARGETS if t['name'] == cfg.PRIMARY_TICKER][0]
+                primary = build_contract_from_config(primary_conf)
+                primary = await qualify_contract(self.ib, primary, logger)
+                self.primary_contract = primary
+                self.contract_map[primary.conId] = primary_conf
 
-                # Subscribe primary ticker
-                self.ib.reqMktData(eur, "", False, False)
-                self.ib.reqTickByTickData(eur, "BidAsk", numberOfTicks=0, ignoreSize=False)
-                logger.info(f"Subscribed Primary Ticker: {eur.localSymbol}")
+                # Gap filling first (before live subscription)
+                await self.data_manager.fill_gaps(self.ib, primary)
 
-                # Gap filling
-                await self.data_manager.fill_gaps(self.ib, eur)
+                # Subscribe to 1-minute bars with keepUpToDate for live streaming
+                logger.info(f"Subscribing to 1-min bars for {primary.localSymbol}...")
+                bars = self.ib.reqHistoricalData(
+                    primary,
+                    endDateTime="",
+                    durationStr="7200 S",  # 2 hours in seconds (IBKR: S=sec, D=day, M=month!)
+                    barSizeSetting="1 min",
+                    whatToShow="TRADES",
+                    useRTH=False,
+                    formatDate=2,  # UTC
+                    keepUpToDate=True,  # Live streaming!
+                )
+                self.bar_subscriptions[primary.conId] = bars
 
-            # Subscribe correlator tickers
+                # Also get market data for intraday exit checks (bid/ask)
+                self.ib.reqMktData(primary, "", False, False)
+                logger.info(f"Subscribed Primary Ticker: {primary.localSymbol}")
+
+            # Subscribe correlator tickers to 1-minute bars
             for t in cfg.TARGETS:
                 if t['name'] == cfg.PRIMARY_TICKER:
                     continue
@@ -200,17 +206,31 @@ class PaperTradeApp:
                         c = build_contract_from_config(t)
                         c = await qualify_contract(self.ib, c, logger)
                         if c:
-                            self.ib.reqMktData(c, "", False, False)
+                            # Subscribe correlators to historical bars with keepUpToDate
+                            bars = self.ib.reqHistoricalData(
+                                c,
+                                endDateTime="",
+                                durationStr="1800 S",  # 30 minutes in seconds
+                                barSizeSetting="1 min",
+                                whatToShow="TRADES",
+                                useRTH=False,
+                                formatDate=2,
+                                keepUpToDate=True,
+                            )
+                            self.bar_subscriptions[c.conId] = bars
                             self.contract_map[c.conId] = t
+                            logger.info(f"Subscribed correlator: {t['name']}")
                     except Exception as e:
-                        logger.warning(f"Failed to qualify/request {t['name']}: {e}")
+                        logger.warning(f"Failed to subscribe {t['name']}: {e}")
 
+            # Register event handlers
             self.ib.pendingTickersEvent += self.on_pending_tickers
+            self.ib.barUpdateEvent += self.on_bar_update
             logger.info("VIRTUAL PAPER TRADING ACTIVE (NO BROKER ORDERS)")
 
             disconnect_time = None
             last_state_update = datetime.now()
-            self.last_eur_tick = datetime.now()
+            self.last_bar_update = datetime.now()
 
             while not self.stop_event.is_set():
                 # Heartbeat
@@ -224,12 +244,12 @@ class PaperTradeApp:
                         self.executor.save_state()
                         last_state_update = datetime.now()
 
-                # Check for data staleness
-                stall_delta = (datetime.now() - self.last_eur_tick).total_seconds()
+                # Check for data staleness (1-min bars should update every ~60s)
+                stall_delta = (datetime.now() - self.last_bar_update).total_seconds()
                 if stall_delta > 900:  # 15 mins
                     logger.error(f"{cfg.PRIMARY_TICKER} Data Stalled (>{stall_delta:.0f}s). Exiting for restart.")
                     sys.exit(1)
-                elif stall_delta > 60 and int(stall_delta) % 60 == 0:
+                elif stall_delta > 120 and int(stall_delta) % 60 == 0:
                     logger.warning(f"{cfg.PRIMARY_TICKER} Idle for {stall_delta:.0f}s (Market Closed/Slow?)")
 
                 # Check connection
@@ -260,16 +280,14 @@ class PaperTradeApp:
         return exit_code
 
     def on_pending_tickers(self, tickers):
-        """Handle pending ticker updates from IBKR."""
+        """Handle pending ticker updates from IBKR (for intraday exit checks only)."""
         for t in tickers:
             conf = self.contract_map.get(t.contract.conId)
             if not conf:
                 continue
 
             if conf['name'] == cfg.PRIMARY_TICKER:
-                self.last_eur_tick = datetime.now()
-
-                # Calculate mid price for exit checks
+                # Calculate mid price for intraday exit checks
                 price = 0
                 if t.bidSize > 0 and t.askSize > 0:
                     price = (t.bid + t.ask) / 2
@@ -279,19 +297,33 @@ class PaperTradeApp:
                 if price > 0 and self.executor:
                     asyncio.create_task(self.executor.check_intraday_exits(price))
 
-                # Process tick-by-tick data for bar creation
-                if t.tickByTicks:
-                    for tick in t.tickByTicks:
-                        bar = self.data_manager.add_tick(tick, conf)
-                        if bar is not None:
-                            asyncio.create_task(self.process_new_bar())
-                elif t.bidSize and t.askSize and t.bid > 0 and t.ask > 0:
-                    # Fallback for Forex: tick-by-tick BidAsk not supported
-                    bar = self.data_manager.add_tick(SyntheticTick(t), conf)
-                    if bar is not None:
-                        asyncio.create_task(self.process_new_bar())
-            else:
-                self.data_manager.add_tick(t, conf)
+    def on_bar_update(self, bars, hasNewBar):
+        """Handle bar updates from IBKR historical data subscription."""
+        if not bars:
+            return
+
+        # Find the contract for this bar subscription
+        contract = bars.contract
+        conf = self.contract_map.get(contract.conId)
+        if not conf:
+            return
+
+        # Get the latest bar
+        latest_bar = bars[-1]
+
+        if conf['name'] == cfg.PRIMARY_TICKER:
+            self.last_bar_update = datetime.now()
+
+            if hasNewBar:
+                # A new 1-minute bar completed - process it
+                volume_bar = self.data_manager.add_minute_bar(latest_bar, conf)
+                if volume_bar is not None:
+                    # New volume bar created - trigger strategy evaluation
+                    asyncio.create_task(self.process_new_bar())
+        else:
+            # Correlator update - just update the snapshot
+            if hasNewBar:
+                self.data_manager.update_correlator(latest_bar, conf)
 
     async def process_new_bar(self):
         """Process a newly completed bar."""

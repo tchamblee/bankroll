@@ -60,18 +60,18 @@ def rolling_hurst(series, window):
 
 def add_intermarket_features(primary_df, correlator_dfs):
     """
-    Adds robust Intermarket relationships using ES (Equities), ZN (Rates), and 6E (FX).
-    
+    Adds robust Intermarket relationships for ES (primary) using ZN (Rates), VIX, TICK/TRIN.
+
     Args:
         primary_df (pd.DataFrame): The main strategy dataframe (Volume Clock).
-        correlator_dfs (dict): Dictionary of {suffix: DataFrame} for ES, ZN, 6E.
-    
+        correlator_dfs (dict): Dictionary of {suffix: DataFrame} for correlators.
+
     Returns:
         pd.DataFrame: Enriched dataframe.
     """
     if primary_df is None: return None
-    
-    print(f"Calculating Intermarket Features (ES, ZN, 6E)...")
+
+    print(f"Calculating Intermarket Features (ZN, VIX, TICK/TRIN)...")
     df = primary_df.copy()
     
     # Ensure sorted by time_end for merge_asof
@@ -187,45 +187,6 @@ def add_intermarket_features(primary_df, correlator_dfs):
         cols = [f'corr_100{suffix}', f'rel_strength_z{suffix}', f'divergence_50{suffix}']
         df[cols] = df[cols].fillna(0)
 
-    # --- COMPUTE FEATURES (The Matrix) ---
-    # "USD Coherence": Are Majors moving together?
-    # {config.PRIMARY_TICKER} and GBPUSD should be POSITIVELY correlated (both /USD)
-    # {config.PRIMARY_TICKER} and USDJPY should be NEGATIVELY correlated (USD/ vs /USD)
-    # If USD is driving: corr(EUR, GBP) ~ 1.0, corr(EUR, JPY) ~ -1.0
-    # Coherence = (corr_GBP - corr_JPY) / 2.0  -> Target 1.0
-    if 'corr_100_gbpusd' in df.columns and 'corr_100_usdjpy' in df.columns:
-        df['usd_coherence_100'] = (df['corr_100_gbpusd'] - df['corr_100_usdjpy']) / 2.0
-    
-    # --- EXPLICIT SPREAD FEATURES (Rates) ---
-    # We look for specific suffixes to construct physically meaningful spreads
-    # Spread = Yield A - Yield B
-    
-    # TNX (US 10Y) - BUND (EU 10Y)
-    if 'price_tnx' in df.columns and 'price_bund' in df.columns:
-        df['spread_tnx_bund'] = df['price_tnx'] - df['price_bund']
-        # Z-Score of Spread (Regime)
-        spread_mean = df['spread_tnx_bund'].rolling(400).mean()
-        spread_std = df['spread_tnx_bund'].rolling(400).std()
-        df['spread_tnx_bund_z_400'] = (df['spread_tnx_bund'] - spread_mean) / spread_std.replace(0, 1)
-        # Spread Momentum (Velocity) - Multiple Windows
-        df['spread_tnx_bund_delta_50'] = df['spread_tnx_bund'].diff(50)
-        df['spread_tnx_bund_delta_100'] = df['spread_tnx_bund'].diff(100)
-        # Spread Acceleration (second derivative)
-        df['spread_tnx_bund_accel_50'] = df['spread_tnx_bund_delta_50'].diff(50)
-
-    # US2Y (US 2Y) - SCHATZ (EU 2Y)
-    if 'price_us2y' in df.columns and 'price_schatz' in df.columns:
-        df['spread_us2y_schatz'] = df['price_us2y'] - df['price_schatz']
-        # Z-Score
-        spread_mean = df['spread_us2y_schatz'].rolling(400).mean()
-        spread_std = df['spread_us2y_schatz'].rolling(400).std()
-        df['spread_us2y_schatz_z_400'] = (df['spread_us2y_schatz'] - spread_mean) / spread_std.replace(0, 1)
-        # Spread Momentum (Velocity) - Multiple Windows
-        df['spread_us2y_schatz_delta_50'] = df['spread_us2y_schatz'].diff(50)
-        df['spread_us2y_schatz_delta_100'] = df['spread_us2y_schatz'].diff(100)
-        # Spread Acceleration (second derivative)
-        df['spread_us2y_schatz_accel_50'] = df['spread_us2y_schatz_delta_50'].diff(50)
-
     # --- DOMESTIC YIELD CURVES ---
     # US Curve: TNX (10Y) - US2Y (2Y)
     if 'price_tnx' in df.columns and 'price_us2y' in df.columns:
@@ -237,76 +198,27 @@ def add_intermarket_features(primary_df, correlator_dfs):
         # Curve Acceleration (second derivative)
         df['curve_us_10y_2y_accel_50'] = df['curve_us_10y_2y_delta_50'].diff(50)
 
-    # EU Curve: BUND (10Y) - SCHATZ (2Y)
-    if 'price_bund' in df.columns and 'price_schatz' in df.columns:
-        df['curve_eu_10y_2y'] = df['price_bund'] - df['price_schatz']
-        df['curve_eu_10y_2y_z_400'] = (df['curve_eu_10y_2y'] - df['curve_eu_10y_2y'].rolling(400).mean()) / df['curve_eu_10y_2y'].rolling(400).std().replace(0, 1)
-        # Curve Momentum (Velocity) - Steepening/Flattening
-        df['curve_eu_10y_2y_delta_50'] = df['curve_eu_10y_2y'].diff(50)
-        df['curve_eu_10y_2y_delta_100'] = df['curve_eu_10y_2y'].diff(100)
-        # Curve Acceleration (second derivative)
-        df['curve_eu_10y_2y_accel_50'] = df['curve_eu_10y_2y_delta_50'].diff(50)
-
-    # --- BTP/BUND SPREAD (Eurozone Fragility) ---
-    # BTP (Italian 10Y) - BUND (German 10Y) = Peripheral risk premium
-    # Widening spread = Eurozone stress, narrowing = calm
-    if 'price_btp' in df.columns and 'price_bund' in df.columns:
-        df['spread_btp_bund'] = df['price_btp'] - df['price_bund']
-
-        # Z-Score of Spread (Regime)
-        spread_mean = df['spread_btp_bund'].rolling(400).mean()
-        spread_std = df['spread_btp_bund'].rolling(400).std()
-        df['spread_btp_bund_z_400'] = (df['spread_btp_bund'] - spread_mean) / spread_std.replace(0, 1)
-
-        # Spread Momentum (Velocity) - Multiple Windows
-        df['spread_btp_bund_delta_50'] = df['spread_btp_bund'].diff(50)
-        df['spread_btp_bund_delta_100'] = df['spread_btp_bund'].diff(100)
-        # Spread Acceleration (second derivative)
-        df['spread_btp_bund_accel_50'] = df['spread_btp_bund_delta_50'].diff(50)
-
-        # Hurst Exponent of Spread (Market Structure)
-        # H > 0.5: Trend-persistent (directional move in progress)
-        # H < 0.5: Mean-reverting (choppy, uncertain)
-        # H ~ 0.5: Random walk
-        # Regime changes in H often precede price moves
-        df['spread_btp_bund_hurst_100'] = rolling_hurst(df['spread_btp_bund'], 100)
-        df['spread_btp_bund_hurst_200'] = rolling_hurst(df['spread_btp_bund'], 200)
-
-        # Hurst Change (Acceleration of regime shift)
-        df['spread_btp_bund_hurst_delta_50'] = df['spread_btp_bund_hurst_100'].diff(50)
-
-        # Fill NaNs from rolling calculations
-        hurst_cols = ['spread_btp_bund_hurst_100', 'spread_btp_bund_hurst_200', 'spread_btp_bund_hurst_delta_50']
-        df[hurst_cols] = df[hurst_cols].fillna(0.5)  # Default to random walk
-
     # 3. Vol-of-Vol (Second Derivative of Fear)
     if 'price_vix' in df.columns:
         vix_ret = np.log(df['price_vix'] / df['price_vix'].shift(1))
         df['vol_of_vol_vix_100'] = vix_ret.rolling(100).std()
 
     # 4. Cross-Asset Momentum Confirmation (Risk-On/Risk-Off Score)
-    # EURUSD long is higher-confidence when ES rallying AND ZN falling (risk-on)
-    # Risk-on = equities up, bonds down. Risk-off = opposite.
+    # ES (primary) vs ZN: Risk-on = equities up, bonds down. Risk-off = opposite.
     # +2 = strong risk-on, -2 = strong risk-off, 0 = mixed
-    if 'price_es' in df.columns and 'price_zn' in df.columns:
-        # Calculate returns over 50 bars (approx 1.5 hours at avg bar duration)
-        ret_50_es = np.log(df['price_es'] / df['price_es'].shift(50))
+    if 'price_zn' in df.columns:
+        # Calculate returns over 50 bars (approx 1.5-2 hours at avg bar duration)
+        # Use primary close (ES) directly
+        ret_50_primary = np.log(df['close'] / df['close'].shift(50))
         ret_50_zn = np.log(df['price_zn'] / df['price_zn'].shift(50))
 
         # Sign of momentum: +1 if up, -1 if down, 0 if flat
-        es_momentum = np.sign(ret_50_es)
+        primary_momentum = np.sign(ret_50_primary)
         zn_momentum = np.sign(ret_50_zn)
 
         # Risk-on: ES up (+1) and ZN down (-1) = +1 - (-1) = +2
         # Risk-off: ES down (-1) and ZN up (+1) = -1 - 1 = -2
         # Mixed: 0
-        df['risk_on_momentum'] = es_momentum - zn_momentum
-
-    # 5. Cross-Atlantic Curve Differential
-    # If US curve is steepening faster than EU curve -> USD strength (higher US term premium)
-    # If EU curve is steepening faster -> EUR strength
-    if 'curve_us_10y_2y_delta_50' in df.columns and 'curve_eu_10y_2y_delta_50' in df.columns:
-        df['curve_diff_us_eu_delta_50'] = df['curve_us_10y_2y_delta_50'] - df['curve_eu_10y_2y_delta_50']
-        df['curve_diff_us_eu_delta_100'] = df['curve_us_10y_2y_delta_100'] - df['curve_eu_10y_2y_delta_100']
+        df['risk_on_momentum'] = primary_momentum - zn_momentum
 
     return df

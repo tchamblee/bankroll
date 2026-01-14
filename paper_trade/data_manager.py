@@ -1,5 +1,7 @@
 """
 Paper Trade Module - Live Data Management
+
+Uses 1-minute bar subscriptions (consistent with backfill) to build volume bars.
 """
 import asyncio
 import os
@@ -7,7 +9,6 @@ from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import pandas as pd
-from ib_insync import TickByTickBidAsk, TickByTickAllLast
 
 import config as cfg
 from feature_engine.core import FeatureEngine
@@ -18,12 +19,12 @@ from .utils import logger, WINDOW_SIZE, WARMUP_DAYS, LIVE_BARS_FILE
 
 
 class LiveDataManager:
-    """Manages live tick data, bar creation, and feature computation."""
+    """Manages live bar data, volume bar creation, and feature computation."""
 
     def __init__(self):
-        self.ticks_buffer = []
+        self.minute_bars_buffer = []  # Buffer of 1-minute bars for volume bar creation
         self.current_vol = 0
-        self.primary_bars = pd.DataFrame()
+        self.primary_bars = pd.DataFrame()  # Volume bars
         self.external_cols = [t['name'] for t in cfg.TARGETS if t['name'] != cfg.PRIMARY_TICKER]
         self.correlator_snapshot = {name: np.nan for name in self.external_cols}
         self.gdelt_df = None
@@ -65,7 +66,7 @@ class LiveDataManager:
             logger.error(f"Failed to save persistence: {e}")
 
     async def fill_gaps(self, ib, contract):
-        """Fetches missing ticks from IBKR to bridge the gap since last shutdown."""
+        """Fetches missing 1-minute bars from IBKR to bridge the gap since last shutdown."""
         if self.primary_bars.empty:
             return
 
@@ -79,61 +80,46 @@ class LiveDataManager:
         if delta.total_seconds() < 300:
             return  # No significant gap
 
-        logger.info(f"Gap detected: {delta}. Fetching missing ticks from {last_dt}...")
+        logger.info(f"Gap detected: {delta}. Fetching missing bars from {last_dt}...")
 
-        # Limit to last 2 hours to prevent massive delays
-        start_time = last_dt
-        if delta.total_seconds() > 7200:
-            logger.warning("Gap > 2 hours. Only backfilling last 2 hours.")
-            start_time = now_dt - timedelta(hours=2)
+        # Calculate duration string for IBKR (limit to 48 hours)
+        # IBKR format: S=seconds, D=days, W=weeks, M=months, Y=years (NO hours/minutes!)
+        gap_seconds = min(delta.total_seconds(), 48 * 3600)
+        if gap_seconds <= 86400:  # <= 1 day
+            duration_str = f"{int(gap_seconds) + 300} S"  # Add 5 min buffer
+        else:
+            duration_str = f"{int(gap_seconds / 86400) + 1} D"
 
+        try:
+            bars = await ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime="",
+                durationStr=duration_str,
+                barSizeSetting="1 min",
+                whatToShow="TRADES",
+                useRTH=False,
+                formatDate=2,  # UTC timezone
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch historical bars for gap fill: {e}")
+            return
+
+        if not bars:
+            logger.info("No bars returned for gap fill.")
+            return
+
+        # Filter bars newer than our last bar and process them
         fetched_count = 0
-        logger.info(f"Starting gap fill loop from {start_time} to {now_dt}...")
+        for bar in bars:
+            bar_time = bar.date
+            if bar_time.tzinfo is None:
+                bar_time = bar_time.replace(tzinfo=timezone.utc)
 
-        while start_time < (now_dt - timedelta(seconds=30)):
-            formatted_time = start_time.strftime("%Y%m%d %H:%M:%S") + " UTC"
-            logger.info(f"  -> Requesting 1000 ticks from {formatted_time}...")
+            if bar_time > last_dt:
+                self.add_minute_bar(bar, {'name': cfg.PRIMARY_TICKER})
+                fetched_count += 1
 
-            try:
-                ticks = await ib.reqHistoricalTicksAsync(
-                    contract, startDateTime=formatted_time,
-                    endDateTime="", numberOfTicks=1000,
-                    whatToShow='BID_ASK', useRth=False, ignoreSize=False
-                )
-            except asyncio.CancelledError:
-                logger.warning("Tick fetch cancelled (Disconnect?). Stopping fill.")
-                break
-            except Exception as e:
-                logger.error(f"Failed to fetch ticks batch: {e}")
-                break
-
-            if not ticks:
-                logger.info("  -> No more ticks returned.")
-                break
-
-            # Wrapper to match TickByTickBidAsk interface
-            class TickWrapper:
-                def __init__(self, t):
-                    self.time = t.time
-                    self.bidPrice = t.priceBid
-                    self.askPrice = t.priceAsk
-                    self.bidSize = t.sizeBid
-                    self.askSize = t.sizeAsk
-
-            for t in ticks:
-                wrapper = TickWrapper(t)
-                self.add_tick(wrapper, {'name': cfg.PRIMARY_TICKER})
-
-            fetched_count += len(ticks)
-            last_tick_time = ticks[-1].time
-            if last_tick_time.tzinfo is None:
-                last_tick_time = last_tick_time.replace(tzinfo=timezone.utc)
-            start_time = last_tick_time
-
-            logger.info(f"  -> Fetched {len(ticks)} ticks. Next start: {start_time}")
-            await asyncio.sleep(0.05)
-
-        logger.info(f"Gap Filled. Fetched {fetched_count} ticks. New Head: {self.primary_bars['time_end'].max()}")
+        logger.info(f"Gap Filled. Processed {fetched_count} bars. New Head: {self.primary_bars['time_end'].max() if not self.primary_bars.empty else 'N/A'}")
 
     def warmup(self, ib=None):
         """Loads history from disk."""
@@ -150,29 +136,26 @@ class LiveDataManager:
         # 2. Load Local Persistence
         self.load_persistence()
 
-        # 3. If still empty (first run), try loading from Raw Data Lake
+        # 3. If still empty (first run), try loading from Clean Data
         if self.primary_bars.empty:
-            data_dir = cfg.DIRS["DATA_RAW_TICKS"]
-            if os.path.exists(data_dir):
-                files = sorted([
-                    f for f in os.listdir(data_dir)
-                    if cfg.PRIMARY_TICKER in f and f.endswith(".parquet")
-                ])
-                if files:
-                    recent = files[-WARMUP_DAYS:]
-                    dfs = []
-                    for f in recent:
-                        try:
-                            dfs.append(pd.read_parquet(os.path.join(data_dir, f)))
-                        except Exception as e:
-                            logger.warning(f"Failed to load {f}: {e}")
-                    if dfs:
-                        full = pd.concat(dfs, ignore_index=True).sort_values('ts_event')
-                        from feature_engine.bars import create_volume_bars
-                        bars = create_volume_bars(full, volume_threshold=cfg.VOLUME_THRESHOLD)
-                        if bars is not None:
-                            self.primary_bars = bars.tail(WINDOW_SIZE).reset_index(drop=True)
-                            self.save_bar(None)
+            clean_dir = cfg.DIRS["DATA_CLEAN_TICKS"]
+            clean_file = os.path.join(clean_dir, f"CLEAN_{cfg.PRIMARY_TICKER}.parquet")
+            if os.path.exists(clean_file):
+                try:
+                    # Load clean 1-minute bar data
+                    clean_df = pd.read_parquet(clean_file)
+                    if 'ts_event' in clean_df.columns:
+                        clean_df = clean_df.sort_values('ts_event')
+
+                    # Create volume bars from 1-minute bars (consistent with backfill)
+                    from feature_engine.bars import create_volume_bars_from_1min
+                    bars = create_volume_bars_from_1min(clean_df, volume_threshold=cfg.VOLUME_THRESHOLD)
+                    if bars is not None and len(bars) > 0:
+                        self.primary_bars = bars.tail(WINDOW_SIZE).reset_index(drop=True)
+                        self.save_bar(None)
+                        logger.info(f"Loaded {len(self.primary_bars)} volume bars from clean data.")
+                except Exception as e:
+                    logger.warning(f"Failed to load clean data: {e}")
 
         # Ensure External Cols exist
         for col in self.external_cols:
@@ -181,110 +164,84 @@ class LiveDataManager:
 
         logger.info(f"Warmup complete. State: {len(self.primary_bars)} bars.")
 
-    def add_tick(self, tick_obj, target_conf):
+    def add_minute_bar(self, bar_obj, target_conf):
         """
-        Process an incoming tick.
-        Returns bar DataFrame if a new bar was created, None otherwise.
+        Process an incoming 1-minute bar (from live subscription or gap fill).
+        Returns volume bar DataFrame if a new volume bar was created, None otherwise.
         """
         name = target_conf['name']
 
         if name == cfg.PRIMARY_TICKER:
-            ts = tick_obj.time.replace(tzinfo=timezone.utc)
+            # Extract bar time
+            bar_time = bar_obj.date if hasattr(bar_obj, 'date') else bar_obj.time
+            if bar_time.tzinfo is None:
+                bar_time = bar_time.replace(tzinfo=timezone.utc)
 
-            tick_vol = 0
-            if isinstance(tick_obj, TickByTickBidAsk):
-                tick_vol = tick_obj.bidSize + tick_obj.askSize
-                self.ticks_buffer.append({
-                    'ts_event': ts,
-                    'pricebid': tick_obj.bidPrice,
-                    'priceask': tick_obj.askPrice,
-                    'sizebid': tick_obj.bidSize,
-                    'sizeask': tick_obj.askSize,
-                    'last_price': np.nan,
-                    'last_size': np.nan
-                })
-            elif isinstance(tick_obj, TickByTickAllLast):
-                tick_vol = tick_obj.size
-                self.ticks_buffer.append({
-                    'ts_event': ts,
-                    'pricebid': np.nan,
-                    'priceask': np.nan,
-                    'sizebid': np.nan,
-                    'sizeask': np.nan,
-                    'last_price': tick_obj.price,
-                    'last_size': tick_obj.size
-                })
-            else:
-                # TickWrapper from gap fill
-                if hasattr(tick_obj, 'bidPrice'):
-                    tick_vol = tick_obj.bidSize + tick_obj.askSize
-                    self.ticks_buffer.append({
-                        'ts_event': ts,
-                        'pricebid': tick_obj.bidPrice,
-                        'priceask': tick_obj.askPrice,
-                        'sizebid': tick_obj.bidSize,
-                        'sizeask': tick_obj.askSize,
-                        'last_price': np.nan,
-                        'last_size': np.nan
-                    })
+            # Add 1-minute bar to buffer
+            self.minute_bars_buffer.append({
+                'ts_event': bar_time,
+                'open': bar_obj.open,
+                'high': bar_obj.high,
+                'low': bar_obj.low,
+                'close': bar_obj.close,
+                'volume': bar_obj.volume,
+            })
 
-            self.current_vol += tick_vol
+            self.current_vol += bar_obj.volume
 
+            # Check if we've accumulated enough volume
             if self.current_vol >= cfg.VOLUME_THRESHOLD:
-                return self._create_bar()
+                return self._create_volume_bar()
         else:
-            # Correlator tick - extract price
-            price = 0.0
-            if hasattr(tick_obj, 'last') and tick_obj.last and not np.isnan(tick_obj.last):
-                price = tick_obj.last
-            elif hasattr(tick_obj, 'close') and tick_obj.close and not np.isnan(tick_obj.close):
-                price = tick_obj.close
-            elif hasattr(tick_obj, 'price') and tick_obj.price and not np.isnan(tick_obj.price):
-                price = tick_obj.price
-            elif hasattr(tick_obj, 'bidPrice') and tick_obj.bidPrice and not np.isnan(tick_obj.bidPrice):
-                price = (tick_obj.bidPrice + tick_obj.askPrice) / 2
-
+            # Correlator bar - extract close price
+            price = bar_obj.close if hasattr(bar_obj, 'close') else 0.0
             if price > 0:
                 self.correlator_snapshot[name] = price
 
         return None
 
-    def _create_bar(self):
-        """Create a volume bar from accumulated ticks."""
-        df = pd.DataFrame(self.ticks_buffer)
-        self.ticks_buffer = []
+    def update_correlator(self, bar_obj, target_conf):
+        """Update correlator snapshot from a bar update (no volume bar creation)."""
+        name = target_conf['name']
+        if name != cfg.PRIMARY_TICKER:
+            price = bar_obj.close if hasattr(bar_obj, 'close') else 0.0
+            if price > 0:
+                self.correlator_snapshot[name] = price
+
+    def _create_volume_bar(self):
+        """Create a volume bar from accumulated 1-minute bars."""
+        if not self.minute_bars_buffer:
+            return None
+
+        df = pd.DataFrame(self.minute_bars_buffer)
+        self.minute_bars_buffer = []
         self.current_vol = 0
 
-        if 'pricebid' in df.columns and 'priceask' in df.columns:
-            df['mid_price'] = (df['pricebid'] + df['priceask']) / 2
-            df['mid_price'] = df['mid_price'].fillna(df['last_price'])
-        else:
-            df['mid_price'] = df['last_price']
-
-        vol = (df['sizebid'].fillna(0) + df['sizeask'].fillna(0)) if 'sizebid' in df.columns else df['last_size'].fillna(1)
-        df['volume'] = np.where(vol == 0, 1, vol)
-        df['net_aggressor_vol'] = np.sign(df['mid_price'].diff().fillna(0)) * df['volume']
-
+        # Aggregate 1-minute bars into volume bar (same logic as backfill)
         new_bar = {
             'time_start': df['ts_event'].iloc[0],
-            'time_end': df['ts_event'].iloc[-1],
-            'open': df['mid_price'].iloc[0],
-            'high': df['mid_price'].max(),
-            'low': df['mid_price'].min(),
-            'close': df['mid_price'].iloc[-1],
+            'time_end': df['ts_event'].iloc[-1] + timedelta(minutes=1),  # End of last 1-min bar
+            'open': df['open'].iloc[0],
+            'high': df['high'].max(),
+            'low': df['low'].min(),
+            'close': df['close'].iloc[-1],
             'volume': df['volume'].sum(),
-            'net_aggressor_vol': df['net_aggressor_vol'].sum(),
-            'tick_count': len(df)
+            'tick_count': len(df),  # Number of 1-min bars aggregated
         }
 
-        # Inject latest snapshot prices
+        # Calculate net aggressor volume from price direction
+        df['price_change'] = df['close'].diff().fillna(0)
+        df['net_aggressor'] = np.sign(df['price_change']) * df['volume']
+        new_bar['net_aggressor_vol'] = df['net_aggressor'].sum()
+
+        # Inject latest correlator snapshot prices
         for name, price in self.correlator_snapshot.items():
             new_bar[name] = price
 
         bar_df = pd.DataFrame([new_bar])
         self.primary_bars = pd.concat([self.primary_bars, bar_df], ignore_index=True)
 
-        # Forward Fill missing external data
+        # Forward fill missing external data
         self.primary_bars[self.external_cols] = self.primary_bars[self.external_cols].ffill()
 
         if len(self.primary_bars) > WINDOW_SIZE:
@@ -321,8 +278,6 @@ class LiveDataManager:
                     key = 'tick_nyse'
                 elif target['name'] == 'TRIN_NYSE':
                     key = 'trin_nyse'
-                elif target['name'] == '6E':
-                    key = '6e'
                 data_cache[key] = extract(target['name'])
 
         # Add GDELT

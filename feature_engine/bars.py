@@ -98,3 +98,81 @@ def create_volume_bars(primary_df, volume_threshold=1000):
     
     print(f"Generated {len(bars_df)} Volume Bars.")
     return bars_df
+
+
+def create_volume_bars_from_1min(df, volume_threshold=1000):
+    """
+    Creates Volume Bars from 1-minute OHLCV bars.
+    This is used for consistency between backfill (1-min bars) and live trading.
+
+    Args:
+        df: DataFrame with columns [ts_event, open, high, low, close, volume]
+        volume_threshold: Contracts per volume bar
+
+    Returns:
+        DataFrame with volume bars
+    """
+    if df is None or len(df) == 0:
+        return None
+
+    print(f"Generating Volume Bars from 1-min data (Threshold: {volume_threshold})...")
+
+    df = df.copy()
+
+    # Ensure ts_event column exists
+    if 'ts_event' not in df.columns:
+        if 'time' in df.columns:
+            df['ts_event'] = df['time']
+        elif 'datetime' in df.columns:
+            df['ts_event'] = df['datetime']
+        else:
+            print("ERROR: No timestamp column found in 1-min bars")
+            return None
+
+    # Ensure volume column exists
+    if 'volume' not in df.columns:
+        print("ERROR: No volume column found in 1-min bars")
+        return None
+
+    # Sort by time
+    df = df.sort_values('ts_event').reset_index(drop=True)
+
+    # Calculate cumulative volume and bar assignments
+    df['cum_vol'] = df['volume'].cumsum()
+    df['bar_id'] = (df['cum_vol'] // volume_threshold).astype(int)
+
+    # Calculate net aggressor volume from price direction
+    df['price_change'] = df['close'].diff().fillna(0)
+    df['aggressor_vol'] = np.sign(df['price_change']) * df['volume']
+
+    # Aggregate 1-minute bars into volume bars
+    bars_df = df.groupby('bar_id').agg({
+        'ts_event': ['first', 'last'],
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum',
+        'aggressor_vol': 'sum'
+    })
+
+    # Flatten columns
+    bars_df.columns = [
+        'time_start', 'time_end',
+        'open', 'high', 'low', 'close',
+        'volume', 'net_aggressor_vol'
+    ]
+    bars_df.reset_index(drop=True, inplace=True)
+
+    # Add derived features
+    bars_df['ticket_imbalance'] = np.where(
+        bars_df['volume'] == 0, 0,
+        bars_df['net_aggressor_vol'] / bars_df['volume']
+    )
+
+    # Count 1-min bars per volume bar
+    tick_counts = df.groupby('bar_id').size()
+    bars_df['tick_count'] = tick_counts.values
+
+    print(f"Generated {len(bars_df)} Volume Bars from {len(df)} 1-min bars.")
+    return bars_df

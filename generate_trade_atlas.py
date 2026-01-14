@@ -35,7 +35,7 @@ def plot_trade(trade, prices, times, output_dir, trade_id, horizon):
     plt.figure(figsize=(12, 6))
     
     # 1. Plot Price Line
-    plt.plot(section_times, section_prices, color='black', alpha=0.6, linewidth=1.5, label='EUR/USD')
+    plt.plot(section_times, section_prices, color='black', alpha=0.6, linewidth=1.5, label=config.PRIMARY_TICKER)
     
     # 2. Shade Active Region
     if hasattr(section_times, 'index'):

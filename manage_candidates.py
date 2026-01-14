@@ -126,22 +126,26 @@ def cleanup_inbox(min_sortino=1.0):
         print("Inbox is empty.")
         return
 
-    print(f"🧹 Cleaning Inbox (Removing strategies with Return <= 0 or Sortino < {min_sortino})...")
-    
+    min_test_trades = config.MIN_TRADES_TEST
+    max_decay = config.MAX_TRAIN_TEST_DECAY
+    print(f"🧹 Cleaning Inbox (Ret<=0, Sortino<{min_sortino}, Trades<{min_test_trades}, Decay>{max_decay*100:.0f}%)...")
+
     kept_strategies = []
     removed_count = 0
-    
+
     for s in strategies:
         # Check Returns (Must be positive across board if data exists)
         # Using flat keys which are now reliable after fix
         t_r = s.get('train_return', 0)
         v_r = s.get('val_return', 0)
         te_r = s.get('test_return', 0)
-        
+
         t_s = s.get('train_sortino', 0)
         v_s = s.get('val_sortino', 0)
         te_s = s.get('test_sortino', 0)
-        
+
+        te_trades = s.get('test_trades', 0)
+
         # If stats dicts exist, they might be more accurate if refresh just happened
         if 'train_stats' in s: t_r = s['train_stats'].get('ret', t_r)
         if 'val_stats' in s: v_r = s['val_stats'].get('ret', v_r)
@@ -150,16 +154,24 @@ def cleanup_inbox(min_sortino=1.0):
         # Logic: If any dataset has Negative Return, it's a loser.
         # Logic: If any dataset has Sortino < min_sortino, it's weak.
         # Exception: Test set might be 0 if not evaluated? No, refresh ensures eval.
-        
+
         is_failing = False
         reasons = []
-        
+
         if t_r <= 0: is_failing = True; reasons.append(f"Train Ret {t_r*100:.1f}%")
         if v_r <= 0: is_failing = True; reasons.append(f"Val Ret {v_r*100:.1f}%")
         if te_r <= 0: is_failing = True; reasons.append(f"Test Ret {te_r*100:.1f}%")
-        
+
         if t_s < min_sortino: is_failing = True; reasons.append(f"Train Sort {t_s:.2f}")
         if v_s < min_sortino: is_failing = True; reasons.append(f"Val Sort {v_s:.2f}")
+
+        # Trade count filter
+        if te_trades < min_test_trades: is_failing = True; reasons.append(f"Test Trades {te_trades}")
+
+        # Decay filter: reject if test < (1 - max_decay) * train
+        if t_r > 0:
+            decay = 1.0 - (te_r / t_r)
+            if decay > max_decay: is_failing = True; reasons.append(f"Decay {decay*100:.0f}%")
         
         if is_failing:
             removed_count += 1

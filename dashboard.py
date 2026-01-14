@@ -112,18 +112,12 @@ def compute_live_features(strategies, bars_df):
     # 2. Run Pipeline (Using Shared Logic)
     data_cache = {
         'tnx': extract_series('TNX'),
-        'usdchf': extract_series('USDCHF'),
-        'bund': extract_series('BUND'),
         'us2y': extract_series('US2Y'),
-        'schatz': extract_series('SCHATZ'),
-        'es': extract_series('ES'),
         'zn': extract_series('ZN'),
-        '6e': extract_series('6E'),
+        'vix': extract_series('VIX'),
         'ibit': extract_series('IBIT'),
         'tick_nyse': extract_series('TICK_NYSE'),
         'trin_nyse': extract_series('TRIN_NYSE'),
-        # GDELT is not loaded here in dashboard usually, but we could try loading from GDELT_DIR
-        # For simplicity, dashboard might skip GDELT if not critical for display or load it if we want.
     }
     
     run_pipeline(engine, data_cache)
@@ -415,9 +409,9 @@ if view == "Cockpit":
         pnl = 0.0
         if pos != 0 and entry > 0:
             if pos > 0:
-                pnl = (current_price - entry) * abs(pos) * 100000 
+                pnl = (current_price - entry) * abs(pos) * cfg.STANDARD_LOT_SIZE
             else:
-                pnl = (entry - current_price) * abs(pos) * 100000
+                pnl = (entry - current_price) * abs(pos) * cfg.STANDARD_LOT_SIZE
 
         with col1:
             st.metric("Balance", f"${balance:,.0f}")
@@ -808,13 +802,9 @@ elif view == "System Health":
                     
                 data_cache = {
                     'tnx': extract_series('TNX'),
-                    'usdchf': extract_series('USDCHF'),
-                    'bund': extract_series('BUND'),
                     'us2y': extract_series('US2Y'),
-                    'schatz': extract_series('SCHATZ'),
-                    'es': extract_series('ES'),
                     'zn': extract_series('ZN'),
-                    '6e': extract_series('6E'),
+                    'vix': extract_series('VIX'),
                     'ibit': extract_series('IBIT'),
                     'tick_nyse': extract_series('TICK_NYSE'),
                     'trin_nyse': extract_series('TRIN_NYSE')

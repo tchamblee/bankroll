@@ -24,13 +24,23 @@ def add_seasonality_features(df, lookback_days=20):
     df['hour_cos'] = np.cos(2 * np.pi * hour_float / 24.0)
 
     # Intraday Regime Feature
-    # Markets transition: London Open momentum -> NY session mean-reversion -> late-day chop
+    # ES session transitions: Overnight -> Pre-market build -> Open momentum -> Midday chop -> Close rebalancing
     # Combine time bucket with realized volatility to let evolution discover regime-dependent strategies
 
-    # Session buckets (UTC hours):
-    # 0: Asia (00-07), 1: London Open (08-12), 2: NY Overlap (13-16), 3: NY Afternoon (17-22), 4: Late (23)
+    # Session buckets (UTC hours) for ES/US equity:
+    # 0: Overnight (21-24 UTC and 0-13 UTC = 4pm-8am ET)
+    # 1: Pre-market (13-15 UTC = 8-10am ET)
+    # 2: Morning (15-18 UTC = 10am-1pm ET)
+    # 3: Afternoon/Close (18-21 UTC = 1-4pm ET)
     hour = df['time_start'].dt.hour
-    session = pd.cut(hour, bins=[-1, 7, 12, 16, 22, 24], labels=[0, 1, 2, 3, 4]).astype(float)
+    # Map hours to sessions using np.select for wraparound handling
+    conditions = [
+        (hour >= 21) | (hour < 13),  # Overnight
+        (hour >= 13) & (hour < 15),  # Pre-market
+        (hour >= 15) & (hour < 18),  # Morning
+        (hour >= 18) & (hour < 21),  # Afternoon/Close
+    ]
+    session = pd.Series(np.select(conditions, [0, 1, 2, 3], default=0), index=df.index).astype(float)
 
     # Realized volatility percentile over 1 hour (~40 volume bars at ~1.5 min avg)
     if 'log_ret' in df.columns:

@@ -17,7 +17,7 @@ from pathlib import Path
 # Default data path
 DEFAULT_AUCTIONS_PATH = Path(__file__).parent.parent / "data" / "treasury_auctions.parquet"
 
-# Key tenors to track (most relevant for EUR/USD via rate differentials)
+# Key tenors to track (relevant for ES via rate/equity correlation)
 KEY_TENORS = ['2y', '5y', '10y', '30y']
 
 

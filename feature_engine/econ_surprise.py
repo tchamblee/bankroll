@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 # Key events to track (event_key -> feature_name)
+# US events only - relevant for ES (S&P 500) trading
 KEY_EVENTS = {
-    # USD Events
     'core_cpi_m_m': 'usd_core_cpi',
     'cpi_m_m': 'usd_cpi',
     'cpi_y_y': 'usd_cpi_yy',
@@ -31,13 +31,6 @@ KEY_EVENTS = {
     'jolts_job_openings': 'usd_jolts',
     'retail_sales_m_m': 'usd_retail',
     'core_retail_sales_m_m': 'usd_core_retail',
-    # EUR Events
-    'german_flash_manufacturing_pmi': 'eur_de_mfg_pmi',
-    'german_flash_services_pmi': 'eur_de_svc_pmi',
-    'flash_manufacturing_pmi': 'eur_flash_mfg',
-    'flash_services_pmi': 'eur_flash_svc',
-    'german_prelim_gdp_q_q': 'eur_de_gdp',
-    'main_refinancing_rate': 'eur_ecb_rate',
 }
 
 # Default data path
@@ -189,15 +182,6 @@ def add_econ_surprise_features(bars_df, events_path=None):
     if surprise_cols:
         # Average absolute surprise across all tracked events
         bars_df['econ_surprise_magnitude'] = bars_df[surprise_cols].abs().mean(axis=1)
-
-        # USD vs EUR surprise differential
-        usd_cols = [c for c in surprise_cols if c.startswith('usd_')]
-        eur_cols = [c for c in surprise_cols if c.startswith('eur_')]
-
-        if usd_cols and eur_cols:
-            bars_df['usd_eur_surprise_diff'] = (
-                bars_df[usd_cols].mean(axis=1) - bars_df[eur_cols].mean(axis=1)
-            )
 
     return bars_df
 

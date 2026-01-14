@@ -11,9 +11,10 @@ def _process_ticker(ticker, raw_dir, clean_dir):
         out_path = os.path.join(clean_dir, out_name)
         
         # Find Source Files first to check timestamps
-        if ticker == config.PRIMARY_TICKER:
-            pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
-        else:
+        # Try TICKS first, fall back to BARS
+        pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
+        files = glob.glob(pattern)
+        if not files:
             pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")
             
         files = glob.glob(pattern)
