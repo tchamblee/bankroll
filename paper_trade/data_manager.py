@@ -147,6 +147,10 @@ class LiveDataManager:
                     if 'ts_event' in clean_df.columns:
                         clean_df = clean_df.sort_values('ts_event')
 
+                    # Normalize column names (last_price -> close)
+                    if 'last_price' in clean_df.columns and 'close' not in clean_df.columns:
+                        clean_df = clean_df.rename(columns={'last_price': 'close'})
+
                     # Create volume bars from 1-minute bars (consistent with backfill)
                     from feature_engine.bars import create_volume_bars_from_1min
                     bars = create_volume_bars_from_1min(clean_df, volume_threshold=cfg.VOLUME_THRESHOLD)

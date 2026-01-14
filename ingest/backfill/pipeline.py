@@ -15,11 +15,11 @@ from ingest.ibkr_utils import build_and_qualify
 
 nest_asyncio.apply()
 
-async def main(symbols=None, days=None):
+async def main(symbols=None, days=None, fast=False):
     ib = IB()
     try:
         await ib.connectAsync(cfg.IBKR_HOST, cfg.IBKR_PORT, clientId=103)
-        logger.info(f"CONNECTED. Test Probe: {TEST_PROBE}")
+        logger.info(f"CONNECTED. Test Probe: {TEST_PROBE}{' (FAST MODE)' if fast else ''}")
         
         # 0. Fetch FRED, COT & Treasury Auction Data (Skip if targeting specific symbols to save time)
         if not symbols:
@@ -76,8 +76,8 @@ async def main(symbols=None, days=None):
             # --- 2b. Fetch IBKR Data ---
             tasks = []
             for t_conf, contract in qualified_contracts:
-                tasks.append(process_symbol_for_day(ib, contract, t_conf, target_date))
-            
+                tasks.append(process_symbol_for_day(ib, contract, t_conf, target_date, fast=fast))
+
             await asyncio.gather(*tasks)
             
             await asyncio.sleep(0.5)

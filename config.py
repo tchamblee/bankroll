@@ -108,7 +108,7 @@ STABILITY_PENALTY_THRESHOLD = 0.6
 STABILITY_PENALTY_FACTOR = 0.6
 
 # --- DATA & VALIDATION SETTINGS ---
-TRAIN_START_DATE = "2025-07-15"
+TRAIN_START_DATE = "2024-08-01"
 TRAIN_SPLIT_RATIO = 0.6
 VAL_SPLIT_RATIO = 0.8
 
@@ -120,8 +120,8 @@ _VAL_SIZE = VAL_SPLIT_RATIO - TRAIN_SPLIT_RATIO
 _TEST_SIZE = 1.0 - VAL_SPLIT_RATIO
 MIN_TRADES_TRAIN = MIN_TRADES_FOR_METRICS
 MIN_TRADES_VAL = max(20, int(MIN_TRADES_FOR_METRICS * _VAL_SIZE / _TRAIN_SIZE))
-MIN_TRADES_TEST = max(50, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))  # Critical OOS gate
-MAX_TRAIN_TEST_DECAY = 0.75  # Reject if test_return < 25% of train_return (>75% decay = overfit)
+MIN_TRADES_TEST = max(75, int(MIN_TRADES_FOR_METRICS * _TEST_SIZE / _TRAIN_SIZE))  # Critical OOS gate (75 for 18mo data)
+MAX_TRAIN_TEST_DECAY = 0.65  # Reject if test_return < 35% of train_return (>65% decay = overfit)
 
 WFV_FOLDS = 5
 CPCV_N_FOLDS = 6
@@ -233,6 +233,23 @@ TARGETS = [
         "secType": "STK",
         "currency": "USD",
         "exchange": "SMART",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    # Index Correlators - divergence signals
+    {
+        "name": "NQ",
+        "symbol": "NQ",
+        "secType": "CONTFUT",
+        "currency": "USD",
+        "exchange": "CME",
+        "mode": "BARS_TRADES_1MIN",
+    },
+    {
+        "name": "RTY",
+        "symbol": "RTY",
+        "secType": "CONTFUT",
+        "currency": "USD",
+        "exchange": "CME",
         "mode": "BARS_TRADES_1MIN",
     },
 ]

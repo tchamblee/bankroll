@@ -25,11 +25,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill Data Pipeline Wrapper")
     parser.add_argument("--symbols", nargs="+", help=f"Specific symbols to backfill (e.g. VIX {config.PRIMARY_TICKER})")
     parser.add_argument("--days", type=int, help="Number of days to backfill (overrides config)")
+    parser.add_argument("--fast", action="store_true", help="Skip IBKR verification for existing files")
     args = parser.parse_args()
 
     exit_code = 0
     try:
-        asyncio.run(main(symbols=args.symbols, days=args.days))
+        asyncio.run(main(symbols=args.symbols, days=args.days, fast=args.fast))
     except KeyboardInterrupt:
         bf_cfg.STOP_REQUESTED = True
         logging.getLogger("Backfill").info("Keyboard Interrupt received. Exiting.")

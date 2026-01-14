@@ -420,11 +420,11 @@ if view == "Cockpit":
         with col3:
             st.metric("Position", f"{pos} Lots", delta_color="off")
         with col4:
-            st.metric("Entry Price", f"{entry:.5f}", delta=f"{current_price - entry:.5f}" if pos > 0 else f"{entry - current_price:.5f}")
+            st.metric("Entry Price", f"{entry:.2f}", delta=f"{current_price - entry:.2f}" if pos > 0 else f"{entry - current_price:.2f}")
         with col5:
             st.metric("Unrealized PnL", f"${pnl:.2f}", delta_color="normal")
         with col6:
-            st.metric("ATR (Bars)", f"{current_atr:.6f}")
+            st.metric("ATR (Bars)", f"{current_atr:.2f}")
         with col7:
             st.metric("Active Strat", strat_name)
     else:
@@ -445,7 +445,7 @@ if view == "Cockpit":
     if bars_df is not None and not bars_df.empty:
         last_row = bars_df.iloc[-1]
         st.markdown(f"### {cfg.PRIMARY_TICKER} (Live)")
-        st.markdown(f"**Last:** {last_row['close']:.5f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
+        st.markdown(f"**Last:** {last_row['close']:.2f} | **Vol:** {last_row['volume']:.0f} | **Aggr:** {last_row['net_aggressor_vol']:.0f}")
 
         fig = go.Figure(data=[go.Candlestick(x=bars_df['time_start'],
                         open=bars_df['open'],
@@ -505,13 +505,19 @@ if view == "Cockpit":
                     name='Exit'
                 ))
 
+        # Calculate Y-axis range from actual price data (avoid zeros/outliers)
+        valid_prices = bars_df[['open', 'high', 'low', 'close']].replace(0, np.nan)
+        price_min = valid_prices.min().min()
+        price_max = valid_prices.max().max()
+        padding = (price_max - price_min) * 0.05 if price_max > price_min else 10  # 5% padding
+
         fig.update_layout(
-            height=600, 
-            xaxis_rangeslider_visible=False, 
-            template="plotly_dark", 
+            height=600,
+            xaxis_rangeslider_visible=False,
+            template="plotly_dark",
             uirevision='constant',
             xaxis=dict(uirevision='constant'),
-            yaxis=dict(uirevision='constant'),
+            yaxis=dict(uirevision='constant', range=[price_min - padding, price_max + padding]),
         )
         st.plotly_chart(fig, width='stretch', key="main_chart")
     else:

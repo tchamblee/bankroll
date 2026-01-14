@@ -221,4 +221,55 @@ def add_intermarket_features(primary_df, correlator_dfs):
         # Mixed: 0
         df['risk_on_momentum'] = primary_momentum - zn_momentum
 
+    # 5. NQ/ES Ratio Features (Tech Leadership)
+    # When NQ outperforms ES, tech is leading. When NQ underperforms, rotation out of tech.
+    if 'price_nq' in df.columns:
+        # Ratio: NQ/ES (higher = tech leading)
+        nq_es_ratio = df['price_nq'] / df['close']
+
+        # Z-score of ratio (mean reversion signal)
+        for window in [100, 200, 400]:
+            ratio_mean = nq_es_ratio.rolling(window).mean()
+            ratio_std = nq_es_ratio.rolling(window).std().replace(0, 1)
+            df[f'nq_es_ratio_z_{window}'] = (nq_es_ratio - ratio_mean) / ratio_std
+
+        # Ratio momentum (trend in tech leadership)
+        df['nq_es_ratio_delta_50'] = nq_es_ratio.diff(50)
+        df['nq_es_ratio_delta_100'] = nq_es_ratio.diff(100)
+
+        # NQ vs ES divergence (normalized return difference)
+        ret_50_nq = np.log(df['price_nq'] / df['price_nq'].shift(50))
+        ret_50_es = np.log(df['close'] / df['close'].shift(50))
+        df['nq_es_divergence_50'] = ret_50_nq - ret_50_es
+
+    # 6. RTY/ES Ratio Features (Small Cap Risk Appetite)
+    # When RTY outperforms ES, risk-on for small caps. When RTY underperforms, flight to quality.
+    if 'price_rty' in df.columns:
+        # Ratio: RTY/ES (higher = small cap leading = risk-on)
+        rty_es_ratio = df['price_rty'] / df['close']
+
+        # Z-score of ratio
+        for window in [100, 200, 400]:
+            ratio_mean = rty_es_ratio.rolling(window).mean()
+            ratio_std = rty_es_ratio.rolling(window).std().replace(0, 1)
+            df[f'rty_es_ratio_z_{window}'] = (rty_es_ratio - ratio_mean) / ratio_std
+
+        # Ratio momentum
+        df['rty_es_ratio_delta_50'] = rty_es_ratio.diff(50)
+        df['rty_es_ratio_delta_100'] = rty_es_ratio.diff(100)
+
+        # RTY vs ES divergence
+        ret_50_rty = np.log(df['price_rty'] / df['price_rty'].shift(50))
+        ret_50_es = np.log(df['close'] / df['close'].shift(50))
+        df['rty_es_divergence_50'] = ret_50_rty - ret_50_es
+
+    # 7. Composite Sector Rotation Score
+    # Combines NQ and RTY signals: +2 = broad risk-on, -2 = broad risk-off
+    if 'price_nq' in df.columns and 'price_rty' in df.columns:
+        # Both outperforming ES = strong risk-on
+        # Both underperforming ES = strong risk-off
+        nq_sign = np.sign(df.get('nq_es_divergence_50', 0))
+        rty_sign = np.sign(df.get('rty_es_divergence_50', 0))
+        df['sector_rotation_score'] = nq_sign + rty_sign
+
     return df

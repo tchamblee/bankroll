@@ -11,13 +11,16 @@ def _process_ticker(ticker, raw_dir, clean_dir):
         out_path = os.path.join(clean_dir, out_name)
         
         # Find Source Files first to check timestamps
-        # Try TICKS first, fall back to BARS
-        pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
-        files = glob.glob(pattern)
-        if not files:
-            pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")
-            
-        files = glob.glob(pattern)
+        # Prefer BARS (1-min aggregated data) over TICKS (raw tick data)
+        # This matches the default config mode (BARS_TRADES_1MIN)
+        bars_pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_BARS}_{ticker}*.parquet")
+        ticks_pattern = os.path.join(raw_dir, f"{config.RAW_DATA_PREFIX_TICKS}_{ticker}*.parquet")
+
+        bars_files = glob.glob(bars_pattern)
+        ticks_files = glob.glob(ticks_pattern)
+
+        # Use BARS if available, otherwise fall back to TICKS
+        files = bars_files if bars_files else ticks_files
         if not files: return
 
         # Check for existing and freshness

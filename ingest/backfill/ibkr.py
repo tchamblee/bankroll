@@ -37,10 +37,15 @@ def find_contract_for_date(chain, target_date, days_offset=10):
             return d.contract
     return None
 
-async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: datetime, end_dt: datetime):
+async def backfill_ticks(ib: IB, contract: Contract, name: str, start_dt: datetime, end_dt: datetime, fast: bool = False):
     """Specific logic for dense tick-by-tick data (FX/Futures) with GAP DETECTION."""
     date_str = end_dt.strftime("%Y%m%d")
     filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"{cfg.RAW_DATA_PREFIX_TICKS}_{name}_{date_str}.parquet")
+
+    # FAST MODE: Skip IBKR entirely if file exists
+    if fast and os.path.exists(filename):
+        logger.info(f"   [FAST] {name} {date_str}: Skipping (file exists)")
+        return
 
     # 1. Detect Gaps
     fetch_ranges = [] # list of (start, end)
@@ -176,7 +181,7 @@ def _save_buffer_to_parquet(buffer, filename):
             df.sort_values(by="ts_event").to_parquet(filename, index=False)
         logger.info(f"      💾 Saved {len(data)} ticks.")
 
-async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime, duration="86400 S"):
+async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime, duration="86400 S", fast: bool = False):
     date_str = end_dt.strftime("%Y%m%d")
     filename = os.path.join(cfg.DIRS["DATA_RAW_TICKS"], f"{cfg.RAW_DATA_PREFIX_BARS}_{name}_{date_str}.parquet")
 
@@ -186,6 +191,11 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
             existing_len = len(pd.read_parquet(filename))
         except Exception as e:
             logger.warning(f"Could not read existing file {filename}: {e}")
+
+    # FAST MODE: Skip IBKR entirely if file exists with data
+    if fast and existing_len > 0:
+        logger.info(f"   [FAST] {name} {date_str}: Skipping ({existing_len} rows exist)")
+        return
 
     logger.info(f"   [BARS] Fetching {name} for {date_str}...")
     
@@ -256,7 +266,7 @@ async def backfill_bars(ib: IB, contract: Contract, name: str, end_dt: datetime,
             else:
                 logger.error(f"      FINAL FAILURE fetching bars for {name} {date_str}: {e}")
 
-async def process_symbol_for_day(ib: IB, contract: Contract, t_conf: dict, target_date: datetime):
+async def process_symbol_for_day(ib: IB, contract: Contract, t_conf: dict, target_date: datetime, fast: bool = False):
     async with symbol_semaphore:
         name = t_conf["name"]
         use_contract = contract
@@ -271,11 +281,11 @@ async def process_symbol_for_day(ib: IB, contract: Contract, t_conf: dict, targe
             else:
                  logger.warning(f"      Could not resolve {name} for {target_date}")
                  return
-        
+
         start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
         end_dt = datetime.combine(target_date, datetime.max.time(), tzinfo=timezone.utc)
 
         if t_conf["mode"] == "TICKS_BID_ASK":
-            await backfill_ticks(ib, use_contract, name, start_dt, end_dt)
+            await backfill_ticks(ib, use_contract, name, start_dt, end_dt, fast=fast)
         else:
-            await backfill_bars(ib, use_contract, name, end_dt)
+            await backfill_bars(ib, use_contract, name, end_dt, fast=fast)

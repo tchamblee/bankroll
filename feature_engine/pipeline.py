@@ -30,7 +30,7 @@ def run_pipeline(engine, data_cache=None):
     # Refactor: Increased window to 200 for stable Beta
     if get_df('tnx') is not None: engine.add_correlator_residual(get_df('tnx'), suffix="_tnx", window=200)
 
-    # 4. Intermarket Robust Features (ZN, VIX, TICK/TRIN for ES)
+    # 4. Intermarket Robust Features (ZN, VIX, TICK/TRIN, NQ, RTY for ES)
     raw_intermarket = {
         '_zn': get_df('zn'),
         '_tick_nyse': get_df('tick_nyse'),
@@ -38,7 +38,10 @@ def run_pipeline(engine, data_cache=None):
         # US Rates (for yield curve)
         '_tnx': get_df('tnx'),
         '_us2y': get_df('us2y'),
-        '_vix': get_df('vix')
+        '_vix': get_df('vix'),
+        # Index correlators (divergence signals)
+        '_nq': get_df('nq'),
+        '_rty': get_df('rty'),
     }
     intermarket_dfs = {k: v for k, v in raw_intermarket.items() if v is not None}
     if intermarket_dfs:
@@ -154,6 +157,8 @@ def create_full_feature_engine(data_dir=None, volume_threshold=250):
         'tick_nyse': "CLEAN_TICK.parquet",
         'trin_nyse': "CLEAN_TRIN.parquet",
         'ibit': "CLEAN_IBIT.parquet",
+        'nq': "CLEAN_NQ.parquet",
+        'rty': "CLEAN_RTY.parquet",
     }
     
     data_cache = {}
